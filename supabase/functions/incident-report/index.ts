@@ -21,12 +21,14 @@
 //   review  { id, family, medical, careplan, ane, note }   Stage 2: the office's checklist on a signed report; closes the
 //           card; a care plan change makes a card for the Client Care owner. Saved once, never changed.
 //   list    { caregiver }                         Stage 2: a caregiver's reports (their Performance tab)
+//   start   { kind: 'employee_injury', caregiver, happened_on, client_name? }   Stage 3: a work injury report. Its card goes
+//           to the HR owner (caregiver_performance), never onto a client's profile; its review is the workers' comp checklist.
 // ── The caregiver (https://cc.mo-care.com/incident.html?t=<code>; no sign-in)
 //   view    { t }                                 -> { first, client_first, happened_on, questions[], note_words, status, practice }
 //   submit  { t, answers, typed_name, strokes, consent: true }  -> { copy_url }
 // ── The schedule (hourly; the jobs' secret) or the owner's server key: remind {}
 //   texts the ONE reminder that is owed (8am to 8pm Central), turns overdue cards red. Switch off: nothing.
-// ── The owner's Desktop step (server key): sample {} -> { link }  a practice report for "Test Caregiver" (no client)
+// ── The owner's Desktop step (server key): sample { kind? } -> { link }  a practice report for "Test Caregiver" (no client)
 // =============================================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
@@ -35,7 +37,7 @@ import { contactForOutbound, normalisePhone } from '../_shared/outreach.ts'
 import { MO_FROM } from '../_shared/office-from.ts'
 import { logOpen, ipOf, clientSubject } from '../_shared/doc-log.ts'
 import { reportSendProblem, ownerFor } from '../_shared/send-problems.ts'
-import { cleanReview, reviewMissing, reviewSummary, HOTLINE } from '../_shared/incident.ts'
+import { cleanReview, reviewMissing, reviewSummary, HOTLINE, questionsFor, isInjury, cleanInjuryReview, injuryReviewMissing, injuryReviewSummary, compDue } from '../_shared/incident.ts'
 import { BUCKET, LINK_DAYS, OFFICE_PHONE, MAX_TEXT, QUESTIONS, TRUE_WORDS, labelFor, cleanAnswers, answersMissing, toldLate, cleanStrokes, sha256, newToken,
   tokenOk, nameMatches, firstName, shortName, linkFor, draftText, reminderText, caseName, cardState, reminderDue, inReminderHours, noteWords, reportPdf } from '../_shared/incident.ts'
 
@@ -57,7 +59,7 @@ Deno.serve(async (req: Request) => {
   try {
     if (PUBLIC.includes(action)) return await caregiverSide(db, req, action, b)
     if (url.searchParams.get('auth_check') === '1') { const c = await jobCaller(req); return c ? json({ ok: true, caller: c }) : json({ error: 'not allowed' }, 401) }
-    if (action === 'sample') { if (!(await ownerCaller(req))) return json({ error: 'not allowed' }, 401); return await sample(db) }
+    if (action === 'sample') { if (!(await ownerCaller(req))) return json({ error: 'not allowed' }, 401); return await sample(db, b?.kind === 'employee_injury' ? 'employee_injury' : 'client') }
     if (action === 'remind' || (!action && Object.keys(b || {}).length === 0)) {
       const c = await jobCaller(req); if (!c) return json({ error: 'not allowed' }, 401)
       return json(await remind(db))
@@ -128,14 +130,15 @@ async function list(db: Any, live: boolean, b: Any) {
   let q = db.from('incident_report').select(SHOW_REVIEW + ',answers').order('started_at', { ascending: false }).limit(100)
   const ax = String(b?.client_ax ?? ''), cg = String(b?.caregiver ?? '').trim().replace(/\s+/g, ' ')
   const ids = (Array.isArray(b?.ids) ? b.ids : []).map(String).filter((x: string) => /^[0-9a-f-]{36}$/i.test(x)).slice(0, 50)
-  if (/^\d+$/.test(ax)) q = q.eq('client_ax', ax)
+  if (/^\d+$/.test(ax)) q = q.eq('client_ax', ax).eq('kind', 'client')   /* a work injury is HR's, never on a client's profile */
   else if (ids.length) q = q.in('id', ids)
   else if (cg.split(' ').length >= 2) q = q.eq('caregiver', cg.slice(0, 120))
   else return json({ error: 'Say which client or which reports.' }, 400)
   const { data, error } = await q
   if (error) throw new Error(error.message)
   const reports = (data || []).map((r: Any) => ({ ...r, answers: r.status === 'submitted' ? r.answers : null,
-    questions: r.status === 'submitted' ? QUESTIONS.filter((x) => r.answers && r.answers[x.k] !== undefined).map((x) => ({ k: x.k, label: labelFor(x, r.client_name) })) : null }))
+    questions: r.status === 'submitted' ? questionsFor(r.kind).filter((x) => r.answers && r.answers[x.k] !== undefined).map((x) => ({ k: x.k, label: labelFor(x, r.client_name) })) : null,
+    comp_due: isInjury(r) ? compDue(r) : null }))
   return json({ ok: true, live, reports, hotline: HOTLINE })
 }
 
@@ -143,15 +146,16 @@ async function list(db: Any, live: boolean, b: Any) {
 async function review(db: Any, me: Any, r: Any, b: Any) {
   if (r.status !== 'submitted') return json({ error: 'Only a signed report can be reviewed.' }, 409)
   if (r.reviewed_at) return json({ error: 'This report was already reviewed by ' + (r.reviewed_by_name || r.reviewed_by) + '.' }, 409)
-  const rv = cleanReview(b)
-  const missing = reviewMissing(rv)
+  const inj = isInjury(r)
+  const rv: Any = inj ? cleanInjuryReview(b) : cleanReview(b)
+  const missing = inj ? injuryReviewMissing(rv) : reviewMissing(rv)
   if (missing) return json({ error: missing }, 400)
   const at = new Date().toISOString()
   const { data: done, error } = await db.from('incident_report').update({ review: rv, reviewed_by: me.email, reviewed_by_name: me.name, reviewed_at: at })
     .eq('id', r.id).eq('status', 'submitted').is('reviewed_at', null).select('*').maybeSingle()
   if (error || !done) return json({ error: 'Someone else reviewed it first. Reload.' }, 409)
-  const summary = reviewSummary(rv)
-  await event(db, r.id, 'reviewed', me, { ane: rv.ane.suspect === true, careplan: rv.careplan.change })
+  const summary = inj ? injuryReviewSummary(rv) : reviewSummary(rv)
+  await event(db, r.id, 'reviewed', me, inj ? { comp: rv.comp.reported, work: rv.work.status } : { ane: rv.ane.suspect === true, careplan: rv.careplan.change })
   const out: Record<string, unknown> = { ok: true, summary }
   if (!done.practice) {
     try {
@@ -163,7 +167,15 @@ async function review(db: Any, me: Any, r: Any, b: Any) {
         await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { ...prev, status: 'done', closed_at: at, closed_by: me.email, close_note: 'Reviewed: ' + summary,
           next_action: 'Reviewed by ' + me.name + '.', history, last_activity_at: at } })
       }
-      if (rv.careplan.change) {
+      if (inj && rv.safety.fix) {
+        const owner = await ownerFor(db, done.client_ax ? 'client_care' : 'caregiver_performance') || me.email
+        await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { id: 'ops_incsf_' + String(done.id).slice(0, 8), kind: 'client_issue', domain: done.client_ax ? 'client_care' : 'caregiver_performance',
+          status: 'open', urgency: 'today', owner, owner_name: '', created_at: at, created_by: me.name, created_by_email: me.email, opened_by: 'person', source: 'incident_report', source_id: done.id,
+          client_ax: done.client_ax || '', about: done.client_name || shortName(done.caregiver), title: 'Fix what caused a work injury: ' + caseName(done),
+          detail: rv.safety.note, next_action: 'Fix it so nobody else gets hurt the same way, then close this card.', due: new Date(Date.now() + 3 * 864e5).toISOString(), last_activity_at: at } })
+        out.safety_card = true
+      }
+      if (!inj && rv.careplan.change) {
         const owner = await ownerFor(db, 'client_care') || me.email
         await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { id: 'ops_inccp_' + String(done.id).slice(0, 8), kind: 'client_issue', domain: 'client_care', status: 'open',
           urgency: 'today', owner, owner_name: '', created_at: at, created_by: me.name, created_by_email: me.email, opened_by: 'person', source: 'incident_report', source_id: done.id,
@@ -186,8 +198,10 @@ async function start(db: Any, me: Any, live: boolean, b: Any) {
   const client_name = String(b?.client_name ?? '').trim().slice(0, 120) || String(flag?.about ?? '').trim().slice(0, 120)
   const caregiver = String(b?.caregiver ?? '').trim().replace(/\s+/g, ' ').slice(0, 120) || String(flag?.caregiver ?? '').trim()
   const happened_on = String(b?.happened_on ?? '')
-  if (!client_name) return json({ error: 'Say which client.' }, 400)
-  if (caregiver.split(' ').length < 2) return json({ error: 'Pick the caregiver who was there (first and last name).' }, 400)
+  const kind = b?.kind === 'employee_injury' ? 'employee_injury' : 'client'
+  if (kind === 'employee_injury' && src) return json({ error: 'A work injury report is started from the caregiver\'s profile, not a shift-note flag.' }, 400)
+  if (kind === 'client' && !client_name) return json({ error: 'Say which client.' }, 400)
+  if (caregiver.split(' ').length < 2) return json({ error: kind === 'client' ? 'Pick the caregiver who was there (first and last name).' : 'Pick the caregiver who was hurt (first and last name).' }, 400)
   if (!/^\d{4}-\d{2}-\d{2}$/.test(happened_on) || happened_on > new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })) return json({ error: 'Pick the day it happened (not in the future).' }, 400)
   if (client_ax && !/^\d+$/.test(client_ax)) return json({ error: 'That client number does not look right.' }, 400)
   const token = newToken(), expires = new Date(Date.now() + LINK_DAYS * 864e5).toISOString()
@@ -199,7 +213,7 @@ async function start(db: Any, me: Any, live: boolean, b: Any) {
       if (again) { await event(db, again.id, 'new_link', me); return await started(db, again, token) }
     }
   }
-  const row = { kind: 'client', practice: !live, client_ax: client_ax || null, client_name, caregiver, happened_on, source_item_id: src || null, note_words: flag ? noteWords(flag.detail) || null : null,
+  const row = { kind, practice: !live, client_ax: client_ax || null, client_name, caregiver, happened_on, source_item_id: src || null, note_words: flag ? noteWords(flag.detail) || null : null,
     caregiver_phone_hint: flag ? normalisePhone(flag.caregiver_phone) : null, token_hash: await sha256(token), expires_at: expires, started_by: me.email, started_by_name: me.name }
   const { data: r, error } = await db.from('incident_report').insert(row).select('*').single()
   if (error) throw new Error('could not start: ' + error.message)
@@ -316,11 +330,13 @@ async function card(db: Any, r: Any, now: Date = new Date()): Promise<boolean> {
     const s = cardState(r, now)
     if (prev && (prev.status === 'done' || prev.status === 'resolved')) return false   // a person closed it; leave it closed
     if (prev && prev.next_action === s.next && prev.urgency === s.urgency && (s.open || prev.status !== 'open')) return false
-    const owner = prev?.owner || await ownerFor(db, 'incidents') || r.started_by
+    const inj = isInjury(r)
+    const owner = prev?.owner || await ownerFor(db, inj ? 'caregiver_performance' : 'incidents') || r.started_by
     const at = now.toISOString()
     const item = { ...(prev || { created_at: at, owner, owner_name: '', created_by: r.started_by_name || r.started_by, created_by_email: r.started_by, opened_by: 'person', source: r.source_item_id ? 'shift_flag' : 'incident_report' }),
-      id, kind: 'client_issue', domain: 'incidents', incident_id: r.id, source_id: r.source_item_id || prev?.source_id || null, client_ax: r.client_ax || '', about: r.client_name,
-      caregiver: r.caregiver, title: 'Incident report: ' + caseName(r) + ', ' + shortName(r.caregiver), next_action: s.next, urgency: s.urgency,
+      id, kind: 'client_issue', domain: inj ? 'caregiver_performance' : 'incidents', incident_id: r.id, source_id: r.source_item_id || prev?.source_id || null,
+      client_ax: inj ? '' : (r.client_ax || ''), about: inj ? shortName(r.caregiver) : r.client_name, sensitive: inj || undefined,
+      caregiver: r.caregiver, title: inj ? 'Work injury report: ' + caseName(r) : 'Incident report: ' + caseName(r) + ', ' + shortName(r.caregiver), next_action: s.next, urgency: s.urgency,
       due: prev?.due && s.urgency !== 'urgent' ? prev.due : new Date(now.getTime() + (s.urgency === 'urgent' ? 2 : 24) * 36e5).toISOString(),
       status: s.open ? 'open' : 'done', closed_at: s.open ? null : at, closed_by: s.open ? null : 'system', close_note: s.open ? null : s.next, last_activity_at: at }
     const { error } = await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item })
@@ -345,14 +361,14 @@ async function caregiverSide(db: Any, req: Request, action: string, b: Any) {
   if (action === 'view') {
     if (r.status === 'waiting' && !r.opened_at) { await db.from('incident_report').update({ opened_at: new Date().toISOString() }).eq('id', r.id); await event(db, r.id, 'opened', {}, { ip: ipOf(req).slice(0, 64) }) }
     return json({ ok: true, first: firstName(r.caregiver), client_first: firstName(r.client_name), client_short: shortName(r.client_name), happened_on: r.happened_on,
-      note_words: r.note_words || '', questions: QUESTIONS.map((q) => ({ ...q, label: labelFor(q, r.client_name) })), true_words: TRUE_WORDS,
+      note_words: r.note_words || '', kind: r.kind, questions: questionsFor(r.kind).map((q) => ({ ...q, label: labelFor(q, r.client_name) })), true_words: TRUE_WORDS,
       status: expired ? 'expired' : r.status, practice: r.practice, office_phone: OFFICE_PHONE })
   }
   // submit
   if (r.status !== 'waiting') return json({ error: r.status === 'submitted' ? 'This report is already filled in and signed. Thank you.' : 'This report can no longer be filled in here. Call the office at ' + OFFICE_PHONE + '.' }, 409)
   if (expired) return json({ error: 'This link has expired. Call the office at ' + OFFICE_PHONE + ' for a new one.' }, 410)
-  const answers = cleanAnswers(b?.answers)
-  const missing = answersMissing(answers, r.client_name)
+  const answers = cleanAnswers(b?.answers, r.kind)
+  const missing = answersMissing(answers, r.client_name, r.kind)
   if (missing) return json({ error: missing }, 400)
   if (b?.consent !== true) return json({ error: 'Tick the box to say what you wrote is true.' }, 400)
   const strokes = cleanStrokes(b?.strokes)
@@ -372,9 +388,9 @@ async function caregiverSide(db: Any, req: Request, action: string, b: Any) {
 }
 
 /* ── A practice report for the Desktop step's proof (no client, never on a card) ── */
-async function sample(db: Any) {
+async function sample(db: Any, kind: 'client' | 'employee_injury' = 'client') {
   const token = newToken()
-  const { data: r, error } = await db.from('incident_report').insert({ kind: 'client', practice: true, client_name: 'Test Client', caregiver: 'Test Caregiver',
+  const { data: r, error } = await db.from('incident_report').insert({ kind, practice: true, client_name: kind === 'client' ? 'Test Client' : '', caregiver: 'Test Caregiver',
     happened_on: new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' }), source_item_id: 'practice-sample', token_hash: await sha256(token),
     expires_at: new Date(Date.now() + 36e5).toISOString(), started_by: 'desktop-step', started_by_name: 'Desktop step', sent_at: new Date().toISOString() }).select('id').single()
   if (error) throw new Error('could not make the sample: ' + error.message)
