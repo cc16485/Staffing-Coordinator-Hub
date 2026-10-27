@@ -16,13 +16,14 @@ const cg = (id, first, last, hire, o = {}) => ({ id, firstName: first, lastName:
 const cl = (id, first, last, o = {}) => ({ id, firstName: first, lastName: last, status: { active: o.active !== false, label: o.active === false ? 'Discharged' : 'Active' }, classes: o.classes ?? [] })
 const visit = (client, caregiver, day, o = {}) => ({ id: `${client}-${caregiver}-${day}`, client: { id: client }, caregiver: { id: caregiver },
   clockIn: o.noOut === 'in' ? null : { time: day + 'T15:00:00Z' }, clockOut: o.noOut ? null : { time: day + 'T19:00:00Z' }, removed: !!o.removed })
-let T, AX, SENT, AXDOWN, ISSUEDOWN, OPTDOWN
+let T, AX, SENT, AXDOWN, ISSUEDOWN, OPTDOWN, MSGS, CONTACTS, FAILMSG
 const reset = () => {
-  AXDOWN = false; ISSUEDOWN = false; OPTDOWN = false; SENT = []
+  AXDOWN = false; ISSUEDOWN = false; OPTDOWN = false; SENT = []; MSGS = []; CONTACTS = {}; FAILMSG = ''
   AX = {
     caregivers: [cg(1, 'Ann', 'Able', '2026-09-01'), cg(2, 'Bea', 'Best', '2026-11-01'), cg(3, 'Cal', 'Cole', '2026-09-01'), cg(4, 'Dee', 'Dunn', '2026-09-01', { active: false }),
       cg(5, 'Eve', 'East', '2026-09-01'), cg(6, 'Fay', 'Ford', '2026-09-01', { phone: '' }), cg(7, 'Gus', 'Gray', '2026-06-01'), cg(8, 'Pat', 'Practice', '2026-09-01', { phone: '4175550183', email: 'pat@practice.invalid' }),
-      cg(9, 'Ida', 'Ivy', ''), cg(10, 'Jan', 'Jolly', '', { phone: '', email: '' }), cg(11, 'Canceled', 'Shift', '2026-10-16', { phone: '', email: '' })],
+      cg(9, 'Ida', 'Ivy', ''), cg(10, 'Jan', 'Jolly', '', { phone: '', email: '' }), cg(11, 'Canceled', 'Shift', '2026-10-16', { phone: '', email: '' }),
+      cg(12, 'Kris', 'Lane', '2026-09-01'), cg(13, 'Zed', 'Owner', '2026-09-01', { email: 'zed@mo-care.com' })],
     clients: [cl(101, 'Rose', 'Ridge'), cl(102, 'Bob', 'Bell'), cl(103, 'Cara', 'Cross', { classes: [{ code: 'L2', label: 'Level 2 - Personal Care' }, { code: 'LTC', label: 'Long Term Care Insurance' }] }),
       cl(104, 'Dan', 'Dale'), cl(105, 'Eli', 'Elm'), cl(106, 'Flo', 'Fern'), cl(107, 'Gil', 'Gold'), cl(108, 'Hal', 'Hart'),
       cl(109, 'Ivy', 'Ink', { classes: [{ code: 'L1', label: 'Level 1 - Wellness Care' }, { code: 'PP', label: 'Private Pay' }] }), cl(110, 'Jo', 'Jay'), cl(111, 'Kim', 'Lee'),
@@ -83,7 +84,13 @@ const reset = () => {
       { address: 'fay@example.com', channel: 'email', opted_out: true, source: 'stop' }],
     job_applicants: [{ phone: '(417) 555-0005', sms_consent: false, created_at: '2026-08-01' }, { phone: '4175550001', sms_consent: true, created_at: '2026-08-01' }],
     client_pause: [{ axiscare_client_id: '112', status: 'open' }],
-    person_role: [], person_source_id: [],
+    person_role: [], person_source_id: [], phone_index: [], ff_invites: [], ff_card_requests: [],
+    /* the office: Sam and Kry sign in; Kris Lane (by name) and Zed (by email) are office staff who are also AxisCare caregivers */
+    staff_roles: [{ person_id: 'p-s', entity: 'cc_ihs', role: 'owner_admin' }, { person_id: 'p-k', entity: 'cc_ihs', role: 'care_coordinator' }, { person_id: 'p-kl', entity: 'cc_ihs', role: 'care_coordinator' }, { person_id: 'p-z', entity: 'cc_ihs', role: 'owner_admin' }],
+    persons: [{ person_id: 'p-s', full_name: 'Sam Boss', primary_email: 'sam@mo-care.com', active: true }, { person_id: 'p-k', full_name: 'Kry Desk', primary_email: 'kry@mo-care.com', active: true },
+      { person_id: 'p-kl', full_name: 'Kris Lane', primary_email: 'kris.lane@mo-care.com', active: true }, { person_id: 'p-z', full_name: 'Zachary Owner', primary_email: 'zed@mo-care.com', active: true }],
+    auth_identities: [{ auth_user_id: 'u-s', project_ref: 'zngsgedlsxinbygwmxwn', person_id: 'p-s' }, { auth_user_id: 'u-k', project_ref: 'zngsgedlsxinbygwmxwn', person_id: 'p-k' }],
+    entity_memberships: [{ person_id: 'p-s', entity: 'cc_ihs', active: true }, { person_id: 'p-k', entity: 'cc_ihs', active: true }],
     ff_invite_runs: [{ run_day: '2026-10-01', ok: true, people: [] }, { run_day: '2026-10-25', ok: true, people: [] }]
   }
 }
@@ -109,13 +116,21 @@ function q(t) {
       if (bad.length) { (T._bad_cols = T._bad_cols || []).push(t + ': ' + bad.join(', ')); return { data: null, error: { message: `column ${t}.${bad[0]} does not exist` } } } }
     if (t === 'client_issue' && ISSUEDOWN) return { data: null, error: { message: 'down' } }
     if (t === 'contact_optout_current' && OPTDOWN) return { data: null, error: { message: 'down' } }
-    if (st.op === 'upsert') {
-      const list = T[t] = T[t] || []; const i = list.findIndex((r) => r.run_day === st.row.run_day)
-      if (i >= 0) list[i] = clone(st.row); else list.push(clone(st.row)); return { data: null, error: null }
+    if (st.op === 'upsert') {   /* ON CONFLICT DO UPDATE: only the columns given change */
+      const k = st.conflict || 'run_day', list = T[t] = T[t] || []; const i = list.findIndex((r) => r[k] === st.row[k])
+      if (i >= 0) Object.assign(list[i], clone(st.row)); else list.push(clone(st.row)); return { data: null, error: null }
     }
-    if (st.op === 'update' || st.op === 'insert') { (T['_w_' + t] = T['_w_' + t] || []).push(st.row); return { data: null, error: null } }
+    if (st.op === 'insert') { const list = T[t] = T[t] || []; list.push({ id: list.length + 1, created_at: new Date().toISOString(), ...clone(st.row) }); return { data: null, error: null } }
     let rows = rowsOf().filter((r) => st.f.every((fn) => fn(r)))
+    if (st.op === 'update') {
+      if (t === 'app_data') { for (const r of rows) T.app_data[r.key] = clone(st.row.data); (T._w_app_data = T._w_app_data || []).push(rows.map((r) => r.key)) }
+      else for (const r of rows) Object.assign(r, clone(st.row))
+      return { data: null, error: null }
+    }
     if (st.op === 'delete') { T[t] = (T[t] || []).filter((r) => !rows.includes(r)); return { data: null, error: null } }
+    if (st.head) return { data: null, count: rows.length, error: null }
+    if (st.order) rows = rows.sort((x, y) => (String(x[st.order.c]) < String(y[st.order.c]) ? -1 : 1) * (st.order.asc ? 1 : -1))
+    if (st.limit) rows = rows.slice(0, st.limit)
     return { data: st.single ? (rows[0] ? clone(rows[0]) : null) : clone(rows), error: null }
   }
   const b = new Proxy({}, { get: (_, k) => {
@@ -126,16 +141,30 @@ function q(t) {
     if (k === 'lt') return (a, v) => { st.f.push((r) => String(r[a]) < String(v)); return b }
     if (k === 'gte') return (a, v) => { st.f.push((r) => String(r[a]) >= String(v)); return b }
     if (k === 'or') return (expr) => { const m = /^state\.not\.in\.\(([^)]*)\),resolved_at\.gte\.(.+)$/.exec(expr); const closed = m[1].split(','); st.f.push((r) => !closed.includes(r.state) || (r.resolved_at && String(r.resolved_at) >= m[2])); return b }
-    if (k === 'upsert' || k === 'update' || k === 'insert') return (r) => { st.op = k; st.row = r; return b }
+    if (k === 'upsert' || k === 'update' || k === 'insert') return (r, o) => { st.op = k; st.row = r; st.conflict = o?.onConflict; return b }
+    if (k === 'order') return (c, o) => { st.order = { c, asc: o?.ascending !== false }; return b }
+    if (k === 'limit') return (n) => { st.limit = n; return b }
     if (k === 'delete') return () => { st.op = 'delete'; return b }
-    if (k === 'select') return (cols) => { st.cols = String(cols ?? '*'); return b }
+    if (k === 'select') return (cols, o) => { st.cols = String(cols ?? '*'); if (o?.head) st.head = true; return b }
     if (k === 'single' || k === 'maybeSingle') return () => { st.single = true; return Promise.resolve(run()) }
     return () => b } })
   return b
 }
-globalThis.__db = { from: q, rpc: async () => ({ data: null, error: null }) }
+const USERS = { 'jwt-sam': { id: 'u-s' }, 'jwt-kry': { id: 'u-k' } }
+globalThis.__db = { from: q, auth: { getUser: async (jwt) => USERS[jwt] ? { data: { user: { ...USERS[jwt], app_metadata: {} } }, error: null } : { data: null, error: { message: 'bad jwt' } } },
+  rpc: async (fn, a) => {
+    if (fn === 'upsert_app_data_item') { const list = T.app_data[a.target_key] = Array.isArray(T.app_data[a.target_key]) ? T.app_data[a.target_key] : []; const i = list.findIndex((x) => x.id === a.item.id); if (i >= 0) list[i] = clone(a.item); else list.push(clone(a.item)) }
+    return { data: null, error: null } } }
 let AXREADS = 0
 globalThis.fetch = async (url, o = {}) => { const u = String(url)
+  if (u.includes('leadconnectorhq.com')) {
+    const body = o.body ? JSON.parse(o.body) : {}
+    if (u.includes('/conversations/messages')) { if (FAILMSG && body.type === FAILMSG) return new Response('{"message":"nope"}', { status: 500 }); MSGS.push(body); return new Response(JSON.stringify({ messageId: 'm' + MSGS.length }), { status: 200 }) }
+    const id = 'c-' + (body.email || body.phone || decodeURIComponent(u.split('/').pop() || 'x'))
+    CONTACTS[id] = body.email || body.phone || CONTACTS[id] || ''
+    if (/\/contacts\/[^/?]+$/.test(u) && (!o.method || o.method === 'GET')) return new Response(JSON.stringify({ contact: { id: decodeURIComponent(u.split('/').pop()), dnd: false } }), { status: 200 })
+    return new Response(JSON.stringify({ contacts: [], contact: { id, dnd: false } }), { status: 200 })
+  }
   if (!u.includes('.axiscare.com')) { SENT.push(u); return new Response('{}', { status: 200 }) }
   AXREADS++
   if (u.includes('/api/visits')) {
@@ -149,7 +178,7 @@ globalThis.fetch = async (url, o = {}) => { const u = String(url)
   if (u.includes('/api/clients')) return new Response(JSON.stringify({ results: { clients: AX.clients } }), { status: 200 })
   return new Response('{}', { status: 404 }) }
 const JOBSEC = 'j'.repeat(64)
-const ENV = { SUPABASE_URL: 'https://x.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'svc_' + 'k'.repeat(60), HUB_JOB_SECRET: JOBSEC, AXISCARE_TOKEN: 'ax', AXISCARE_SITE: '16485' }
+const ENV = { SUPABASE_URL: 'https://x.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'svc_' + 'k'.repeat(60), HUB_JOB_SECRET: JOBSEC, AXISCARE_TOKEN: 'ax', AXISCARE_SITE: '16485', GHL_TOKEN: 'g', GHL_LOCATION_ID: 'loc' }
 let handler; globalThis.Deno = { env: { get: (k) => ENV[k] }, serve: (h) => { handler = h } }
 const F = 'supabase/functions', tmp = fs.mkdtempSync(path.join(process.cwd(), '_ffi_'))
 const shared = (s) => s.replace(/from '\.\.\/_shared\/([\w-]+)\.(ts|js)'/g, (_, m, e) => "from '" + path.join(tmp, m + '.' + e) + "'").replace(/from '\.\/([\w-]+)\.(ts|js)'/g, (_, m, e) => "from '" + path.join(tmp, m + '.' + e) + "'")
@@ -218,9 +247,86 @@ try {
   await call()
   ck('running it again the same day replaces the row (still one for the day)', T.ff_invite_runs.filter((x) => x.run_day === '2026-11-20').length === 1)
 
-  /* ── the switch ON still sends nothing in this step ── */
+  ck('office staff who are also AxisCare caregivers are left out (Kris Lane by name, Zed by email)', !row(j, 'cg_12') && !row(j, 'cg_13'))
+  ck('switch OFF: nothing goes to GoHighLevel at all, 0 sent', j.sent === 0 && MSGS.length === 0 && !Object.keys(CONTACTS).length)
+
+  /* ── STEP 4: the switch ON, a Friday 9 AM ── */
+  const owner = async (jwt, body) => { const x = await handler(new Request('https://x/fn', { method: 'POST', headers: { Authorization: 'Bearer ' + jwt, 'Content-Type': 'application/json' }, body: JSON.stringify(body) })); return { s: x.status, j: await x.json() } }
+  const orgsF = () => (T.app_data.referral_orgs || []).filter((o) => o.program_track === 'friends')
+  const msgTo = (addr) => MSGS.filter((m) => CONTACTS[m.contactId] === addr)
   reset(); T.app_data.ops_settings.ff_invites_live = true; r = await call()
-  ck('with the switch ON, step 3 still sends nothing (the sending part comes in step 4)', r.j.live === true && r.j.sent === 0 && SENT.length === 0, { SENT })
+  ck('switch ON: every READY person is invited once (3 caregivers, 4 family members), the run row says 7 sent', r.j.sent === 7 && T.ff_invite_runs.find((x) => x.run_day === '2026-11-20')?.sent === 7, { sent: r.j.sent, to: r.j.sent_to })
+  ck('...nobody waiting or held got anything (Bea, Cal, Deb, Sam Ridge, Gina, the shared inbox)', ['bea@example.com', 'cal@example.com', 'deb@example.com', 'sam@example.com', 'gina@example.com', 'shared@example.com'].every((e) => !msgTo(e).length), MSGS.map((m) => CONTACTS[m.contactId]))
+  const ann = orgsF().find((o) => o.ff_key === 'cg_1'), annText = MSGS.find((m) => m.type === 'SMS' && /^Hi Ann!/.test(m.message || ''))
+  ck('Ann gets her own link, made automatically: a Friends & Family partner record (kept off coordinator lists)', ann && /^ANN-[A-HJ-NP-Z2-9]{2}$/.test(ann.partner_code) && ann.type === 'Friends & Family' && ann.program_status === 'active', ann)
+  ck("Ann's text is the approved wording with her link, from the office line", annText && annText.message.startsWith('Hi Ann! Thank you for being part of the Caring Companions team! 💙 Did you know you can help more families') && annText.message.includes('$100 bonus on your paycheck') && annText.message.includes('https://mo-care.com/r/?p=' + ann.partner_code) && /Reply STOP to opt out\.$/.test(annText.message) && annText.fromNumber === '+14172348494', annText)
+  const annMail = msgTo('ann@example.com')[0]
+  ck('...and the approved email, subject and her Refer a Friend page', annMail && annMail.type === 'Email' && annMail.subject === 'Thank you, and a way to help more families' && annMail.html.includes('https://mo-care.com/refer-a-friend/?p=' + ann.partner_code) && annMail.html.includes('$100 bonus on your paycheck'), annMail)
+  ck('Eve (no to texts) gets the email only', msgTo('eve@example.com').length === 1 && !MSGS.some((m) => m.type === 'SMS' && /^Hi Eve!/.test(m.message || '')))
+  const dana = msgTo('dana@example.com')[0], rose = msgTo('rose@example.com')[0]
+  ck("Dana (family) gets the family email only: the credit goes on Rose Ridge's next invoice", dana && dana.subject === 'A thank-you from Caring Companions' && dana.html.includes('$100 credit on Rose Ridge&#39;s next invoice') && !MSGS.some((m) => m.type === 'SMS' && /grateful/.test(m.message || '')), dana)
+  ck('Rose herself (the client) reads "your next invoice"', rose && rose.html.includes('$100 credit on your next invoice'), rose)
+  ck('Carl (LTC insurance) is invited too', msgTo('carl@example.com').length === 1)
+  ck('each invitation is recorded (sent), with no address kept', T.ff_invites.length === 7 && T.ff_invites.every((x) => x.status === 'sent' && x.code && x.first_sent_at) && !/@example|4175550/.test(JSON.stringify(T.ff_invites)), T.ff_invites)
+  ck('7 personal links made, all different', orgsF().length === 7 && new Set(orgsF().map((o) => o.partner_code)).size === 7)
+  const before = MSGS.length; r = await call()
+  ck('the next run: nobody is invited twice', MSGS.length === before && r.j.sent === 0 && orgsF().length === 7)
+  ck("...and today's list shows them as invited", row(r.j, 'cg_1')?.invited?.status === 'sent')
+
+  /* paused, weekend, opt-out, refusals */
+  reset(); T.app_data.ops_settings.ff_invites_live = true; T.app_data.ops_settings.ff_program_paused = true; r = await call()
+  ck('program PAUSED: nothing sent', r.j.sent === 0 && !MSGS.length)
+  reset(); T.app_data.ops_settings.ff_invites_live = true; NOW = Date.parse('2026-11-21T15:00:00Z'); r = await call()
+  ck('a Saturday: nothing sent, and the run says they wait for the next weekday', r.j.sent === 0 && !MSGS.length && /next weekday morning/.test(r.j.held.join()), r.j.held)
+  NOW = Date.parse('2026-11-20T15:00:00Z')
+  reset(); T.app_data.ops_settings.ff_invites_live = true; T.contact_optout_current.push({ address: 'dana@example.com', channel: 'email', opted_out: true, source: 'stop' }); r = await call()
+  ck('an opt-out recorded today is respected (Dana held, never emailed)', !msgTo('dana@example.com').length && row(r.j, 'fam_1')?.status === 'held')
+  reset(); T.app_data.ops_settings.ff_invites_live = true; FAILMSG = 'Email'; r = await call()
+  const annRow = T.ff_invites.find((x) => x.person_key === 'cg_1'), dRow = T.ff_invites.find((x) => x.person_key === 'fam_1')
+  ck('GoHighLevel refuses the emails: Ann is "partial" (her text went), Dana "failed", and a Needs Attention card is raised', annRow?.status === 'partial' && dRow?.status === 'failed' && (T.app_data.ops_items || []).some((x) => x.sender === 'ff-invite-check'), { annRow, dRow })
+  FAILMSG = ''; const b2 = MSGS.length; await call()
+  ck('...a failed invitation is not retried by itself (an owner can Resend)', MSGS.length === b2)
+
+  /* ── the owner actions (Hub, signed in) ── */
+  reset(); await call()
+  r = await owner('jwt-kry', { action: 'list' }); ck('a Care Coordinator is refused (owners only)', r.s === 403, r)
+  r = await owner('nope', { action: 'list' }); ck('no sign-in: refused', r.s === 401, r)
+  r = await owner('jwt-sam', { action: 'list' })
+  ck("an owner lists today's run, the invitations and the switches", r.s === 200 && r.j.run?.run_day === '2026-11-20' && Array.isArray(r.j.invites) && r.j.switches.live === false && r.j.switches.paused === false && r.j.cap === 60, r.j)
+  r = await owner('jwt-sam', { action: 'skip', key: 'cg_1', name: 'Ann Able' }); ck('Skip needs a reason', r.s === 400)
+  r = await owner('jwt-sam', { action: 'skip', key: 'cg_1', name: 'Ann Able', why: 'She asked us not to' }); ck('Skip with a reason is saved', r.s === 200 && T.ff_invites.find((x) => x.person_key === 'cg_1')?.status === 'skipped')
+  r = await owner('jwt-sam', { action: 'switch', name: 'ff_invites_live', on: true })
+  ck('an owner turns invitations ON from the tab: saved with who and when', r.s === 200 && T.app_data.ops_settings.ff_invites_live === true && T.app_data.ops_settings.ff_switch_log.at(-1).by === 'Sam Boss', T.app_data.ops_settings.ff_switch_log)
+  r = await owner('jwt-sam', { action: 'switch', name: 'team_work_live', on: false }); ck('only the two Friends & Family switches can be changed here', r.s === 400 && T.app_data.ops_settings.team_work_live === undefined)
+  r = await call()
+  ck('a skipped person is held with the reason, and not invited', row(r.j, 'cg_1')?.status === 'held' && /Skipped: She asked us not to \(Sam Boss\)/.test(row(r.j, 'cg_1').why[0]) && !MSGS.some((m) => /^Hi Ann!/.test(m.message || '')) && r.j.sent === 6, row(r.j, 'cg_1'))
+  r = await owner('jwt-sam', { action: 'unskip', key: 'cg_1' }); ck('Undo skip: back on the list', r.s === 200 && !T.ff_invites.find((x) => x.person_key === 'cg_1'))
+  const b3 = msgTo('dana@example.com').length
+  r = await owner('jwt-sam', { action: 'resend', key: 'fam_1' })
+  ck('Resend: Dana gets it again, same link, counted (2 sends)', r.s === 200 && msgTo('dana@example.com').length === b3 + 1 && T.ff_invites.find((x) => x.person_key === 'fam_1')?.sends === 2 && orgsF().filter((o) => o.ff_key === 'fam_1').length === 1, r.j)
+  r = await owner('jwt-sam', { action: 'resend', key: 'fam_10' }); ck('Resend for someone held says why, sends nothing', r.s === 409 && /Open red shift-note flag/.test(r.j.error), r.j)
+  await owner('jwt-sam', { action: 'switch', name: 'ff_program_paused', on: true }); r = await owner('jwt-sam', { action: 'resend', key: 'fam_1' })
+  ck('Resend while paused is refused', r.s === 409 && /paused/.test(r.j.error), r.j)
+
+  /* ── the printed card request (mo-care.com/refer-a-friend) ── */
+  let handler2; globalThis.Deno.serve = (h) => { handler2 = h }
+  fs.writeFileSync(path.join(tmp, 'card.ts'), shared(fs.readFileSync(path.join(F, 'ff-card-request/index.ts'), 'utf8')))
+  await import(path.join(tmp, 'card.ts'))
+  const card = async (body) => { const x = await handler2(new Request('https://x/card', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: 'https://mo-care.com' }, body: JSON.stringify(body) })); return { s: x.status, j: await x.json(), cors: x.headers.get('access-control-allow-origin') } }
+  const code = orgsF().find((o) => o.ff_key === 'fam_1').partner_code
+  MSGS = []; r = await card({ code, mail_to: 'Dana Ridge', address: '12 Elm St\nNixa MO 65714', how_many: 25 })
+  const mail = msgTo('samantha@mo-care.com')[0]
+  ck('a card request emails Samantha: who, their code, how many, where to mail', r.s === 200 && r.cors === '*' && mail && mail.subject === 'Printed referral cards for Dana Ridge' && mail.html.includes(code) && mail.html.includes('How many: 25') && mail.html.includes('12 Elm St<br>Nixa MO 65714') && /family of Rose Ridge/.test(mail.html), { r, mail })
+  ck('...the server keeps only the code, the count and that it went (no address)', T.ff_card_requests.length === 1 && T.ff_card_requests[0].emailed === true && !JSON.stringify(T.ff_card_requests).includes('Elm'), T.ff_card_requests)
+  r = await card({ code, mail_to: 'Dana Ridge', address: '12 Elm St, Nixa MO 65714' }); ck('a second request the same day: "already have it", no second email', r.s === 200 && r.j.already === true && msgTo('samantha@mo-care.com').length === 1, r)
+  r = await card({ code: 'NOPE-99', mail_to: 'X', address: '1 Main St, Ozark MO' }); ck('an unknown code: not found, call us', r.s === 404 && /call us/i.test(r.j.error))
+  ;(T.app_data.referral_orgs = T.app_data.referral_orgs || []).push({ id: 'org-pro', name: 'Mercy Hospital', partner_code: 'MERCY-K7' })
+  r = await card({ code: 'MERCY-K7', mail_to: 'X', address: '1 Main St, Ozark MO' }); ck('a professional partner code is not a Friends & Family page', r.s === 404)
+  r = await card({ code, mail_to: 'Dana', address: 'short' }); ck('an incomplete address is asked for again', r.s === 400 && /mailing address/.test(r.j.error))
+  r = await card({ code, mail_to: 'Bot', address: '1 Bot Lane, Botville', website: 'http://spam' }); ck('the hidden bot field: quietly ignored, nothing emailed', r.s === 200 && msgTo('samantha@mo-care.com').length === 1)
+  T.ff_card_requests = []; FAILMSG = 'Email'; r = await card({ code, mail_to: 'Dana Ridge', address: '12 Elm St, Nixa MO 65714' })
+  ck("the email can't go: the person is told to call, and a Needs Attention card names them", r.s === 502 && /call us/i.test(r.j.error) && (T.app_data.ops_items || []).some((x) => x.sender === 'ff-card-request') && T.ff_card_requests[0]?.emailed === false, r.j)
+  FAILMSG = ''
 
   /* ── dry run ── */
   reset(); r = await call('?dry=1')
@@ -245,8 +351,8 @@ try {
   ck('every one of the six serious kinds waits 30 days after it is resolved', R.SERIOUS.length === 6 && R.SERIOUS.every((c) => R.concernsOf([{ category: c, state: 'resolved', axiscare_client_id: '1', resolved_at: '2026-11-19T15:00:00Z' }], [], {}, '2026-11-20').byAx.size === 1))
   ck('every open issue state but Resolved and "Closed, no action needed" holds', ['reported', 'triaged', 'in_progress', 'waiting', 'resolving', 'follow_up'].every((s) => R.concernsOf([{ category: 'billing_hours_question', state: s, axiscare_client_id: '1' }], [], {}, '2026-11-20').byAx.size === 1))
   /* no em dashes in anything a person reads */
-  const words = fs.readFileSync(path.join(F, '_shared/ff-invite-rules.ts'), 'utf8') + fs.readFileSync(path.join(F, 'ff-invite-check/index.ts'), 'utf8')
-  ck('no em dashes in the code or its words', !words.includes('—'))
+  const words = ['_shared/ff-invite-rules.ts', '_shared/ff-invite-send.ts', 'ff-invite-check/index.ts', 'ff-card-request/index.ts'].map((f) => fs.readFileSync(path.join(F, f), 'utf8')).join('')
+  ck('no em dashes in the code or its words (rules, wording, both functions)', !words.includes('\u2014'))
 } catch (e) { ck('the test ran', false, String(e?.stack || e)) }
 finally { fs.rmSync(tmp, { recursive: true, force: true }) }
 for (const [n, ok, note] of res) console.log((ok ? '  ✓ ' : '  ✗ ') + n + (ok ? '' : '\n      ' + note))
