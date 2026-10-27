@@ -28,6 +28,7 @@
 //           a card for him, saved once. Never on a cancelled report.
 //   findings    { id, findings, outcome, spoke_with }  owner_admin only (Zach, Samantha): what he found and what happens
 //           next; closes his card. Saved once, never changed. Only owner_admin sees the findings words.
+//   (2026-10-27) every signed CLIENT incident report is handed to Zach automatically the moment it is signed (autoToZach).
 //   list    { hr: true }                           owner_admin only: every report, newest first (Zach's Incidents page)
 // ── The caregiver (https://cc.mo-care.com/incident.html?t=<code>; no sign-in)
 //   view    { t }                                 -> { first, client_first, happened_on, questions[], note_words, status, practice }
@@ -230,6 +231,22 @@ async function findings(db: Any, me: Any, r: Any, b: Any) {
   await invCard(db, done, me)
   return json({ ok: true, outcome: INV_OUTCOME[f.outcome] })
 }
+/* Samantha 2026-10-27: "Build it so every signed client incident report goes to Zach automatically to look into."
+   The moment a client incident report is signed it is handed to Zach, with why (and "the office wasn't told" when the
+   caregiver says so). Not a work injury (those are already his). Not when someone already asked him. */
+async function autoToZach(db: Any, r: Any): Promise<void> {
+  if (isInjury(r) || r.inv_asked_at || r.status !== 'submitted') return
+  const a = { why: r.told_late ? ['signed', 'late'] : ['signed'],
+    note: 'Signed by ' + (r.signed_name || r.caregiver) + '. ' + (r.told_late ? 'They say the office was not called or texted when it happened. ' : '') + 'Read it next to the shift notes.' }
+  try {
+    const { data: done } = await db.from('incident_report').update({ inv_ask: a, inv_asked_by: 'system', inv_asked_by_name: 'Automatic', inv_asked_at: new Date().toISOString() })
+      .eq('id', r.id).is('inv_asked_at', null).select('*').maybeSingle()
+    if (!done) return
+    await event(db, r.id, 'investigate', { name: 'Automatic' }, { why: a.why, automatic: true })
+    await invCard(db, done, null)
+  } catch { /* the report is signed either way; the office can still press Ask Zach */ }
+}
+
 /* Zach's card: one per report handed to him; it closes when he writes what he found */
 async function invCard(db: Any, r: Any, closer: Any): Promise<boolean> {
   if (r.practice) return false
@@ -446,6 +463,7 @@ async function caregiverSide(db: Any, req: Request, action: string, b: Any) {
   if (error || !done) return json({ error: 'This report was already filled in or closed. Thank you.' }, 409)
   await event(db, r.id, 'submitted', { name: typed }, { told_late: done.told_late })
   await card(db, done)
+  await autoToZach(db, done)
   const { data: u } = await db.storage.from(BUCKET).createSignedUrl(pdf_path, 600)
   return json({ ok: true, copy_url: u?.signedUrl || null, practice: done.practice })
 }
