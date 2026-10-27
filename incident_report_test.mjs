@@ -228,9 +228,44 @@ r = await call({ action: 'list', caregiver: 'Ashley  Lloyd' })
 ck('a caregiver\'s reports (their Performance tab), with the review', r.s === 200 && r.j.reports.length === 1 && r.j.reports[0].review && r.j.hotline === '1-800-392-0210', r.j)
 ck('...one name is not enough to list', (await call({ action: 'list', caregiver: 'Ashley' })).s === 400)
 
+// ---- Stage 3: the employee work injury report ----
+const inj = { time: '9:40 am', where: "At a client's home", where_more: 'Bathroom, helping with a transfer', what: 'I twisted my back lifting her from the shower chair to the wheelchair.', body: 'lower back',
+  injury: 'Strain or pull', finish: 'No, I had to stop', care: 'I saw a doctor or urgent care', care_where: 'Mercy urgent care, a strain, rest 3 days', saw: 'no one', told: 'I called the office', told_when: '9:50 am, Krystal' }
+ck('injury: its own questions (body part, finished the shift, medical care)', R.questionsFor('employee_injury').some((q) => q.k === 'body') && !R.questionsFor('employee_injury').some((q) => q.k === 'hurt') && R.questionsFor('client') === R.QUESTIONS)
+ck('injury: a full set is complete; seen by a doctor needs where', R.answersMissing(R.cleanAnswers(inj, 'employee_injury'), '', 'employee_injury') === ''
+  && /Where, and what did they say/.test(R.answersMissing(R.cleanAnswers({ ...inj, care_where: '' }, 'employee_injury'), '', 'employee_injury'))
+  && R.answersMissing(R.cleanAnswers({ ...inj, care: "No, I don't need any", care_where: '' }, 'employee_injury'), '', 'employee_injury') === '')
+ck('injury answers never take the client questions (and the other way round)', !('hurt' in R.cleanAnswers({ ...inj, hurt: 'Yes' }, 'employee_injury')) && !('body' in R.cleanAnswers({ ...full, body: 'x' }, 'client')))
+const injRep = { kind: 'employee_injury', caregiver: 'Ashley Lloyd', client_name: '', happened_on: '2026-10-26', started_at: '2026-10-27T15:00:00Z' }
+const dt = R.draftText(injRep, link)
+ck('injury text: sorry you were hurt, the day, the link; no details', /sorry you were hurt/.test(dt) && /work injury report/.test(dt) && dt.includes(link) && !/back|Lloyd|—/.test(dt), dt)
+ck('injury card name: the caregiver, not a client', R.caseName(injRep) === 'Ashley L., Oct 26')
+ck('injury signed card: the workers\' comp checklist, report by 5 days after the office learned of it', /workers' comp checklist \(report it to the insurance by Nov 1\)/.test(R.cardState({ ...injRep, status: 'submitted' }).next), R.cardState({ ...injRep, status: 'submitted' }).next)
+const IR = { medical: { what: 'doctor', note: 'Mercy urgent care, strain' }, comp: { reported: 'yes', when: 'Oct 27 10am', claim: 'WC-123' }, work: { status: 'light', until: 'Nov 3' }, safety: { fix: true, note: 'Shower chair needs a transfer board' } }
+ck('injury review: every question; a claim number; until when for light duty', R.injuryReviewMissing(R.cleanInjuryReview(IR)) === '' && /claim number/.test(R.injuryReviewMissing(R.cleanInjuryReview({ ...IR, comp: { reported: 'yes' } })))
+  && /Until when/.test(R.injuryReviewMissing(R.cleanInjuryReview({ ...IR, work: { status: 'light' } }))) && /medical care/.test(R.injuryReviewMissing(R.cleanInjuryReview({}))))
+const ipdf = Buffer.from(R.reportPdf({ ...injRep, id: 'i1', answers_hash: 'x' }, R.cleanAnswers(inj, 'employee_injury'), { typedName: 'Ashley Lloyd', strokes: sig, at: new Date(), ip: '', agent: '' })).toString('latin1')
+ck('the injury PDF builds', ipdf.startsWith('%PDF'))
+reset({ live: true }); r = await call({ action: 'start', kind: 'employee_injury', source_item_id: 'flag1', caregiver: 'Ashley Lloyd', happened_on: '2026-10-26' })
+ck('a work injury is not started from a shift-note flag', r.s === 400)
+r = await call({ action: 'start', kind: 'employee_injury', caregiver: 'Ashley Lloyd', happened_on: '2026-10-26' }); const Li = r.j.link
+let ic = APP.ops_items.find((x) => x.incident_id === R1().id)
+ck('work injury: no client needed; the card goes to the HR owner, marked sensitive, no client on it', r.s === 200 && R1().kind === 'employee_injury' && ic.domain === 'caregiver_performance' && ic.sensitive === true && ic.client_ax === '' && ic.title === 'Work injury report: Ashley L., Oct 26' && /sorry you were hurt/.test(r.j.draft), ic)
+r = await call({ action: 'view', t: tok(Li) }); ck('her page: the injury questions', r.j.kind === 'employee_injury' && r.j.questions.some((q) => q.k === 'body'))
+r = await call({ action: 'submit', t: tok(Li), answers: { ...inj, body: '' }, typed_name: 'Ashley Lloyd', strokes: sig, consent: true }); ck('a missing injury answer is refused', r.s === 400 && /body/.test(r.j.error))
+r = await call({ action: 'submit', t: tok(Li), answers: inj, typed_name: 'Ashley Lloyd', strokes: sig, consent: true }); ck('she signs it', r.s === 200 && R1().answers.body === 'lower back')
+ic = APP.ops_items.find((x) => x.incident_id === R1().id); ck('...the HR card: do the workers\' comp checklist', /workers' comp checklist/.test(ic.next_action), ic)
+r = await call({ action: 'list', client_ax: '501' }); ck('it never shows on a client\'s profile', r.j.reports.length === 0)
+r = await call({ action: 'list', caregiver: 'Ashley Lloyd' }); ck('...but it shows on hers, with the report-by day', r.j.reports.length === 1 && r.j.reports[0].comp_due && r.j.reports[0].questions.some((q) => q.k === 'body'), r.j)
+r = await call({ action: 'review', id: R1().id, ...IR, comp: {} }); ck('the comp checklist needs every answer', r.s === 400 && /workers' comp/.test(r.j.error))
+r = await call({ action: 'review', id: R1().id, ...IR })
+const sfc = APP.ops_items.find((x) => x.id.startsWith('ops_incsf_'))
+ck('the comp checklist saves, closes the HR card, and a safety fix is its own card', r.s === 200 && /claim WC-123/.test(r.j.summary) && APP.ops_items.find((x) => x.incident_id === R1().id).status === 'done' && sfc && /Fix what caused/.test(sfc.title) && /transfer board/.test(sfc.detail), [r.j, sfc])
+
 // the Desktop step's sample
 reset({ who: null }); OWNERKEY = true; r = await call({ action: 'sample' })
 ck('the sample: a practice report for Test Caregiver, on no card', r.s === 200 && T.incident_report[0].practice && T.incident_report[0].source_item_id === 'practice-sample' && !APP.ops_items.some((x) => x.kind === 'client_issue'))
+r = await call({ action: 'sample', kind: 'employee_injury' }); ck('...and a practice work injury report', r.s === 200 && T.incident_report[1].kind === 'employee_injury' && T.incident_report[1].client_name === '')
 OWNERKEY = false; ck('...only the owner\'s server key can make one', (await call({ action: 'sample' })).s === 401)
 
 SHIFT = 0
