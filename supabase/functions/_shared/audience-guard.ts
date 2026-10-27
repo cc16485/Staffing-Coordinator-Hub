@@ -101,7 +101,7 @@ export function verdict(state: CareState | null, tag: string): { ok: boolean; wh
   return { ok: true }
 }
 /** load everything the guard needs (service role). AxisCare is read live; if it can't be read, client and family sends stop. */
-export async function loadGuard(db: Any): Promise<{ stateOf: (email: string) => CareState | null; axOk: boolean }> {
+export async function loadGuard(db: Any): Promise<{ stateOf: (email: string) => CareState | null; axOk: boolean; axClients: Any[] }> {
   const token = Deno.env.get('AXISCARE_API_KEY') ?? Deno.env.get('AXISCARE_TOKEN') ?? ''
   const site = Deno.env.get('AXISCARE_SITE') ?? Deno.env.get('AXISCARE_SITE_NUMBER') ?? ''
   const axClients: Any[] = []; let axOk = false
@@ -133,5 +133,6 @@ export async function loadGuard(db: Any): Promise<{ stateOf: (email: string) => 
   const keep = (ax: unknown) => !isNotClient(String(ax ?? ''))
   const map = classify({ axClients: axClients.filter((c: Any) => keep(c?.id)), links: links.filter((l: Any) => keep(l.source_id)), roles,
     circles: circles.filter((c: Any) => keep(c.axiscare_client_id)), contacts, leads: leadRow, journeys: journeys.filter((j: Any) => keep(j.axiscare_client_id)), pauses })
-  return { stateOf: (e: string) => map.get(lc(e)) ?? null, axOk }
+  /* ff-invite-check (2026-10-27) reads the same AxisCare client list (status, classes) instead of a second read */
+  return { stateOf: (e: string) => map.get(lc(e)) ?? null, axOk, axClients }
 }
