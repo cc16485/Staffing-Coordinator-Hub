@@ -33,6 +33,9 @@ export const TEXT_NEW = 'Hi {first}, this is Caring Companions. {caregiver} will
   '{cgfirst} has not been out to see {client} before, so here is a little about {cgfirst} first: {link} Questions? Call us at ' + OFFICE + '.'
 
 const S = (v: unknown) => String(v ?? '').trim()
+/* AxisCare's visit list answers 404 when nothing matches the dates (1164 found it on the weeks before the 2026-08 go-live).
+   Only the first page's 404 means "no visits"; a 404 on a later page stays an error. */
+export const emptyVisitAnswer = (status: number, page: number) => status === 404 && page === 0
 export const pairKey = (client: unknown, cg: unknown) => `${S(client)}_${S(cg)}`
 export function addDays(ymd: string, n: number): string {
   return new Date(Date.parse(ymd + 'T12:00:00Z') + n * 864e5).toISOString().slice(0, 10)
@@ -167,6 +170,9 @@ export async function profileIntro(d: IntroDeps, opts: { dry?: boolean } = {}) {
   if (!vis.ok) out.problems.push("AxisCare's upcoming visits couldn't be read: " + S(vis.error))
   if (!hist.ok) out.problems.push("AxisCare's visit history isn't ready: " + S(hist.error))
   if (!vis.ok || !hist.ok) return out   // without both, a caregiver could look new who isn't: nothing goes, the run says why
+  /* an empty answer is "no visits", so two guards keep a wrong AxisCare answer from passing as one */
+  if (!hist.pairs.size) { out.problems.push("AxisCare's visit history came back empty, so every caregiver would look new"); return out }
+  if (!vis.rows.length) out.problems.push('AxisCare shows no visits today or tomorrow')
   const [ledger, introduced] = await Promise.all([d.ledger(), d.introduced()])
   const done = (r: Any) => !!r && (['sent', 'opted_out', 'gave_up', 'not_wanted', 'no_time'].includes(r.status) || (!live && r.status === 'practice'))
   /* one decision per caregiver-client pair: their earliest upcoming visit */

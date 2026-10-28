@@ -12,7 +12,7 @@ const visit = (v = {}) => ({ id: 'v1', client: '55', clientName: 'Dorothy Ray', 
 let NOW, S
 function world(o = {}) {
   S = { st: { profile_intro_approved: { by: 'Samantha' }, profile_intro_live: true, ...(o.st || {}) },
-    visits: o.visits ?? [visit()], pairs: new Set(o.pairs || []), clients: new Set(o.clients || []), introduced: new Set(o.introduced || []),
+    visits: o.visits ?? [visit()], pairs: new Set(o.pairs || ['77_123']), clients: new Set(o.clients || []), introduced: new Set(o.introduced || []),
     ledger: new Map((o.ledger || []).map((r) => [r.id, r])), profile: 'profile' in o ? o.profile : sarah,
     circle: 'circle' in o ? o.circle : { id: 'circ1' }, contacts: o.contacts ?? [linda], cc: 'krystal@mo-care.com',
     sends: [], logs: [], items: [], closed: [], saved: [], sendResult: o.sendResult || (() => ({ ok: true })), histOk: o.histOk ?? true, visOk: o.visOk ?? true }
@@ -68,6 +68,13 @@ ck('Settings wording replaces the new-caregiver text', S.sends[0].text === 'Hell
 ck('no em dash in either default text', !/—/.test(P.TEXT_FIRST + P.TEXT_NEW))
 
 /* ── who is new ── */
+// AxisCare answers 404 for dates with no visits (1164, the weeks before go-live): first page only
+ck('404 on the first page is "no visits"', P.emptyVisitAnswer(404, 0) === true)
+ck('404 on a later page stays an error, and other answers are not empty', !P.emptyVisitAnswer(404, 1) && !P.emptyVisitAnswer(500, 0) && !P.emptyVisitAnswer(200, 0))
+world({ pairs: [], clients: [] }); r = await run()
+ck('a year of history that came back empty: nothing goes, said why', S.sends.length === 0 && !r.would.length && r.problems.some((x) => x.includes('came back empty')), r)
+world({ visits: [] }); r = await run()
+ck('no visits today or tomorrow is said, not silent', r.problems.some((x) => x.includes('no visits today or tomorrow')), r)
 world({ pairs: ['55_900'] }); r = await run()
 ck('Sarah visited Dorothy in the last year: nothing', S.sends.length === 0 && r.new_pairs === 0)
 world({ introduced: ['55_900'] }); await run()
