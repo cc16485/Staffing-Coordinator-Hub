@@ -26,6 +26,7 @@ export const SENDER_WORDS: Record<string, [string, string]> = {
   'interview-messages': ['interview confirmation / reminder', 'caregivers'],
   'talk-notify': ['To talk about email to staff', 'client_care'],
   'reference-chase': ['reference request', 'caregivers'],
+  'what-to-expect': ['what to expect text to a new lead', 'family_enquiries'],
   'reference-send': ['reference form', 'caregivers'],
   'applicant-invite': ['application link', 'caregivers'],
   'applicant-noshow': ['interview no-show message', 'caregivers'],

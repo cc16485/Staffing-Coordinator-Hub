@@ -886,10 +886,28 @@
     const pay = l.funding_source ? PAYER_WORDS[l.funding_source] || l.funding_source : '';
     return parts.join(' → ') + (pay ? ' · ' + pay : '') + (desiredStartWords(l, today) ? ' · ' + desiredStartWords(l, today).replace(/^\w/, c => c.toLowerCase()) : '') + (scheduleWords(l) ? ' · ' + scheduleWords(l) : '');
   }
-  function yesThanks(l, ctx){
+  /* a family text a person sends from a button (her words, or Settings' wording): yes_thanks after the yes, after_call after a call */
+  function familyText(key, l, ctx){
     ctx = ctx || {}; const client = (l.client_first_name || '').trim(), caller = (l.first_name || '').trim();
-    const v = { first:caller || 'there', client:client && client !== caller ? client : 'your loved one', me:String(ctx.me || 'your Care Coordinator').split(' ')[0] };
-    return fill(String((ctx.scripts && ctx.scripts.yes_thanks) || SCRIPT_DEFAULT.yes_thanks), v);
+    const v = { first:caller || 'there', client:client && client !== caller ? client : 'your loved one', me:meWord(ctx.me) };
+    return fill(String((ctx.scripts && String(ctx.scripts[key] || '').trim()) || SCRIPT_DEFAULT[key]), v);
+  }
+  /* the sender's first name; an email address or nothing reads "your Care Coordinator" (never "This is your with...") */
+  function meWord(me){ const w = String(me || '').trim(); return w && w.indexOf('@') < 0 ? w.split(/\s+/)[0] : 'your Care Coordinator'; }
+  function yesThanks(l, ctx){ return familyText('yes_thanks', l, ctx); }
+  function afterCall(l, ctx){ return familyText('after_call', l, ctx); }
+  function afterCallAuto(l, ctx){ return familyText('after_call_auto', l, ctx); }
+  /* a lead MADE from a call we talked on (Make this a lead, the "New family?" Yes): the form was filled from the call when the lead
+     was created, not a call added to an older lead later */
+  function madeFromCall(l){
+    const f = Date.parse(l && l.filled_from_calls_at || ''), c = Date.parse(l && l.created_at || '');
+    return !!(l && l.first_human_contact_at && Array.isArray(l.from_calls) && l.from_calls.length && f && c && Math.abs(f - c) <= 15 * 60000);
+  }
+  /* the what-to-expect text belongs after we have talked with them, before the yes, once (the button hides after it is sent,
+     and while the automatic text is on, a lead made from a call gets that one instead: ctx.autoLive) */
+  function afterCallDue(l, ctx){
+    if(!(l && l.phone && l.first_human_contact_at && !l.said_yes_at && !l.what_to_expect_sent_at && !l.do_not_contact && !l.auto_msgs_stopped_at && l.status !== 'Lost' && l.status !== 'Saved')) return false;
+    return !(ctx && ctx.autoLive && madeFromCall(l));
   }
 
   /* ── the move-over (installer): what an old lead gets, as a patch, or null when nothing is missing ─────────────── */
@@ -1102,9 +1120,11 @@
   }
   /* the script line for the moment the board row says we are in. Her words are the defaults; Settings can replace each
      one (ctx.scripts {key:text}). Fill-ins: {first} {client} {me} {when} {why} {start} {referral}. Never sent by itself. */
-  const SCRIPT_KEYS = ['first_call', 'voicemail', 'replied', 'promise', 'authorized', 'check_back_state', 'check_back_family', 'unable_to_reach', 'asmt_booked', 'urgent_start', 'followup', 'yes_thanks'];
+  const SCRIPT_KEYS = ['first_call', 'voicemail', 'replied', 'promise', 'authorized', 'check_back_state', 'check_back_family', 'unable_to_reach', 'asmt_booked', 'urgent_start', 'followup', 'yes_thanks', 'after_call', 'after_call_auto'];
   const SCRIPT_LABEL = { first_call:'First call', voicemail:'Voicemail', replied:'They replied', promise:'The call we promised', authorized:'The state authorized', check_back_state:'Check-back, waiting on the state',
-    check_back_family:'Check-back, family deciding or not ready', unable_to_reach:'Unable to reach, one more try', asmt_booked:'Assessment confirmation', urgent_start:'Needs care soon, book the visit', followup:'A follow-up', yes_thanks:'Thank-you text when they say yes (goes out only when you send it)' };
+    check_back_family:'Check-back, family deciding or not ready', unable_to_reach:'Unable to reach, one more try', asmt_booked:'Assessment confirmation', urgent_start:'Needs care soon, book the visit', followup:'A follow-up', yes_thanks:'Thank-you text when they say yes (goes out only when you send it)',
+    after_call:'What to expect text after a call (goes out only when you send it)',
+    after_call_auto:'What to expect text, sent automatically once when a call is made into a lead (7 AM to 8 PM)' };
   const SCRIPT_DEFAULT = {   /* her words (reviewed 2026-10-07): conversation starters, never sent by themselves */
     first_call:'Hi {first}, this is {me} with Caring Companions. Thank you for reaching out about care for {client}. I would love to learn a little more about what is going on, what help would make things easier right now, and what you are hoping care could look like. Then I can walk you through how we may be able to help.',
     voicemail:'Hi {first}, this is {me} with Caring Companions. I am following up about care for {client}. I am sorry I missed you. I would be happy to answer any questions and learn a little more about what kind of help you are looking for. You can call or text me back at (417) 234-8494. I will also try you again soon.',
@@ -1118,6 +1138,10 @@
     urgent_start:'Hi {first}, since you are hoping to start care {start}, I would like to get your in-home visit scheduled so we can learn more about {client}\'s needs and start working on the right caregiver match. I have [option 1] or [option 2] available. Would either of those work for you?',
     followup:'Hi {first}, this is {me} with Caring Companions. I wanted to follow up about {client}{why}. How are things going?',
     yes_thanks:'Hi {first}, thank you for choosing Caring Companions to care for {client}. I am {me}, your Care Coordinator, and I will be here to help you through the process. Our next steps are to finalize the care schedule, match the right caregiver, and make sure everyone is ready for a great first day. I will keep you updated along the way, and you can always call or text us at (417) 234-8494 if you need anything.',
+    after_call:'Hi {first}! This is {me} with Caring Companions. It was nice speaking with you today about {client}!\n\nI wanted to send you some information about our services and what you can expect when working with us. You can take a look whenever you have a chance!\n\nmo-care.com/what-to-expect\n\nPlease don\'t hesitate to reach out if you have any questions. We\'re happy to help!',   /* her words 2026-10-28 */
+    /* her approved exception 2026-10-28 ("send the what-to-expect text automatically when a coordinator makes a call into a lead,
+       using the safer wording"): no "today" (a text held overnight goes the next morning), no "speaking with you" */
+    after_call_auto:'Hi {first}! This is {me} with Caring Companions. Thank you for talking with us about care for {client}!\n\nI wanted to send you some information about our services and what you can expect when working with us. You can take a look whenever you have a chance!\n\nmo-care.com/what-to-expect\n\nPlease don\'t hesitate to reach out if you have any questions. We\'re happy to help!',
   };
   const SCRIPT_HINT = {
     first_call:{ Website:'They filled in the website form; they may not remember every detail, so start from what they wrote.', Phone:'They called us first; pick up where that call left off.', Referral:'{referral} sent them; say so, families trust the hand-off.' },
@@ -1352,7 +1376,7 @@
     markAuthorized, authorizationPending, stateDays, DSDS_AMBER_DAYS, DSDS_RED_DAYS, median, ownerNumbers, periodNumbers, leadNext, nextWords, setNext, STATUSES, setStatus, statusBeforeLost,
     STEP_KEYS, steps, timeline, SCRIPT_KEYS, SCRIPT_LABEL, SCRIPT_DEFAULT, scriptFor, timeCats, staffingLook, whenWords, RUNGS_DEFAULT, RUNG_WORDS, rungSettings, rungsDue, stampRung, oneText,
     SUBTYPE_LABEL, SUBTYPE_KEYS, PROFESSIONAL, referralSubtype, flags, PARTNER_KINDS, PARTNER_LABEL, PARTNER_DEFAULT, partnerName, partnerLoop, recordPartnerMsg, MEDICAID_LONG_DAYS, medicaidPipeline, missingRequired,
-    ASMT_TARGET_DAYS, DECISION_DAYS, stageWord, oneNext, FAMILY_REASONS, assessmentOverdue, decisionStale, cadenceNext, medicaidLong, carriedForward, yesThanks };
+    ASMT_TARGET_DAYS, DECISION_DAYS, stageWord, oneNext, FAMILY_REASONS, assessmentOverdue, decisionStale, cadenceNext, medicaidLong, carriedForward, yesThanks, afterCall, afterCallAuto, madeFromCall, afterCallDue };
   if(typeof module !== 'undefined' && module.exports) module.exports = api;
   root.LeadRules = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
