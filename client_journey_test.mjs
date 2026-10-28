@@ -501,8 +501,15 @@ try {
     AX.visits[0].caregiver = { id: 9, firstName: 'Maria', lastName: 'V' }; await call({ action: 'refresh', journey_id: JID9 })
     const f6 = S9(JID9, 'soc.axis').evidence.auto.first_assigned
     ck('stage B 6: the first visit has its caregiver: done, while the open later visit stays visible (1 of 2 open)', S9(JID9, 'soc.axis').state === 'complete' && f6.facts.unassigned === 1 && /Maria V/.test(f6.detail), f6)
-    await call({ action: 'apply', journey_id: JID9, step_key: 'soc.start', op: 'save', answer: { first_at: 'Mon 8:00am', family_told: true, cg_confirmed: true } }); await call({ action: 'refresh', journey_id: JID9 })
-    ck('stage B 7: family told, caregiver confirmed (incl. sees it in the app): Confirm Start of Care done', S9(JID9, 'soc.start').state === 'complete')
+    await call({ action: 'apply', journey_id: JID9, step_key: 'soc.start', op: 'save', answer: { first_at: 'Mon 8:00am', cg_confirmed: true } }); await call({ action: 'refresh', journey_id: JID9 })
+    ck('stage B 7 (2026-10-28): the family not told yet: Confirm Start of Care stays up', S9(JID9, 'soc.start').state !== 'complete', S9(JID9, 'soc.start'))
+    /* the automatic first-visit profile told them the date, time and caregiver (profile-intro) */
+    const jx = T.client_journey.find((x) => x.journey_id === JID9)
+    T.caregiver_intro_log = [{ client_axiscare_id: String(jx.axiscare_client_id), reason: 'first_visit', caregiver_name: 'Maria V.', sent_to: 'Linda Boyd', channel: 'both', sent_at: '2026-10-29T15:02:00Z' }]
+    await call({ action: 'refresh', journey_id: JID9 })
+    const s7 = S9(JID9, 'soc.start')
+    ck('stage B 7: the first-visit profile went: "Family told" ticks itself, and Confirm Start of Care is done', s7.state === 'complete'
+      && /Maria V\.'s profile sent to Linda Boyd \(text and email\), Oct 29, 10:02 AM/.test(s7.evidence.auto.family_told.detail), s7.evidence)
     const vd = R.addDays(R.ymd(Date.now()), -1)
     AX.visits = [{ id: 'v0', scheduledStartDate: vd + 'T08:00:00', clockIn: { time: 'x' }, clockOut: { time: 'y' }, caregiver: { id: 9 } }]
     const dowNext = new Date(R.addDays(vd, 1) + 'T12:00:00Z').getUTCDay()

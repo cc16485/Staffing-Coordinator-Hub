@@ -412,6 +412,16 @@ export const VERIFY: Record<string, (x: Any) => Promise<Any | null>> = {
     const cg = [first.caregiver.firstName, first.caregiver.lastName].filter(Boolean).join(' ')
     return { detail: 'First visit ' + at + ' with ' + (cg || 'a caregiver') + '. ' + shiftWords(f), facts: { ...f, first_at: at, first_caregiver: cg } }
   },
+  /* 2026-10-28 (profile-intro): the automatic first-visit profile told the family the date, time and caregiver */
+  profile_sent_first: async ({ j, db }) => {
+    if (!j.axiscare_client_id) return null
+    const { data } = await db.from('caregiver_intro_log').select('caregiver_name, sent_to, channel, sent_at').eq('client_axiscare_id', String(j.axiscare_client_id))
+      .eq('reason', 'first_visit').not('sent_to', 'is', null).order('sent_at', { ascending: true }).limit(1)
+    const r = (data ?? [])[0]; if (!r) return null
+    const how = r.channel === 'both' ? 'text and email' : r.channel === 'email' ? 'email' : 'text'
+    const at = new Date(r.sent_at).toLocaleString('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+    return { detail: `${r.caregiver_name}'s profile sent to ${r.sent_to} (${how}), ${at}` }
+  },
   first_visit_done: async ({ j, ax, steps }) => {
     if (!j.axiscare_client_id) return null
     const st7 = (steps || []).find((x: Any) => x.step_key === 'soc.start')

@@ -239,6 +239,12 @@ export const SENDER_REGISTER: Record<string, { class: OutreachClass; why: string
     why: 'a family cancelled a visit they booked in the family app: one text to the caregiver who was placed on it, at once, so '
       + 'they don\'t go (Samantha 2026-10-16). Caregivers only, never the family. Sent from family-gateway when the family taps '
       + 'Cancel; a text that does not go raises the office card. Only while the app is live (family_app_live + fee check).' },
+  'profile-intro':      { class: 'reactive_external', scheduled: true,
+    why: 'the caregiver profile to the family before a caregiver new to them arrives (her approved exception 2026-10-28: '
+      + '"Approved as written, including the 5 decisions as you suggested"): the day before, 8 AM to 6 PM every day; email to '
+      + 'family with an email, text to family with texting OK; once per caregiver per client. Audience \'family\' with '
+      + 'explicitlyEnabled backed by ops_settings.profile_intro_approved. Practice until ops_settings.profile_intro_live. '
+      + 'Cron: profile-intro-watch, every 15 minutes. A send that can\'t go puts a card on the client\'s Care Coordinator\'s My Work.' },
   'availability-checkin': { class: 'routine_internal', scheduled: true,
     why: 'every active caregiver (not nurses, not the PRN Team) whose availability is 30+ days old or not on file gets one text '
       + 'with their own link: keep it the same or update it, and the outside-hours box (Samantha 2026-10-14). Weekdays 10 to 5 '
