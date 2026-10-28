@@ -55,6 +55,7 @@ async function axVisits(from: string, to: string): Promise<{ ok: boolean; rows: 
         if (r.status === 429) { await new Promise((ok) => setTimeout(ok, 2000 * (i + 1))); continue }
         break
       }
+      if (r && P.emptyVisitAnswer(r.status, page)) return { ok: true, rows }
       if (!r || !r.ok) return { ok: false, rows, error: `AxisCare's visit list answered ${r?.status ?? 'nothing'}` }
       const j: Any = await r.json().catch(() => ({}))
       rows.push(...rowsOf(j?.results?.visits ?? j?.visits))
