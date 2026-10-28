@@ -6,8 +6,9 @@
 //   send    {client_ax, client_name, piece, contact_id, channels}
 //                                                       a 7-day link to ONE circle person (a newer one replaces the old)
 //   cancel  {id}                                         stops a live link
-//   show    {payment_id}                                 the full card or bank numbers, once, to type into AxisCare: only the
-//                                                       Billing owner or an owner; every show is logged
+//   show    {payment_id}                                 the full card or bank numbers, once, to type into AxisCare: a care
+//                                                       coordinator, the Billing owner or an owner (Samantha 2026-10-28: "Care
+//                                                       Coordinators can input payment info into axiscare"); every show is logged
 //   entered {payment_id}                                 "Entered in AxisCare": the numbers are erased for good, the card closes
 // The hourly job (its own secret) erases any numbers still held 7 days after signing and marks the card.
 // Until ops_settings.family_send_live is on, only owners can send (to try it). Nothing here changes AxisCare.
@@ -74,7 +75,7 @@ if (typeof Deno !== 'undefined' && Deno.serve) Deno.serve(async (req: Request) =
     const me = who.email, myName = who.name || who.email
     const owner = who.roles.includes('owner_admin')
     const billing = (await ownerFor(db, 'billing')).toLowerCase()
-    const canShow = owner || (!!billing && billing === me.toLowerCase())
+    const canShow = owner || who.roles.includes('care_coordinator') || (!!billing && billing === me.toLowerCase())
     const S = await settings(db), live = S.family_send_live === true
 
     if (action === 'list') {
@@ -132,7 +133,7 @@ if (typeof Deno !== 'undefined' && Deno.serve) Deno.serve(async (req: Request) =
     }
 
     if (action === 'show' || action === 'entered') {
-      if (!canShow) return json({ error: 'Only the person who handles Billing' + (billing ? ` (${billing})` : '') + ' or an owner can do this.', outcome: 'not_billing' }, 403)
+      if (!canShow) return json({ error: 'Only a care coordinator, the person who handles Billing' + (billing ? ` (${billing})` : '') + ' or an owner can do this.', outcome: 'not_billing' }, 403)
       const id = String(b.payment_id ?? ''); if (!UUID.test(id)) return json({ error: 'Pick a payment form.' }, 400)
       const { data: ps, error } = await db.from('family_payments').select('*').eq('id', id).limit(1)
       if (error) throw error
