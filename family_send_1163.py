@@ -79,7 +79,7 @@ okd, dm = sql(REF, """select
   (to_regclass('public.family_sends') is not null) as tbl""")
 if not okd or not dm: stop(f"couldn't read the database: {dm}", 3)
 BILL = dm[0]["billing"] or ""
-say(f"  · Billing owner (gets returned payment forms, can Show the numbers): {BILL or 'NOT SET: set one in Who Handles What, or only owners can Show them'}")
+say(f"  · Billing owner (gets returned payment forms, can Show the numbers): {BILL or 'NOT SET: set one in Who Handles What (care coordinators and owners can still Show them)'}")
 say(f"  · Client Care owner (gets Family Circle changes and GUIDE calls): {dm[0]['care'] or 'not set'}")
 say(f"  · clients with a linked Family Circle: {dm[0]['circles']}")
 say(f"  · the tables are {'already there (an earlier run)' if dm[0]['tbl'] else 'new'}")

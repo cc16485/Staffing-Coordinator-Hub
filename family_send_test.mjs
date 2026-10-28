@@ -167,13 +167,17 @@ r = await fam({ action: 'open', t: t2 }); ck('the link can\'t be used again', r.
 r = await office({ action: 'list', client_ax: '290' })
 const pv = r.j.sends.find((x) => x.piece === 'payment' && x.payment)?.payment
 ck('the Hub card sees the form with last 4 only, still locked, when it erases itself', pv && pv.last4 === '1111' && pv.locked === true && pv.erase_by && !JSON.stringify(r.j).includes('4111111111111111'), pv)
-ck('...a coordinator can\'t press Show', r.j.can_show === false)
-r = await office({ action: 'show', payment_id: P1.id }); ck('a coordinator\'s Show is refused, nothing logged', r.s === 403 && !T.family_payment_reveals.length)
-globalThis.__who = { name: 'Billie Billing', email: 'billie@mo-care.com', roles: ['care_coordinator'] }
+ck('...a care coordinator can press Show', r.j.can_show === true)
+globalThis.__who = { name: 'Stacy Staffing', email: 'stacy@mo-care.com', roles: ['staffing_coordinator'] }
+r = await office({ action: 'list', client_ax: '290' }); ck('...a staffing coordinator can\'t', r.j.can_show === false)
+r = await office({ action: 'show', payment_id: P1.id }); ck('a staffing coordinator\'s Show is refused, nothing logged', r.s === 403 && !T.family_payment_reveals.length)
+globalThis.__who = { name: 'Billie Billing', email: 'billie@mo-care.com', roles: ['staffing_coordinator'] }
+r = await office({ action: 'list', client_ax: '290' }); ck('...but the Billing owner can, whatever their role', r.j.can_show === true)
+globalThis.__who = { name: 'Krystal Test', email: 'krystal@mo-care.com', roles: ['care_coordinator'] }
 r = await office({ action: 'show', payment_id: P1.id })
-ck('the Billing owner\'s Show: the full number, once, for 5 minutes; logged with who', r.s === 200 && r.j.number === '4111111111111111' && r.j.seconds === 300 && T.family_payment_reveals.length === 1 && T.family_payment_reveals[0].by_email === 'billie@mo-care.com' && P1.reveals === 1, r.j)
+ck('a care coordinator\'s Show: the full number, once, for 5 minutes; logged with who', r.s === 200 && r.j.number === '4111111111111111' && r.j.seconds === 300 && T.family_payment_reveals.length === 1 && T.family_payment_reveals[0].by_email === 'krystal@mo-care.com' && P1.reveals === 1, r.j)
 r = await office({ action: 'entered', payment_id: P1.id })
-ck('"Entered in AxisCare": the numbers are erased for good, who and when kept, the card closes', r.s === 200 && P1.sealed === null && P1.erased_why === 'entered' && P1.entered_by === 'Billie Billing' && APP.ops_items.find((x) => x.kind === 'family_payment').status === 'done')
+ck('"Entered in AxisCare": the numbers are erased for good, who and when kept, the card closes', r.s === 200 && P1.sealed === null && P1.erased_why === 'entered' && P1.entered_by === 'Krystal Test' && APP.ops_items.find((x) => x.kind === 'family_payment').status === 'done')
 r = await office({ action: 'show', payment_id: P1.id }); ck('...after that, Show says they were erased', r.s === 410 && /already erased/.test(r.j.error))
 
 // ── the hourly erase ──
