@@ -22,6 +22,7 @@
 // if you need us sooner.
 //
 // Runs every 15 minutes by pg_cron. ?dry=1 reports without sending.
+// 2026-10-28: also sends the what-to-expect text after a lead call (her approved exception, _shared/what-to-expect.ts).
 // Deploy: supabase functions deploy lead-followup
 //
 // Needs lead-followup.sql to have been run first.
@@ -37,6 +38,8 @@ import { jobCaller } from '../_shared/job-auth.ts'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
 import { ghlStaffContact } from '../_shared/staff-contact.ts'
 import { officeQuietNow } from '../_shared/quiet-hours.ts'
+import { contactForOutbound } from '../_shared/outreach.ts'
+import { whatToExpect } from '../_shared/what-to-expect.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -281,6 +284,52 @@ Deno.serve(async (req) => {
 
   }
 
+  /* THE WHAT-TO-EXPECT TEXT (her approved exception, 2026-10-28): one text to each family a coordinator made into a lead from a
+     call, 7 AM to 8 PM, once per lead (_shared/what-to-expect.ts). Off without her approval record; practice until
+     ops_settings.what_to_expect_text_live. The ledger app_data 'what_to_expect_sends' is written whole, by this job only. */
+  let wte: unknown = null
+  try {
+    const { data: stRow } = await supabase.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
+    const wteSettings = (stRow?.data && typeof stRow.data === 'object' && !Array.isArray(stRow.data)) ? stRow.data : {}
+    let ledger: Record<string, unknown>[] = []
+    const ghl = { token: ghlToken || '', locationId: ghlLocation || '' }
+    wte = await whatToExpect({
+      now: () => new Date(),
+      settings: async () => wteSettings,
+      leads: async () => leads,
+      sends: async () => {
+        const { data: lr } = await supabase.from('app_data').select('data').eq('key', 'what_to_expect_sends').maybeSingle()
+        ledger = Array.isArray(lr?.data) ? lr!.data : []; return ledger
+      },
+      saveSend: async (item) => {
+        ledger = [...ledger.filter((x) => String(x?.id) !== String(item.id)), item]
+        const { error } = await supabase.from('app_data').upsert({ key: 'what_to_expect_sends', data: ledger, updated_at: new Date().toISOString() })
+        if (error) throw new Error('the what-to-expect ledger could not be saved: ' + error.message)
+      },
+      markLead: async (id, vals, sent) => {
+        const { data: fr } = await supabase.from('app_data').select('data').eq('key', 'leads').maybeSingle()
+        // deno-lint-ignore no-explicit-any
+        const cur = (Array.isArray(fr?.data) ? fr!.data : []).find((x: any) => String(x?.id) === id)
+        if (!cur) return
+        Object.assign(cur, vals)
+        if (sent) ldPush(cur, { at: sent.at, channel: 'sms', direction: 'out', outcome: 'sent', actor: 'automation', note: 'what to expect text' })
+        await put(cur)
+      },
+      send: async (l, text) => {
+        if (!ghl.token || !ghl.locationId) return { ok: false, why: 'GoHighLevel is not set up on the server' }
+        const stopped: string[] = []
+        const first = String(l.first_name || '').trim() || 'Family'
+        const cid = await contactForOutbound(supabase, ghl, { phone: l.phone, firstName: first, lastName: l.last_name }, 'after_call_external',
+          { audience: 'lead', explicitlyEnabled: true, channel: 'sms', sender: 'what-to-expect', onOptOut: (r) => { stopped.push(...r) } })
+        if (!cid?.contactId) return stopped.length ? { ok: false, optedOut: true, why: [...new Set(stopped)].join('; ') } : { ok: false, why: 'the send door did not allow it (see the Needs Attention card)' }
+        const went = await sms(cid.contactId, text, { sender: 'what-to-expect', address: l.phone, who: [l.first_name, l.last_name].filter(Boolean).join(' ') })
+        return went ? { ok: true } : { ok: false, why: 'GoHighLevel did not take it (see the Needs Attention card)' }
+      },
+      officeItem: async (item) => { await supabase.rpc('upsert_app_data_item', { target_key: 'ops_items', item }) },
+      rules: LR,
+    }, { dry })
+  } catch (e) { console.warn('[lead-followup] what-to-expect skipped:', e); wte = { error: String((e as Error)?.message ?? e).slice(0, 200) } }
+
   /* UN-PARKING (2026-10-07): a parked inquiry card (sub_state waiting) comes back the moment the family's one date is due
      (leadNext: a promised call, a check-back, a follow-up), with the words the Hub would use. The Hub page does the same
      when someone opens it; this does it every run, so an 8 am check-back is on My Work before anyone opens the Hub. */
@@ -306,6 +355,6 @@ Deno.serve(async (req) => {
 
   const switches = { inquiry_ack_live: sw.ack, settings_read: sw.read_ok, nudges: 'removed 2026-10-07' }
   return json(dry
-    ? { ok: true, dry: true, quiet_hours: quiet, switches, leads_considered: leads.length, would: plan }
-    : { ok: true, quiet_hours: quiet, switches, ...out, unparked, retimed })
+    ? { ok: true, dry: true, quiet_hours: quiet, switches, leads_considered: leads.length, would: plan, what_to_expect: wte }
+    : { ok: true, quiet_hours: quiet, switches, ...out, unparked, retimed, what_to_expect: wte })
 })

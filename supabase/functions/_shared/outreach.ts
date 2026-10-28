@@ -59,6 +59,11 @@ export type OutreachClass =
      for signing the Client Care Agreement from home). Like a password reset it goes at any hour. Only that code uses it,
      and only through the family audience gate. */
   | 'requested_external'
+  /* 2026-10-28 (Samantha: "Approved as an exception to my rule: send the what-to-expect text automatically when a coordinator
+     makes a call into a lead ... holding it during quiet hours"): the one text to a family we just talked with. Her hours for it
+     are 7am to 8pm, every day (the office quiet hours are 8pm to 7am). Only the what-to-expect text uses it, and only through
+     the lead audience gate with her recorded approval. */
+  | 'after_call_external'
 
 export const OUTREACH_TZ = 'America/Chicago'
 /* The window is [WINDOW_START, WINDOW_END) — start inclusive, end EXCLUSIVE.
@@ -72,6 +77,7 @@ export const OUTREACH_TZ = 'America/Chicago'
 export const WINDOW_START = 8   // 08:00 inclusive
 export const WINDOW_END = 18    // 18:00 exclusive — nothing sends at or after 6pm
 export const TIMELY_START = 6, TIMELY_END = 21   // timely_external: 06:00 inclusive to 21:00 exclusive, every day
+export const AFTER_CALL_START = 7, AFTER_CALL_END = 20   // after_call_external: 07:00 inclusive to 20:00 exclusive, every day
 
 /** Local hour and weekday in the operating timezone, never the server's. */
 function localParts(now: Date = new Date()) {
@@ -112,6 +118,10 @@ export function maySend(kind: OutreachClass, now: Date = new Date()): Verdict {
       ? { allowed: true, reason: 'about a visit happening now, within 6am-9pm', detail }
       : { allowed: false, reason: `outside the hours for a visit-now family text (${TIMELY_START}:00-${TIMELY_END}:00 ${OUTREACH_TZ}, now ${hour}:00)`, detail }
 
+  if (kind === 'after_call_external')
+    return hour >= AFTER_CALL_START && hour < AFTER_CALL_END
+      ? { allowed: true, reason: 'the what-to-expect text after a call, within 7am-8pm', detail }
+      : { allowed: false, reason: `outside the hours for the what-to-expect text (${AFTER_CALL_START}:00-${AFTER_CALL_END}:00 ${OUTREACH_TZ}, now ${hour}:00)`, detail }
   const inHours = hour >= WINDOW_START && hour < WINDOW_END
   if (!inHours)
     return {
@@ -169,6 +179,11 @@ export const SENDER_REGISTER: Record<string, { class: OutreachClass; why: string
       + 'only if they are still marked Not hiring. Cron: applicant-decision-due, hourly (Desktop 645).' },
   'lead-followup':      { class: 'reactive_external', scheduled: true,
     why: 'acknowledges a lead who just enquired. A Saturday enquiry answered Monday is a lost client.' },
+  'what-to-expect':     { class: 'after_call_external', scheduled: true,
+    why: 'ONE text with mo-care.com/what-to-expect to a family a coordinator just made into a lead from a call we talked on '
+      + '(her approved exception 2026-10-28, audience \'lead\' with explicitlyEnabled backed by ops_settings.what_to_expect_text_approved). '
+      + '7am to 8pm every day; a lead made at night gets it at 7am. Once per lead (app_data what_to_expect_sends). Practice until '
+      + 'ops_settings.what_to_expect_text_live. Runs inside lead-followup (cron every 15 minutes).' },
   'lead-nurture':       { class: 'proactive_external', scheduled: true,
     why: 'a thirteen-month drip we initiate. Nobody is waiting on it.' },
   'campaign-auto':      { class: 'proactive_external', scheduled: true,
