@@ -23,7 +23,7 @@ if NODE == "none": NODE = ""
 FNB = os.environ.get("SB_FN_BASE", f"https://{REF}.supabase.co")
 JOB = FN = "profile-intro-watch"; SCHEDULE = "*/15 * * * *"; VAULT_NAME = "hub_job_secret"; SQLF = "profile_intro_1164.sql"
 ALSO = ("caregiver-intro", "coverage-run", "late-watch", "late-alert", "client-journey")
-TESTS = (("profile_intro_test.mjs", "47/47"), ("family_change_text_test.mjs", "17/17"), ("caregiver_profile_2b_test.mjs", "ALL 48"),
+TESTS = (("profile_intro_test.mjs", "47/47"), ("family_change_text_test.mjs", "17/17"), ("caregiver_profile_2b_test.mjs", "CHECKS PASS"),
          ("nsf2_families_test.mjs", "ALL 25"), ("optout_0b2_test.mjs", "ALL 29"))
 POLL = float(os.environ.get("SB_POLL", "2")); POLL_MAX = float(os.environ.get("SB_POLL_MAX", "40"))
 ok = lambda s: say("  ✓ " + s)
