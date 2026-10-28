@@ -168,6 +168,7 @@ export async function confirmFill(
   if (r.outcome !== 'ok' || !r.item) return { outcome: 'error', detail: 'the case could not be saved; nothing changed' }
   const axis = await assignInAxis(db, r.item, p.byName || 'office', send)
   await patchCase(db, p.caseId, { axiscare_assignment: { ...axis, at: now(), by: 'coverage-assign' } })
+  await countPrnShift(db, r.item, who)
   return { outcome: 'filled', covered_by: who, axiscare: axis }
 }
 
@@ -182,4 +183,32 @@ export async function closeCase(
     confirmed_by: p.byName || null, confirmed_at: t, close_note: p.note ? String(p.note).slice(0, 300) : null, reopened_from: null }, { status: 'open' })
   if (r.outcome === 'conflict') { const c = r.item ?? {}; return { outcome: 'already' as const, status: c.status, covered_by: c.covered_by ?? null, confirmed_by: c.confirmed_by ?? null, resolved_how: c.resolved_how ?? null } }
   return { outcome: r.outcome === 'ok' ? 'closed' as const : r.outcome as 'not_found' | 'error' }
+}
+
+/** PRN STEP 1 (Samantha 2026-10-28, switch ops_settings.prn_count_live): a shift a PRN Team member covers is counted on its own,
+    so thank-yous and milestones never wait for an office tap. Written once per case and person (the table's unique key); a
+    backed-out shift is still the office's tap. Never stops a fill: a failure here is logged and the fill stands. */
+// deno-lint-ignore no-explicit-any
+export async function countPrnShift(db: any, kase: any, who: string): Promise<'counted' | 'not_prn' | 'off' | 'error'> {
+  try {
+    const { data: st } = await db.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
+    if (st?.data?.prn_count_live !== true) return 'off'
+    // deno-lint-ignore no-explicit-any
+    const ask = (Array.isArray(kase?.asked) ? kase.asked : []).find((a: any) => nameKey(a?.name) === nameKey(who))
+    let axId = String(ask?.axiscare_id || '')
+    if (!axId) {
+      const { data: cgRow } = await db.from('app_data').select('data').eq('key', 'caregivers').maybeSingle()
+      // deno-lint-ignore no-explicit-any
+      const hit = (Array.isArray(cgRow?.data) ? cgRow!.data : []).filter((g: any) => nameKey(`${g.first || ''} ${g.last || ''}`) === nameKey(who) && g.axiscare_id)
+      if (hit.length === 1) axId = String(hit[0].axiscare_id)
+    }
+    if (!axId) return 'not_prn'
+    const { data: tr } = await db.from('pay_tracks').select('applicant_id, track').eq('axiscare_caregiver_id', axId).maybeSingle()
+    if (!tr || tr.track !== 'prn_team') return 'not_prn'
+    const sd = /^\d{4}-\d\d-\d\d$/.test(String(kase?.shift_date || '')) ? String(kase.shift_date) : null
+    const { error } = await db.from('prn_shift_log').insert({ axiscare_caregiver_id: axId, applicant_id: tr.applicant_id, case_id: String(kase.id),
+      kind: 'confirmed', shift_date: sd, recorded_by: 'Counted automatically when the shift was covered' })
+    if (error && !/duplicate|unique/i.test(String(error.message || ''))) { console.warn(`[coverage-fill] PRN shift not counted for ${kase?.id}: ${String(error.message).slice(0, 160)}`); return 'error' }
+    return 'counted'
+  } catch (e) { console.warn(`[coverage-fill] PRN shift count failed: ${String(e).slice(0, 160)}`); return 'error' }
 }

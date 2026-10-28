@@ -135,7 +135,7 @@ export type Out = { name: string; axiscare_id: string | null; why: string; code?
 
 /** Hard exclusions and the order, for one case. rows: the list's people (any group); each may carry windows/outside_ok
     (their availability) and prn_pref (PRN Team: notice, interests, days, times, short_notice_ok). */
-export function judgeForWaves(rows: Any[], c: Any, x: { minsToStart: number | null; ongoing: boolean; sameTime?: boolean }): { ordered: Judged[]; excluded: Out[]; conflicts: Out[] } {
+export function judgeForWaves(rows: Any[], c: Any, x: { minsToStart: number | null; ongoing: boolean; sameTime?: boolean; groupFirst?: boolean }): { ordered: Judged[]; excluded: Out[]; conflicts: Out[] } {
   const ordered: Judged[] = [], excluded: Out[] = [], conflicts: Out[] = []
   const types = shiftTypes(c, x.minsToStart)
   const out = (r: Any, why: string, code = 'other') => excluded.push({ name: S(r?.name, 80), axiscare_id: r?.axiscare_id != null ? S(r.axiscare_id, 20) : null, why, code })
@@ -167,7 +167,14 @@ export function judgeForWaves(rows: Any[], c: Any, x: { minsToStart: number | nu
   const lastVisit = (j: Judged) => S(j.row.history?.last)
   const roomRank = (j: Judged) => (j.row.hours?.level === 'near' || j.row.hours?.level === 'over_target') ? 1 : 0
   const miles = (j: Judged) => (typeof j.row.miles === 'number' ? j.row.miles : 9999)
-  ordered.sort((a, b) => (availRank(a) - availRank(b))
+  /* PRN STEP 1 (Samantha 2026-10-28, switch ops_settings.prn_order_live): the group comes first, availability only inside it.
+     1 anyone who has cared for this client (regular or PRN), the client's favorites first; 2 the PRN Caregiver and PRN CNA Teams
+     (whose days and times fit, then Unknown, then part of it); 3 everyone else. A familiar caregiver whose availability is
+     Unknown is now asked before a stranger whose availability fits. */
+  const groupRank = (j: Judged) => (j.familiar > 0 ? 0 : j.prn ? 1 : 2)
+  const favRank = (j: Judged) => (j.familiar > 0 && j.row.this_client?.favorite ? 0 : 1)
+  ordered.sort((a, b) => (x.groupFirst ? (groupRank(a) - groupRank(b)) || (favRank(a) - favRank(b)) : 0)
+    || (availRank(a) - availRank(b))
     || (b.familiar - a.familiar) || lastVisit(b).localeCompare(lastVisit(a))
     || ((a.prn ? (a.prn_match ? 0 : 1) : 2) - (b.prn ? (b.prn_match ? 0 : 1) : 2))
     || (roomRank(a) - roomRank(b))

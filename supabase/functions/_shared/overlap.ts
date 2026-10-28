@@ -83,3 +83,30 @@ export function conflictsFor(rows: Any[], c: Any, nowMin: number, o: { ownVisitI
   }
   return out
 }
+
+/** WORKING RIGHT NOW (PRN step 1, Samantha 2026-10-28: "Avoid contacting caregivers who are currently working, even if the shift
+    doesn't overlap"): everyone clocked in on a visit at this moment, whatever the open shift's time. Nobody is texted mid-visit;
+    once they clock out they are back in their normal place. Switch ops_settings.working_now_live (off: no change). */
+export function workingNow(rows: Any[], nowMin: number, o: { placeholderId?: string } = {}): Map<string, Conflict[]> {
+  const out = new Map<string, Conflict[]>()
+  const ph = S(o.placeholderId || '618')
+  for (const v of rows || []) {
+    if (!v || v.removed === true) continue
+    const cg = v?.caregiver?.id; if (cg == null) continue
+    const cgId = S(cg, 20)
+    if (cgId === ph || /^cancel+ed( shifts?)?$/i.test([v.caregiver.firstName, v.caregiver.lastName].filter(Boolean).join(' '))) continue
+    const vw = visitWindow(v, nowMin); if (!vw || !vw.clockedIn) continue
+    if (out.has(cgId)) continue
+    const client = S(v?.client?.firstName, 40) || 'another client'
+    const end = wallMin(v.scheduledEndDate ?? v.endDate)
+    const line = `Working right now with ${client}` + (end != null && end > nowMin ? ` until ${clock(end)}` : '')
+    out.set(cgId, [{ visit_id: S(v.id, 30), client, start: vw.start, end: vw.end, clocked_in: true, line }])
+  }
+  return out
+}
+/** The open shift's conflicts plus everyone working right now (only those not already conflicting), each marked now_only. */
+export function withWorkingNow(by: Map<string, Conflict[]>, now: Map<string, Conflict[]>): Map<string, (Conflict & { now_only?: boolean })[]> {
+  const out = new Map<string, (Conflict & { now_only?: boolean })[]>(by)
+  for (const [id, list] of now) if (!out.has(id)) out.set(id, list.map((k) => ({ ...k, now_only: true })))
+  return out
+}
