@@ -80,7 +80,8 @@ ck('lead-intake · a refused alert is not counted as an alert that went', r.aler
     .replace("from './covered-outside.ts'", "from '" + path.resolve(FN, '_shared/covered-outside.ts') + "'")
     .replace("from './outreach.ts'", "from '" + path.resolve(FN, '_shared/outreach.ts') + "'")
     .replace("from './send-problems.ts'", "from '" + path.resolve(FN, '_shared/send-problems.ts') + "'")
-    .replace("from './caregiver-card-link.ts'", "from '" + path.resolve(FN, '_shared/caregiver-card-link.ts') + "'");
+    .replace("from './caregiver-card-link.ts'", "from '" + path.resolve(FN, '_shared/caregiver-card-link.ts') + "'")
+    .replace("from './cg-placeholder.ts'", "from '" + path.resolve(FN, '_shared/cg-placeholder.ts') + "'");
   const tmp = path.join(process.cwd(), '_nsf2f_fct.ts'); fs.writeFileSync(tmp, src);
   const M = await import(tmp); fs.unlinkSync(tmp);
   reset();

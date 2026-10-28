@@ -46,6 +46,7 @@ export const SENDER_WORDS: Record<string, [string, string]> = {
   'hepb': ['hepatitis B vaccine offer link', 'caregivers'],
   'nurse-visit-check': ['nurse license reminder', 'caregivers'],
   'caregiver-intro': ['caregiver introduction', 'scheduling_coverage'],
+  'profile-intro': ['caregiver profile to a family before a new caregiver', 'client_onboarding'],
   'caregiver-availability': ['availability check', 'scheduling_coverage'],
   'availability-checkin': ['30-day availability text', 'scheduling_coverage'],
   'coverage-run': ['open shift text', 'scheduling_coverage'],

@@ -91,7 +91,7 @@ ck('caregiver-card keeps CORS and the published + not-withdrawn gate', /'Access-
 // ── 3. family-change-text uses the helper; meet.html is gone from the messages ──
 const fct = fs.readFileSync(`${FN}/_shared/family-change-text.ts`, 'utf8')
 ck('the caregiver-change text links the profile card through the shared helper, never meet.html or caregiver_intros',
-  /import \{ findCardForCase, meetLine \} from '\.\/caregiver-card-link\.ts'/.test(fct) && /meetLine\(\(await findCardForCase\(sb, c\)\)\.profile\)/.test(fct)
+  /import \{ findCardForCase, meetLine[^}]*\} from '\.\/caregiver-card-link\.ts'/.test(fct) && /const card = \(await findCardForCase\(sb, c\)\)\.profile\s+const meet = meetLine\(card\)/.test(fct)
   && !/meet\.html/.test(fct.replace(/\/\*[\s\S]*?\*\//g, '')) && !/caregiver_intros/.test(fct))
 ck('the {meet} token and the automatic send rules are unchanged (approval, gate, ghlSendChecked)', /\.replaceAll\('\{meet\}', meet\)/.test(fct) && /family_caregiver_change_text_approved/.test(fct)
   && /explicitlyEnabled: true/.test(fct) && /ghlSendChecked\(/.test(fct))

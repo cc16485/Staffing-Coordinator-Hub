@@ -362,7 +362,8 @@
     },
     {
      "key": "family_told",
-     "label": "Family told the date, time and caregiver"
+     "label": "Family told the date, time and caregiver",
+     "auto": "profile_sent_first"
     },
     {
      "key": "cg_confirmed",

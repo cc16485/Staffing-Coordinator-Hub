@@ -4,7 +4,8 @@ process.argv[2] = process.argv[2] || 'supabase/functions/_shared/family-change-t
 const src = fs.readFileSync(process.argv[2], 'utf8').replace(/^import \{ contactForOutbound \} from .*$/m, 'const contactForOutbound = async () => null')
   .replace("from './covered-outside.ts'", "from '" + path.resolve(path.dirname(process.argv[2]), 'covered-outside.ts') + "'")
   .replace("from './send-problems.ts'", "from '" + path.resolve(path.dirname(process.argv[2]), 'send-problems.ts') + "'")
-  .replace("from './caregiver-card-link.ts'", "from '" + path.resolve(path.dirname(process.argv[2]), 'caregiver-card-link.ts') + "'");
+  .replace("from './caregiver-card-link.ts'", "from '" + path.resolve(path.dirname(process.argv[2]), 'caregiver-card-link.ts') + "'")
+  .replace("from './cg-placeholder.ts'", "from '" + path.resolve(path.dirname(process.argv[2]), 'cg-placeholder.ts') + "'");
 const tmp = path.join(process.cwd(), '_fct_under_test.ts'); fs.writeFileSync(tmp, src);
 const M = await import(tmp); fs.unlinkSync(tmp);
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : JSON.stringify(note).slice(0, 700)]);

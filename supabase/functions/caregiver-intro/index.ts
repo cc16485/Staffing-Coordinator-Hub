@@ -73,7 +73,7 @@ Deno.serve(async (req) => {
   // Only a profile the office has approved is ever sent.
   const { data: p } = await supabase
     .from('caregiver_profiles')
-    .select('id, first_name, preferred_name, published, status')
+    .select('id, first_name, preferred_name, published, status, axiscare_id')
     .eq('id', profile_id).maybeSingle()
   if (!p) return json({ error: 'no such profile' }, 404)
   if (!p.published || p.status === 'withdrawn') {
@@ -192,6 +192,11 @@ Deno.serve(async (req) => {
     if (stop.n) optedOut++
   }
 
+  let circleAx: string | null = null
+  if (circle_id) {
+    const { data: cc } = await supabase.from('care_circles').select('axiscare_client_id').eq('id', circle_id).maybeSingle()
+    circleAx = String(cc?.axiscare_client_id ?? '').trim() || null
+  }
   await supabase.from('caregiver_intro_log').insert({
     profile_id: p.id, caregiver_name: cgName, client_name,
     circle_id: circle_id ?? null,
@@ -199,6 +204,9 @@ Deno.serve(async (req) => {
     channel: reachable.some((c) => c.phone && c.sms_consent) && reachable.some((c) => c.email) ? 'both'
            : reachable.some((c) => c.email) ? 'email' : 'sms',
     reason, sent_by: who.email,
+    /* 2026-10-28 (profile-intro): who and whom by AxisCare id, so the automatic profile check never sends this caregiver
+       to this family again */
+    client_axiscare_id: circleAx, caregiver_axiscare_id: String(p.axiscare_id ?? '').trim() || null, auto: false,
   })
 
   return json({ ok: true, caregiver: cgName, client: client_name, reached, opted_out: optedOut, who: reachedNames, failed: failedNames, link })
