@@ -53,7 +53,7 @@ export async function notifyFamilyOfChange(
   if (c?.reason === 'open' && !String(c?.calling_off ?? '').trim()) return { outcome: 'none', count: 0, reason: 'open_shift_not_a_change', circle: null }
   /* never "Ashley can't make it, so Ashley is coming instead" (Elizabeth Kurtz, 2026-09-27) */
   /* 2026-10-28: "Canceled Shift" is AxisCare's placeholder, nobody. A case it "covered" is a cancelled visit, never news to a family
-     (1162 found April Davidson's 10-23 case counted as texted with covered_by "Canceled Shift"). */
+     (1162 found a 10-23 case counted as texted with covered_by "Canceled Shift"). */
   if (isPlaceholderCaregiver(c?.covered_by)) return { outcome: 'none', count: 0, reason: 'covered_by_is_the_canceled_shift_placeholder', circle: null }
   if (coversThemselves(c)) return { outcome: 'none', count: 0, reason: 'covering_caregiver_is_the_one_who_called_off', circle: null }
   const ax = String(c?.client_axiscare_id ?? '').trim()
