@@ -89,8 +89,8 @@ try:
     ck("clean run: still learning the year is said plainly, not as a failure", "still learning a year of visits" in o and "within about an hour" in o, o)
     ck("clean run: no other database query", not M.get("other_sql"), M.get("other_sql"))
     c, o, d = go(run={**RUN, "problems": [], "would": [{"caregiver": "Sarah T.", "client": "Dorothy Ray", "visit": "2026-10-30T09:00", "to": [{"name": "Linda Ray"}]}],
-                      "cards": [{"title": "Profile not ready: Ashley Lloyd for Joel Wolverton"}]}, no_node=True)
-    ck("the practice list is shown", c == 0 and "Would send: Sarah T. to Dorothy Ray's family (Linda Ray)" in o and "Would make a card: Profile not ready: Ashley Lloyd for Joel Wolverton" in o, o)
+                      "cards": [{"title": "Profile not ready: Jordan M. for Walt Green"}]}, no_node=True)
+    ck("the practice list is shown", c == 0 and "Would send: Sarah T. to Dorothy Ray's family (Linda Ray)" in o and "Would make a card: Profile not ready: Jordan M. for Walt Green" in o, o)
     c, o, d = go(run={**RUN, "problems": ["AxisCare's upcoming visits couldn't be read: 500"]}, no_node=True)
     ck("AxisCare unreadable: said loudly, NOT COMPLETE", c == 1 and "couldn't read: AxisCare's upcoming visits couldn't be read: 500" in o and "NOT COMPLETE" in o, o)
     c, o, d = go(run={**RUN, "sent": 2}, no_node=True)
