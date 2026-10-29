@@ -34,6 +34,8 @@
 //   mentor_note {p, e, t, id, ...fields}: their note after a visit assigned to them (from the visit day on). A refresher goes
 //               on the caregiver's record; a care update or supervisory note goes to the client's Care plan reviews, with a
 //               card for the office. Once in, it stays as written.
+//   more_hours  {p, e, t, answer: yes|no} (2026-10-29, plan section 3): "Would you like more hours?" under My hours, where the 60-day
+//               check-in lands. Kept on their PRN answers; a yes shows on This week. Switch ops_settings.prn_more_hours_live.
 //   interested  {p, e, t, case_id, shift_key}: "I'm Interested", a Yes on that shift (coverage-run prn_interest checks it all
 //               again). Nobody is assigned until a coordinator confirms it in AxisCare.
 // Switch ops_settings.prn_page_live (off): members get "This page isn't open yet" and nothing is saved; the office preview works.
@@ -191,7 +193,9 @@ Deno.serve(async (req) => {
       looking: lookingState(plog.data ?? [], t), update, feedback, oncall, mentor, offered, clients, clients_why: clientsWhy,
       thanks: [...(mentor?.first_done ? [{ kind: 'milestone', at: '', text: 'Your first Field Support Visit. Thank you for helping our caregivers and families.' }] : []), ...thanksFor({ touches: touches.data ?? [], kindTells: list(await readKey(sb, 'kind_tells')), ax, covered, since: S(tr.since, 10), today: t, shifts: sh })],
       hours: { windows: av?.windows ?? null, target_hours: av?.target_hours ?? null, outside_ok: av?.outside_ok === true, updated_at: av?.updated_at ?? null,
-        short_notice_ok: typeof prn.short_notice_ok === 'boolean' ? prn.short_notice_ok : null, break_until: brk },
+        short_notice_ok: typeof prn.short_notice_ok === 'boolean' ? prn.short_notice_ok : null, break_until: brk,
+        /* "Would you like more hours?" (switch prn_more_hours_live; the office preview shows it either way) */
+        more_hours: st.prn_more_hours_live === true || action === 'preview' ? { answer: ['yes', 'no'].includes(S(prn.more_hours?.answer, 5)) ? S(prn.more_hours.answer, 5) : null, at: prn.more_hours?.at ?? null, waiting: st.prn_more_hours_live !== true } : null },
       courses: COURSES.map((c) => ({ ...c, requested: requested.has(c.slug) })), office: officePhone() })
   }
 
@@ -316,7 +320,7 @@ Deno.serve(async (req) => {
   }
 
   /* everything below changes something: the member only, never the office preview */
-  if (!['hours', 'short_notice', 'break', 'looking', 'course', 'idea'].includes(action)) return json({ error: 'unknown action' }, 400)
+  if (!['hours', 'short_notice', 'break', 'looking', 'course', 'idea', 'more_hours'].includes(action)) return json({ error: 'unknown action' }, 400)
 
   if (action === 'hours') {
     if (!ax) return json({ error: 'Your hours can be saved once you are on the schedule. Text us in the meantime.' }, 409)
@@ -330,6 +334,17 @@ Deno.serve(async (req) => {
     try { await sb.from('prn_checkins').update({ answered_at: new Date().toISOString(), how: 'prn_page' }).eq('axiscare_caregiver_id', ax).is('answered_at', null) } catch { /* the save stands */ }
     await log('hours_saved')
     return json({ ok: true, message: `Saved, ${first}! The office sees this right away.` })
+  }
+
+  if (action === 'more_hours') {
+    if (st.prn_more_hours_live !== true) return json({ error: "That question isn't on your page yet." }, 409)
+    const ans = S(b.answer, 5); if (!['yes', 'no'].includes(ans)) return json({ error: 'Yes or not right now?' }, 400)
+    const rec = { answer: ans, at: new Date().toISOString(), how: 'page' }
+    const next = { ...prn, more_hours: rec, more_hours_history: [...(Array.isArray(prn.more_hours_history) ? prn.more_hours_history : []), rec].slice(-50) }
+    const { error } = await sb.from('job_applicants').update({ prn: next }).eq('id', aid)
+    if (error) return json({ error: 'Could not save, please try again.' }, 500)
+    await log('more_hours', ans)
+    return json({ ok: true, message: ans === 'yes' ? `Thank you, ${first}! The office will be in touch about more hours.` : 'Got it. Thank you for letting us know.' })
   }
 
   if (action === 'short_notice' || action === 'break') {

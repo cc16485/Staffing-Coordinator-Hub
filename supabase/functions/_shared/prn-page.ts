@@ -100,6 +100,11 @@ export function pageLines(x: { members: Any[]; log: Any[]; touches: Any[]; today
       out.push({ id: `idea:${m.applicant_id}:${S(r.id, 20)}`, kind: 'idea', applicant_id: m.applicant_id, name: m.name, team: TEAM[m.team] || TEAM.cna, ref,
         title: `${m.first || m.name} shared an idea`, detail: `"${S(r.note, 500)}"` })
     }
+    /* 2026-10-29: "Would you like more hours?" answered yes on their page (the latest answer; once per answer) */
+    const mh = mine.filter((r) => r.kind === 'more_hours').sort((a, b) => S(a.at, 40).localeCompare(S(b.at, 40))).pop()
+    if (mh && S(mh.note, 5) === 'yes' && !done(m.applicant_id, 'morehours:' + S(mh.id, 20)))
+      out.push({ id: `morehours:${m.applicant_id}:${S(mh.id, 20)}`, kind: 'hours', applicant_id: m.applicant_id, name: m.name, team: TEAM[m.team] || TEAM.cna, ref: 'morehours:' + S(mh.id, 20),
+        title: `${m.first || m.name} would like more hours`, detail: 'They said so on their PRN Team page. Worth a call about what is open, or keep them in mind for the next opening.' })
     /* step 7: their answers to the twice-yearly questions, and an on-call offer from their page */
     for (const r of mine.filter((r) => r.kind === 'feedback')) {
       const ref = 'feedback:' + S(r.id, 20); if (done(m.applicant_id, ref)) continue
