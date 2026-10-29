@@ -23,8 +23,8 @@ export const CAP = 8
 export const THANKS_DAYS = 21, HOURS_IDLE_DAYS = 14, QUIET_DAYS = 30, MILESTONE_SHIFTS = 10
 
 export type Member = { applicant_id: string; name: string; first: string; team: 'cna' | 'caregiver'; since: string; axiscare_id: string | null }
-export type Item = { id: string; kind: 'thanks' | 'milestone' | 'hours' | 'checkin'; applicant_id: string; name: string; team: string; ref: string;
-  title: string; detail: string; draft?: string; case_id?: string; shift_date?: string | null; client?: string }
+export type Item = { id: string; kind: 'thanks' | 'milestone' | 'hours' | 'checkin' | 'goback' | 'nobackup'; applicant_id: string; name: string; team: string; ref: string;
+  title: string; detail: string; draft?: string; case_id?: string; shift_date?: string | null; client?: string; client_ax?: string | null; answer?: string }
 
 /** Monday of the week (Central date string in, 'YYYY-MM-DD' out): the "this week" a weekly line belongs to. */
 export function weekOf(today: string): string {
@@ -53,7 +53,7 @@ export function draftThanks(tmpl: string | null | undefined, m: Member, client: 
 /** shifts: prn_shift_log rows; touches: prn_touches rows; kindTo: AxisCare id -> latest kind-words text date;
     wantsMore: AxisCare id -> hours a week they'd like; cases: coverage case id -> { client, shift_date }. */
 export function computeWeek(x: { members: Member[]; shifts: Any[]; touches: Any[]; kindTo: Record<string, string>; wantsMore: Record<string, number>;
-  cases: Record<string, { client: string; shift_date: string | null }>; today: string; sender: string; thanksTmpl?: string | null }): { items: Item[]; more: number } {
+  cases: Record<string, { client: string; shift_date: string | null }>; today: string; sender: string; thanksTmpl?: string | null; extra?: Item[] }): { items: Item[]; more: number } {
   const wk = weekOf(x.today), out: Item[] = []
   const touched = (aid: string, kinds: string[], ref: string) => x.touches.some((t) => t.applicant_id === aid && kinds.includes(t.kind) && t.ref === ref)
   for (const m of x.members) {
@@ -87,7 +87,7 @@ export function computeWeek(x: { members: Member[]; shifts: Any[]; touches: Any[
         title: `${m.first || m.name} would like more hours`, detail: `About ${want} a week` + (lastShift ? `; last PRN shift ${dayWord(lastShift, x.today).replace(/^on /, '')}.` : '; no PRN shift yet.') })
     /* quiet: nobody in touch personally in 30 days */
     if (days(m.since, x.today) >= QUIET_DAYS) {
-      const personal = x.touches.filter((t) => t.applicant_id === m.applicant_id && t.kind !== 'not_this_one').map((t) => S(t.at, 10))
+      const personal = x.touches.filter((t) => t.applicant_id === m.applicant_id && t.kind !== 'not_this_one' && !String(t.kind).startsWith('goback_')).map((t) => S(t.at, 10))
       if (m.axiscare_id && x.kindTo[m.axiscare_id]) personal.push(S(x.kindTo[m.axiscare_id], 10))
       const last = personal.sort().pop() || null
       if (days(last, x.today) > QUIET_DAYS && !touched(m.applicant_id, ['called', 'not_this_one'], 'checkin:' + wk))
@@ -95,7 +95,8 @@ export function computeWeek(x: { members: Member[]; shifts: Any[]; touches: Any[
           title: `Check in with ${m.first || m.name}`, detail: (last ? `Last personal contact ${dayWord(last, x.today).replace(/^on /, '')}` : 'No personal contact recorded yet') + '. Worth a call.' })
     }
   }
-  const order: Record<string, number> = { thanks: 0, milestone: 1, hours: 2, checkin: 3 }
+  out.push(...(x.extra || []))   // step 3: go-back answers to mark and clients with no PRN backup (_shared/prn-familiar.ts)
+  const order: Record<string, number> = { thanks: 0, goback: 1, nobackup: 2, milestone: 3, hours: 4, checkin: 5 }
   out.sort((a, b) => (order[a.kind] - order[b.kind]) || S(b.shift_date).localeCompare(S(a.shift_date)) || a.name.localeCompare(b.name))
   return { items: out.slice(0, CAP), more: Math.max(0, out.length - CAP) }
 }

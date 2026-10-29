@@ -32,6 +32,7 @@ import { adminRecipients } from '../_shared/clockin-admins.ts'
 import { callinLink, withLink } from '../_shared/callin-notify.ts'
 import { OPEN_HOURS_ACK_DEFAULT, offeredCells, readByWords, readOpenHoursReply } from '../_shared/open-hours.ts'
 import { readShiftReply, settleReply } from '../_shared/cara-reply.ts'
+import { readGoBack, waitingQuestion } from '../_shared/prn-familiar.ts'
 import { withHistory, shiftKey } from '../_shared/shift-offer.ts'   // answer history and the hours an answer was for (2026-10-24)   // CARA PHASE 1: the AI reads the answer (cara_reply_ai_live)
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
@@ -51,6 +52,39 @@ async function sms(contactId: string, message: string,
   }
   return await ghlSendChecked(sb, { Authorization: `Bearer ${token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
     to.sender, { channel: 'sms', contactId, address: to.address, who: to.who }, { message })
+}
+
+/** The PRN go-back answer, when this text is one: 'yes' | 'no' | 'unclear' recorded in prn_touches, or null (not one). */
+async function goBackAnswer(text: string, digits: string): Promise<string | null> {
+  try {
+    const since = new Date(Date.now() - 3 * 86_400_000).toISOString()
+    const { data: asked } = await sb.from('prn_touches').select('applicant_id').eq('kind', 'goback_asked').gte('at', since)
+    const ids = [...new Set((asked ?? []).map((r) => String(r.applicant_id)))]
+    if (!ids.length) return null
+    const [{ data: apps }, { data: tr }, { data: cgRow }] = await Promise.all([
+      sb.from('job_applicants').select('id, phone').in('id', ids),
+      sb.from('pay_tracks').select('applicant_id, axiscare_caregiver_id').eq('track', 'prn_team').in('applicant_id', ids),
+      sb.from('app_data').select('data').eq('key', 'caregivers').maybeSingle()])
+    // deno-lint-ignore no-explicit-any
+    const roster: any[] = Array.isArray(cgRow?.data) ? cgRow!.data : []
+    const who = ids.find((id) => {
+      // deno-lint-ignore no-explicit-any
+      const a: any = (apps ?? []).find((x) => String(x.id) === id) || {}
+      const ax = String((tr ?? []).find((t) => String(t.applicant_id) === id)?.axiscare_caregiver_id ?? '')
+      const cg = ax ? roster.find((c) => String(c?.axiscare_id ?? '') === ax) : null
+      return (!!digits && [a.phone, cg?.phone].some((p) => norm(String(p || '')) === digits))
+    })
+    if (!who) return null
+    const { data: mine } = await sb.from('prn_touches').select('*').eq('applicant_id', who)
+    const q = waitingQuestion(mine ?? [], new Date())
+    if (!q) return null
+    const said = readGoBack(text)
+    const kind = said === 'yes' ? 'goback_yes' : said === 'no' ? 'goback_no' : 'goback_unclear'
+    const { error } = await sb.from('prn_touches').insert({ applicant_id: who, kind, ref: q.ref, note: text.slice(0, 600), by_email: 'coverage-reply', by_name: 'Their text' })
+    if (error && !/duplicate|unique/i.test(error.message)) { console.error('[coverage-reply] go-back answer not recorded', error.message); return null }
+    await opEvent(sb, { job: 'coverage-reply', verb: 'prn_' + kind, item_id: who, area: 'caregivers', summary: `PRN go-back answer (${said || 'unclear'}) for ${q.ref}` })
+    return said || 'unclear'
+  } catch (e) { console.error('[coverage-reply] go-back check failed', e); return null }
 }
 
 Deno.serve(async (req) => {
@@ -201,6 +235,13 @@ Deno.serve(async (req) => {
 
   matches.sort((x, y) => new Date(String(y.a.at || 0)).getTime() - new Date(String(x.a.at || 0)).getTime())
   const m = matches.find(x => x.a.state === 'waiting') ?? matches[0]
+  /* PRN STEP 3 (2026-10-28): no open callout asked them, but a PRN member was asked "Would you be glad to go back?" in the
+     last 3 days. A clear YES or NO is recorded; anything else waits on the PRN This Week list for the office. A shift ask
+     always wins: a YES while a callout is open is about the shift. */
+  if (!m) {
+    const gb = await goBackAnswer(text, digits)
+    if (gb) return json({ ok: true, routed: 'prn go-back answer: ' + gb })
+  }
   if (!m) return json({ ok: true, routed: 'no open callout asked this number, nothing to attach to' })
   const { c, a } = m
   /* Asked on TWO open callouts at once? An SMS cannot say which one they

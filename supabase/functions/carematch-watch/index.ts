@@ -37,6 +37,7 @@ import { jobCaller } from '../_shared/job-auth.ts'
 import { ghlSendChecked, reportSendProblem } from '../_shared/send-problems.ts'
 import { ghlStaffContact } from '../_shared/staff-contact.ts'
 import { loadQuiet, isQuiet } from '../_shared/client-quiet.ts'
+import { goBackText, nameKey } from '../_shared/prn-familiar.ts'   // PRN step 3 (2026-10-28): the go-back question for PRN members
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 const json = (b: unknown, s = 200) =>
@@ -66,7 +67,7 @@ const esc = (s: string) => String(s ?? '').replace(/[&<>"]/g, c =>
    visits), name-keys as the fallback so a missing id cannot split a pair
    into two log rows. */
 // deno-lint-ignore no-explicit-any
-function pairIdOf(v: any): { id: string; client: string; caregiver: string } | null {
+function pairIdOf(v: any): { id: string; client: string; caregiver: string; caregiver_ax: string | null } | null {
   const clName = [String(v?.client?.firstName ?? '').trim(), String(v?.client?.lastName ?? '').trim()]
     .filter(Boolean).join(' ')
   const cgName = [String(v?.caregiver?.firstName ?? '').trim(), String(v?.caregiver?.lastName ?? '').trim()]
@@ -74,7 +75,7 @@ function pairIdOf(v: any): { id: string; client: string; caregiver: string } | n
   if (!clName || !cgName) return null
   const cl = v?.client?.id != null ? 'c' + String(v.client.id) : 'n' + nameKeyOf(clName)
   const cg = v?.caregiver?.id != null ? 'g' + String(v.caregiver.id) : 'n' + nameKeyOf(cgName)
-  return { id: `cw_${cl}_${cg}`, client: clName, caregiver: cgName }
+  return { id: `cw_${cl}_${cg}`, client: clName, caregiver: cgName, caregiver_ax: v?.caregiver?.id != null ? String(v.caregiver.id) : null }
 }
 
 // deno-lint-ignore no-explicit-any
@@ -154,7 +155,7 @@ Deno.serve(async (req) => {
   if (fetchError && !visits.length) return json({ error: fetchError }, 502)
   const nowChi = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).replace(' ', 'T')
 
-  type NewMatch = { id: string; client: string; caregiver: string; day: string }
+  type NewMatch = { id: string; client: string; caregiver: string; caregiver_ax: string | null; day: string }
   const fresh: NewMatch[] = []
   const seenThisRun = new Set<string>()
   let skippedNotEnded = 0
@@ -189,6 +190,15 @@ Deno.serve(async (req) => {
     if (nm) byName.set(nameKeyOf(nm), cg)
   }
 
+  /* PRN STEP 3 (Samantha 2026-10-28, her wording): a PRN member's first shift with a client gets "Would you be glad to go
+     back?" instead of the usual text, when ops_settings.prn_goback_live is on. Their YES or NO is read by coverage-reply
+     (the contact is tagged coverage-asked so the reply reaches it); anything else goes on the PRN This Week list. */
+  const goBackLive = settings.prn_goback_live === true
+  const prnByAx = new Map<string, string>()
+  try {
+    const { data: tr } = await sb.from('pay_tracks').select('applicant_id, axiscare_caregiver_id').eq('track', 'prn_team')
+    for (const t of tr ?? []) if (t?.axiscare_caregiver_id) prnByAx.set(String(t.axiscare_caregiver_id), String(t.applicant_id))
+  } catch { /* no PRN list: everyone gets the usual text */ }
   const wouldSend: Record<string, unknown>[] = []
   let texted = 0, skippedNoPhone = 0, refusedGate = 0
   for (const m of due) {
@@ -198,10 +208,14 @@ Deno.serve(async (req) => {
     const clientFirst = m.client.split(' ')[0]
     /* Reads like a coordinator texting, because that is what it is standing
        in for. Short on purpose — the reply is the point. */
-    const message = `Good morning, ${first}! How did your first shift with ${clientFirst} go?`
+    const prnId = prnByAx.get(m.caregiver_ax || String(cg?.axiscare_id ?? '')) || null
+    const goBack = !!prnId && goBackLive
+    const message = goBack ? goBackText(settings.prn_goback_msg, first, clientFirst, m.day, chiDay(0))
+      : `Good morning, ${first}! How did your first shift with ${clientFirst} go?`
     if (!live) {
       wouldSend.push({ caregiver: m.caregiver, client: m.client, first_shift: m.day,
-        phone_on_file: !!phone, preview: message })
+        phone_on_file: !!phone, preview: message, prn_member: !!prnId,
+        ...(prnId && !goBackLive ? { prn_goback_preview: goBackText(settings.prn_goback_msg, first, clientFirst, m.day, chiDay(0)) } : {}) })
       continue
     }
     /* Persist the pair BEFORE sending: better to miss one text on a crash
@@ -219,6 +233,13 @@ Deno.serve(async (req) => {
       if (await ghlSendChecked(sb, { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
         'carematch-watch', { channel: 'sms', contactId: contact.contactId, address: phone, who: m.caregiver }, { message })) {
         texted++
+        if (goBack && prnId) {
+          await sb.from('prn_touches').insert({ applicant_id: prnId, kind: 'goback_asked', ref: 'client:' + nameKey(m.client), message,
+            by_email: 'carematch-watch', by_name: 'Caring Companions' }).then(() => {}, () => {})
+          await fetch(`https://services.leadconnectorhq.com/contacts/${contact.contactId}/tags`, { method: 'POST',
+            headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tags: ['coverage-asked'] }) }).catch(() => {})
+        }
         await sb.rpc('upsert_app_data_item', { target_key: 'carematch_watch_log', item: {
           id: m.id, client: m.client, caregiver: m.caregiver, first_shift: m.day,
           first_seen: new Date().toISOString(), how: 'alerted', texted: true, emailed: false } })
