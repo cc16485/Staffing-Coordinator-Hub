@@ -25,7 +25,7 @@ export const CAP = 8
 export const THANKS_DAYS = 21, HOURS_IDLE_DAYS = 14, QUIET_DAYS = 30, MILESTONE_SHIFTS = 10
 
 export type Member = { applicant_id: string; name: string; first: string; team: 'cna' | 'caregiver'; since: string; axiscare_id: string | null; linked_at?: string | null }
-export type Item = { id: string; kind: 'looking' | 'welcome' | 'course' | 'idea' | 'thanks' | 'milestone' | 'hours' | 'checkin' | 'goback' | 'nobackup'; applicant_id: string; name: string; team: string; ref: string;
+export type Item = { id: string; kind: 'looking' | 'welcome' | 'course' | 'idea' | 'feedback' | 'oncall' | 'thanks' | 'milestone' | 'hours' | 'checkin' | 'goback' | 'nobackup'; applicant_id: string; name: string; team: string; ref: string;
   title: string; detail: string; draft?: string; case_id?: string; shift_date?: string | null; client?: string; client_ax?: string | null; answer?: string; team_key?: string }
 
 /** Monday of the week (Central date string in, 'YYYY-MM-DD' out): the "this week" a weekly line belongs to. */
@@ -98,7 +98,7 @@ export function computeWeek(x: { members: Member[]; shifts: Any[]; touches: Any[
     }
   }
   out.push(...(x.extra || []))   // step 3: go-back answers and clients with no PRN backup (_shared/prn-familiar.ts); step 4: welcome calls (_shared/prn-welcome.ts)
-  const order: Record<string, number> = { looking: -2, welcome: -1, thanks: 0, course: 2.4, idea: 2.6, goback: 1, nobackup: 2, milestone: 3, hours: 4, checkin: 5 }
+  const order: Record<string, number> = { looking: -2, welcome: -1, thanks: 0, course: 2.4, idea: 2.6, feedback: 2.5, oncall: 2.3, goback: 1, nobackup: 2, milestone: 3, hours: 4, checkin: 5 }
   out.sort((a, b) => (order[a.kind] - order[b.kind]) || S(b.shift_date).localeCompare(S(a.shift_date)) || a.name.localeCompare(b.name))
   return { items: out.slice(0, CAP), more: Math.max(0, out.length - CAP) }
 }

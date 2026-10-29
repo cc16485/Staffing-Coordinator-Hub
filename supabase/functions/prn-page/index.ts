@@ -17,6 +17,10 @@
 //   open        {p, e, t} (or open_preview {applicant_id} + a Hub sign-in): PRN step 5b, the open shifts their page may show,
 //               judged by each shift's own ask list (coverage-run prn_open; rules in _shared/prn-open.ts). Loaded after the
 //               page so it opens fast.
+//   feedback    {p, e, t, a1, a2} (step 7): their answers to the twice-yearly "What would make PRN better?" (May and November,
+//               the first 30 days; switch ops_settings.prn_feedback_live). Once per round; shows on This week.
+//   oncall      {p, e, t, pattern} (step 7, PRN CNA Team only): would they like to be on call, and how often. An offer never
+//               puts anyone on call; the office confirms each date, and confirmed dates show on their page.
 //   interested  {p, e, t, case_id, shift_key}: "I'm Interested", a Yes on that shift (coverage-run prn_interest checks it all
 //               again). Nobody is assigned until a coordinator confirms it in AxisCare.
 // Switch ops_settings.prn_page_live (off): members get "This page isn't open yet" and nothing is saved; the office preview works.
@@ -34,6 +38,8 @@ import { lookingState, readHours, readBreak, offeredTo, thanksFor, COURSES, TEAM
 import { MO_FROM } from '../_shared/office-from.ts'
 import { openLive } from '../_shared/prn-open.ts'
 import { pageUpdate } from '../_shared/prn-monthly.ts'
+import { feedbackRound, feedbackLive, readFeedback, FEEDBACK_QUESTIONS, onCallFor, ONCALL_WORDS } from '../_shared/prn-recognition.ts'
+import { PATTERNS } from '../_shared/prn-week.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
@@ -100,7 +106,7 @@ Deno.serve(async (req) => {
     const [plog, touches, shifts] = await Promise.all([
       sb.from('prn_page_log').select('kind, note, at').eq('applicant_id', aid).order('at'),
       sb.from('prn_touches').select('kind, ref, message, by_name, at').eq('applicant_id', aid),
-      ax ? sb.from('prn_shift_log').select('case_id, kind').eq('axiscare_caregiver_id', ax) : Promise.resolve({ data: [] })])
+      ax ? sb.from('prn_shift_log').select('case_id, kind, shift_date').eq('axiscare_caregiver_id', ax) : Promise.resolve({ data: [] })])
     const sh: Any[] = shifts.data ?? []
     const covered = sh.filter((x) => x.kind === 'confirmed' && !sh.some((o) => o.kind === 'backed_out' && o.case_id === x.case_id)).length
     /* Offered to You: answering opens the shift page they already know, with its own link (none in the office preview) */
@@ -122,10 +128,17 @@ Deno.serve(async (req) => {
     /* step 6: the month's PRN Team update at the top (the last one sent, for 40 days; none set up yet = none) */
     const um = await sb.from('prn_monthly').select('month, body, sent_by, sent_at').not('sent_at', 'is', null).order('month', { ascending: false }).limit(1)
     const update = um.error ? null : pageUpdate((um.data ?? [])[0], t)
+    /* step 7: the twice-yearly questions while a round is open, and on call for the PRN CNA Team */
+    const round = feedbackRound(t)
+    const feedback = round && (feedbackLive(st) || action === 'preview') ? { round: round.id, until: round.until, questions: FEEDBACK_QUESTIONS,
+      answered: (plog.data ?? []).some((r: Any) => r.kind === 'feedback' && S(r.note, 600).startsWith('[' + round.id + ']')), waiting: !feedbackLive(st) } : null
+    let oncall: Any = null
+    if (team === 'cna') { const oc = await sb.from('prn_oncall').select('kind, pattern, start_date, end_date, cancelled_at, at').eq('applicant_id', aid)
+      oncall = { ...onCallFor(oc.error ? [] : (oc.data ?? []), t, PATTERNS), patterns: PATTERNS, words: ONCALL_WORDS } }
     const brk = /^\d{4}-\d\d-\d\d$/.test(S(prn.break_until, 10)) && S(prn.break_until, 10) >= t ? S(prn.break_until, 10) : null
     return json({ ok: true, preview: action === 'preview', live, open_live: openLive(st), today: t, first, team, team_label: TEAM[team], since: S(tr.since, 10), on_schedule: !!ax,
-      looking: lookingState(plog.data ?? [], t), update, offered, clients, clients_why: clientsWhy,
-      thanks: thanksFor({ touches: touches.data ?? [], kindTells: list(await readKey(sb, 'kind_tells')), ax, covered, since: S(tr.since, 10), today: t }),
+      looking: lookingState(plog.data ?? [], t), update, feedback, oncall, offered, clients, clients_why: clientsWhy,
+      thanks: thanksFor({ touches: touches.data ?? [], kindTells: list(await readKey(sb, 'kind_tells')), ax, covered, since: S(tr.since, 10), today: t, shifts: sh }),
       hours: { windows: av?.windows ?? null, target_hours: av?.target_hours ?? null, outside_ok: av?.outside_ok === true, updated_at: av?.updated_at ?? null,
         short_notice_ok: typeof prn.short_notice_ok === 'boolean' ? prn.short_notice_ok : null, break_until: brk },
       courses: COURSES.map((c) => ({ ...c, requested: requested.has(c.slug) })), office: officePhone() })
@@ -149,6 +162,26 @@ Deno.serve(async (req) => {
     if (!r.ok) return json({ error: S(r.j?.error, 200) || 'Not saved. Please try again in a minute.', changed: r.j?.changed === true, already: r.j?.already === true }, r.status === 503 ? 503 : 409)
     await log('interested', caseId)
     return json({ ok: true, message: `Thank you, ${first}! The office will look at it and let you know. Nothing is set until they confirm it with you.` })
+  }
+
+  /* STEP 7: the twice-yearly questions, and on call (PRN CNA Team) */
+  if (action === 'feedback') {
+    const round = feedbackRound(t)
+    if (!round || !feedbackLive(st)) return json({ error: "The questions aren't open right now. You can always share an idea under Talk to us." }, 409)
+    const { data: prior } = await sb.from('prn_page_log').select('note').eq('applicant_id', aid).eq('kind', 'feedback')
+    if ((prior ?? []).some((r: Any) => S(r.note, 600).startsWith('[' + round.id + ']'))) return json({ error: 'You already answered this time. Thank you!' }, 409)
+    const f = readFeedback(b); if (!f.ok) return json({ error: f.error }, 400)
+    const e = await log('feedback', `[${round.id}]\n${f.note}`)
+    if (e) return json({ error: 'Could not save, please try again.' }, 500)
+    return json({ ok: true, message: `Thank you, ${first}! The office reads every answer.` })
+  }
+  if (action === 'oncall') {
+    if (team !== 'cna') return json({ error: 'On call is for the PRN CNA Team for now.' }, 409)
+    const pattern = S(b.pattern, 30); if (!PATTERNS[pattern]) return json({ error: 'Which one works for you?' }, 400)
+    const { error } = await sb.from('prn_oncall').insert({ applicant_id: aid, kind: 'offer', pattern, note: 'Their PRN Team page', by_email: 'prn-page', by_name: first })
+    if (error) return json({ error: 'Could not save, please try again.' }, 500)
+    await log('oncall_offer', PATTERNS[pattern])
+    return json({ ok: true, message: pattern === 'not_now' ? 'Got it. Saying not right now never counts against you.' : 'Thank you! The office will confirm any dates with you first.' })
   }
 
   /* everything below changes something: the member only, never the office preview */

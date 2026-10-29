@@ -12,6 +12,7 @@
 // =============================================================================
 // deno-lint-ignore no-explicit-any
 type Any = any
+import { milestonesFor } from './prn-recognition.ts'
 const S = (v: unknown, n = 200) => String(v ?? '').trim().slice(0, n)
 const DAY = 86_400_000
 export const LOOKING_DAYS = 7, BREAK_MAX_DAYS = 120
@@ -69,13 +70,12 @@ export function offeredTo(cases: Any[], ax: string | null, today: string): Any[]
 }
 
 /** Thank-yous: the exact texts the office sent them (thank-yous and kind words), and their milestones. Newest first, at most 12. */
-export function thanksFor(x: { touches: Any[]; kindTells: Any[]; ax: string | null; covered: number; since: string; today: string }): Any[] {
+export function thanksFor(x: { touches: Any[]; kindTells: Any[]; ax: string | null; covered: number; since: string; today: string; shifts?: Any[] }): Any[] {
   const out: Any[] = []
   for (const t of x.touches) if (t?.kind === 'thanks_sent' && S(t.message, 700)) out.push({ kind: 'thanks', at: S(t.at, 40), text: S(t.message, 700), from: S(t.by_name, 60).split(/\s+/)[0] || null })
   if (x.ax) for (const k of x.kindTells) for (const t of (Array.isArray(k?.tells) ? k.tells : [])) if (S(t?.caregiver_ax, 20) === x.ax && S(t?.text, 700)) out.push({ kind: 'kind_words', at: S(t.at, 40), text: S(t.text, 700), from: S(t.by, 60).split(/\s+/)[0] || null })
-  const yrs = /^\d{4}-\d\d-\d\d$/.test(x.since) ? Math.floor((Date.parse(x.today + 'T12:00:00Z') - Date.parse(x.since + 'T12:00:00Z')) / (365 * DAY)) : 0
-  if (x.covered >= 10) out.push({ kind: 'milestone', at: '', text: `You've stepped in for ${x.covered} PRN shifts. Thank you for standing in the gap.` })
-  if (yrs >= 1) out.push({ kind: 'milestone', at: '', text: `${yrs === 1 ? 'One year' : yrs + ' years'} on the team. Thank you for being with us.` })
+  /* step 7: first shift, 5, 10, 25, 50; a year; kept every yes this season (_shared/prn-recognition.ts) */
+  out.push(...milestonesFor({ covered: x.covered, shifts: x.shifts ?? [], since: x.since, today: x.today }))
   return out.sort((a, b) => S(b.at, 40).localeCompare(S(a.at, 40))).slice(0, 12)
 }
 
@@ -99,6 +99,17 @@ export function pageLines(x: { members: Any[]; log: Any[]; touches: Any[]; today
       const ref = 'idea:' + S(r.id, 20); if (done(m.applicant_id, ref)) continue
       out.push({ id: `idea:${m.applicant_id}:${S(r.id, 20)}`, kind: 'idea', applicant_id: m.applicant_id, name: m.name, team: TEAM[m.team] || TEAM.cna, ref,
         title: `${m.first || m.name} shared an idea`, detail: `"${S(r.note, 500)}"` })
+    }
+    /* step 7: their answers to the twice-yearly questions, and an on-call offer from their page */
+    for (const r of mine.filter((r) => r.kind === 'feedback')) {
+      const ref = 'feedback:' + S(r.id, 20); if (done(m.applicant_id, ref)) continue
+      out.push({ id: `feedback:${m.applicant_id}:${S(r.id, 20)}`, kind: 'feedback', applicant_id: m.applicant_id, name: m.name, team: TEAM[m.team] || TEAM.cna, ref,
+        title: `${m.first || m.name} answered "What would make PRN better?"`, detail: S(r.note, 600).replace(/^\[\d{4}-\d\d\]\n/, '').replace(/\n/g, ' · ') })
+    }
+    for (const r of mine.filter((r) => r.kind === 'oncall_offer')) {
+      const ref = 'oncall:' + S(r.id, 20); if (done(m.applicant_id, ref)) continue
+      out.push({ id: `oncall:${m.applicant_id}:${S(r.id, 20)}`, kind: 'oncall', applicant_id: m.applicant_id, name: m.name, team: TEAM[m.team] || TEAM.cna, ref,
+        title: `${m.first || m.name} would like to be on call: ${S(r.note, 60).toLowerCase()}`, detail: 'From their PRN Team page. Confirm dates with them in On call, then mark it done here.' })
     }
   }
   return out

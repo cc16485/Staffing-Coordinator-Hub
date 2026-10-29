@@ -122,7 +122,7 @@ try {
 
 /* ── 4. the page shows it ── */
 const pg = fs.readFileSync(`${F}/prn-page/index.ts`, 'utf8')
-ck("their page: the last update sent, through pageUpdate (40 days); no table yet = none, nothing breaks", /from\('prn_monthly'\)\.select\('month, body, sent_by, sent_at'\)\.not\('sent_at', 'is', null\)/.test(pg) && /const update = um\.error \? null : pageUpdate\(/.test(pg) && /looking: lookingState\(plog\.data \?\? \[\], t\), update, offered/.test(pg))
+ck("their page: the last update sent, through pageUpdate (40 days); no table yet = none, nothing breaks", /from\('prn_monthly'\)\.select\('month, body, sent_by, sent_at'\)\.not\('sent_at', 'is', null\)/.test(pg) && /const update = um\.error \? null : pageUpdate\(/.test(pg) && /looking: lookingState\(plog\.data \?\? \[\], t\), update, /.test(pg))
 const out = fs.readFileSync(`${F}/_shared/outreach.ts`, 'utf8'), sp = await import(path.join(process.cwd(), F, '_shared/send-problems.ts'))
 ck('a refused or failed monthly text reads as "PRN Team monthly update text" on Needs Attention, and the sender is registered', sp.SENDER_WORDS['prn-monthly']?.[0] === 'PRN Team monthly update text' && /'prn-monthly':\s+\{ class: 'routine_internal'/.test(out))
 
