@@ -25,6 +25,13 @@
 //                 call as an offer (PRN CNA Team only), and the line is done (prn_touches welcome_call).
 //   page_link     {applicant_id} (step 5a): their PRN Team page link (30 days), for a person to send by hand.
 //   mark kind 'handled' (step 5a): a course assigned or an idea read, from their page.
+//   monthly       {month?} (step 6): last month's PRN Team update: the facts the Hub drafted, what the office wrote, whether it
+//                 went out and to how many. Reads only.
+//   monthly_save  {month, paragraph, kind_word?, tip?}: the office's own words for it (kept until sent; then it stays as sent).
+//   monthly_send  {month}: one tap texts every PRN member a short line with their own page link (the full update is on their
+//                 page). Switch ops_settings.prn_monthly_live, and the page must be open. Never 9pm to 8am. Through the same
+//                 gates as every caregiver text; each member at most once a month; a refused or failed text is listed back and
+//                 raises a "Didn't go through" card (no silent failures).
 // STEP 3 (2026-10-28): week also returns each linked member's familiar clients (AxisCare visits in the last 6 months, minus
 // Do Not Return, a concern either way, or a NO to the go-back question) and adds the go-back and no-backup lines.
 // The list itself shows to everyone in the office once ops_settings.prn_week_live is on; before that the Hub shows it to
@@ -41,6 +48,9 @@ import { makePageLink, pageExpiry } from '../_shared/prn-page-links.ts'
 import { welcomeLines, readCall, callSummary, WELCOME_DEFAULT } from '../_shared/prn-welcome.ts'
 import { visitsOf } from '../_shared/axis-visits.ts'
 import { familiarClients, noBackup, weekLines, GOBACK_DEFAULT, FAMILIAR_DAYS, type Familiar } from '../_shared/prn-familiar.ts'
+import { monthFacts, readDraft, lastMonth, isMonth, monthWord, monthlyText, monthlyRef, monthlyLive, sendHour, MONTHLY_TEXT_DEFAULT, STEADY_LINE } from '../_shared/prn-monthly.ts'
+import { keptMessage } from '../_shared/prn-page-texts.ts'
+import { ghlSendChecked } from '../_shared/send-problems.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
@@ -276,6 +286,74 @@ Deno.serve(async (req) => {
     const m = memberOf(row.applicant_id)
     await opEvent(sb, { verb: 'prn_oncall_cancelled', actor_name: who.name, actor_email: who.email, item_id: row.applicant_id, area: 'caregivers', summary: `On call ${row.start_date} to ${row.end_date} taken back for ${m?.name || 'a PRN member'}` })
     return json({ outcome: 'cancelled' })
+  }
+
+  /* STEP 6 · THE MONTHLY PRN TEAM UPDATE */
+  if (action === 'monthly' || action === 'monthly_save' || action === 'monthly_send') {
+    const month = isMonth(b.month) ? S(b.month, 7) : lastMonth(today())
+    if (month !== lastMonth(today())) return json({ error: `The update is for last month (${monthWord(lastMonth(today()))}).` }, 400)
+    const { data: row, error: re } = await sb.from('prn_monthly').select('*').eq('month', month).maybeSingle()
+    if (re) return json({ error: 'The monthly update is not set up yet (prn_monthly.sql).' }, 500)
+    const ids = mem.map((m) => m.applicant_id)
+    const { data: done } = ids.length ? await sb.from('prn_touches').select('applicant_id').eq('kind', 'monthly_sent').eq('ref', monthlyRef(month)) : { data: [] }
+    const doneIds = new Set((done ?? []).map((x: Any) => x.applicant_id))
+    const draftFacts = async () => {
+      const { data: sh } = ids.length ? await sb.from('prn_shift_log').select('case_id, kind, shift_date, axiscare_caregiver_id').in('applicant_id', ids) : { data: [] }
+      return monthFacts({ month, shifts: sh ?? [], cases: list(await readKey(sb, 'coverage_cases')), members: mem }).lines
+    }
+    if (action === 'monthly') {
+      const facts = row?.sent_at ? (row.body?.facts ?? []) : await draftFacts()
+      return json({ ok: true, month, month_word: monthWord(month), live: monthlyLive(st), switch_on: st.prn_monthly_live === true, page_live: st.prn_page_live === true,
+        facts, paragraph: row?.body?.paragraph ?? '', kind_word: row?.body?.kind_word ?? '', tip: row?.body?.tip ?? '', steady: STEADY_LINE,
+        saved_by: row?.saved_by ?? null, saved_at: row?.saved_at ?? null, sent_by: row?.sent_by ?? null, sent_at: row?.sent_at ?? null,
+        members: mem.length, sent_to: doneIds.size, text_default: MONTHLY_TEXT_DEFAULT, text_tmpl: S(st.prn_monthly_msg, 700) || null })
+    }
+    if (action === 'monthly_save') {
+      if (row?.sent_at) return json({ error: `The ${monthWord(month)} update was already sent and stays as it went out.` }, 409)
+      const d = readDraft(b); if (!d.ok) return json({ error: d.error }, 400)
+      const body = { facts: await draftFacts(), paragraph: d.paragraph, kind_word: d.kind_word, tip: d.tip }
+      const { error } = await sb.from('prn_monthly').upsert({ month, body, saved_by: who.name || who.email, saved_at: new Date().toISOString() }, { onConflict: 'month' })
+      if (error) return json({ error: 'Could not save it: ' + error.message }, 500)
+      await opEvent(sb, { verb: 'prn_monthly_saved', actor_name: who.name, actor_email: who.email, item_id: month, area: 'caregivers', summary: `${who.name} saved the ${monthWord(month)} PRN Team update` })
+      return json({ outcome: 'saved', facts: body.facts })
+    }
+    /* monthly_send */
+    if (!monthlyLive(st)) return json({ outcome: 'off', error: st.prn_page_live !== true ? "The PRN Team page isn't open yet, so the update can't link to it. Nothing was sent."
+      : 'Sending the monthly update is switched off (Settings, PRN Teams). Nothing was sent.' }, 409)
+    const hour = Number(new Date().toLocaleString('en-US', { timeZone: 'America/Chicago', hour: '2-digit', hour12: false })) % 24
+    if (!sendHour(hour)) return json({ outcome: 'night', error: 'Caregivers are not texted between 9pm and 8am. Nothing was sent; send it in the morning.' }, 409)
+    if (!S(row?.body?.paragraph, 10)) return json({ error: 'Write your paragraph and save it first. Nothing was sent.' }, 400)
+    const secret = Deno.env.get('HUB_JOB_SECRET') ?? ''
+    if (secret.length < 32) return json({ error: 'Page links are not set up on this project. Nothing was sent.' }, 500)
+    const ghl = { token: Deno.env.get('GHL_TOKEN') || Deno.env.get('GHL_API_KEY') || '', locationId: Deno.env.get('GHL_LOCATION_ID') ?? '' }
+    if (!ghl.token || !ghl.locationId) return json({ error: 'GoHighLevel is not configured. Nothing was sent.' }, 502)
+    const roster = list(await readKey(sb, 'caregivers'))
+    const out = { sent: [] as string[], already: doneIds.size, no_phone: [] as string[], refused: [] as string[], failed: [] as string[] }
+    for (const m of mem) {
+      if (doneIds.has(m.applicant_id)) continue
+      const cg = m.axiscare_id ? roster.find((c: Any) => String(c?.axiscare_id ?? '') === m.axiscare_id) : null
+      const { data: app } = await sb.from('job_applicants').select('phone, first_name, last_name').eq('id', m.applicant_id).maybeSingle()
+      const phone = normalisePhone(cg?.phone) || normalisePhone(app?.phone)
+      if (!phone) { out.no_phone.push(m.name); continue }
+      let refusal: string[] = []
+      const contact = await contactForOutbound(sb, ghl, { phone, firstName: cg?.first || app?.first_name, lastName: cg?.last || app?.last_name }, 'routine_internal',
+        { audience: 'caregiver', channel: 'sms', sender: 'prn-monthly', humanInitiated: true, onOptOut: (r: string[]) => { refusal = r } })
+      if (!contact) { out.refused.push(`${m.name}${refusal.length ? ' (asked not to get texts)' : ''}`); continue }
+      const link = await makePageLink(secret, m.applicant_id, pageExpiry())
+      const message = monthlyText(st.prn_monthly_msg, m.first, month, link)
+      const ok = await ghlSendChecked(sb, { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' }, 'prn-monthly',
+        { channel: 'sms', contactId: contact.contactId, address: phone, who: m.name }, { message, fromNumber: MO_FROM })
+      if (!ok) { out.failed.push(m.name); continue }
+      out.sent.push(m.name)
+      await sb.from('prn_touches').insert({ applicant_id: m.applicant_id, kind: 'monthly_sent', ref: monthlyRef(month), message: keptMessage(message, link), by_email: who.email, by_name: who.name })
+    }
+    if (out.sent.length) {
+      const stamp = row?.sent_at ? {} : { sent_at: new Date().toISOString(), sent_by: who.name || who.email }
+      await sb.from('prn_monthly').update({ ...stamp, sent_count: out.already + out.sent.length }).eq('month', month)
+    }
+    await opEvent(sb, { verb: 'prn_monthly_sent', actor_name: who.name, actor_email: who.email, item_id: month, area: 'caregivers',
+      summary: `${who.name} sent the ${monthWord(month)} PRN Team update to ${out.sent.length}` + (out.refused.length + out.failed.length + out.no_phone.length ? ` (${out.refused.length + out.failed.length + out.no_phone.length} not reached)` : ''), data: out })
+    return json({ outcome: 'sent', ...out })
   }
 
   return json({ error: 'unknown action' }, 400)

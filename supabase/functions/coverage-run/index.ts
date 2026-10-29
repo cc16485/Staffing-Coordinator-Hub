@@ -68,7 +68,7 @@ import { judgeForWaves, pickWaveV2, bandsOfTimes, caseBands, sameTimeOfDay } fro
 import { skillCode, threeGroups, checkApproval } from '../_shared/ask-list.ts'
 import { conflictsFor, readRange, wallMin, workingNow, withWorkingNow } from '../_shared/overlap.ts'   // already working then (her top priority, 2026-10-25)   // the three-group ask list (2026-10-24), switch ask_list_live   // her wave rules (2026-10-24), switch cara_wave_rules_live
 import { onBreak } from '../_shared/prn-break.ts'
-import { openCandidates, eligibleOn, openView, interestAsk, interestCardLine, interestOfficeText, isOngoing as prnOngoingCase } from '../_shared/prn-open.ts'   // PRN step 5b
+import { openCandidates, eligibleOn, openView, interestAsk, interestCardLine, interestOfficeText, isOngoing as prnOngoingCase, keptOff as prnKeptOff } from '../_shared/prn-open.ts'   // PRN step 5b
 import { visitMatches } from '../_shared/shift-offer.ts'
 
 /* Straight-line miles between two zips' Census centroids — an honest
@@ -1796,7 +1796,7 @@ Deno.serve(async (req) => {
       if (!ownerCall) return jr({ error: 'owner key only' }, 403)
       const ax = String(body.axiscare_id || '').replace(/\D/g, ''), key = `${String(kase.shift_date || '')}|${String(kase.shift_time || '')}`
       if (!ax) return jr({ error: 'Once you are on the schedule you can say you are interested. Text us in the meantime.' }, 409)
-      if (prnOngoingCase(kase)) return jr({ error: 'This shift is no longer open. Thank you for looking!' }, 409)
+      if (prnOngoingCase(kase) || prnKeptOff(kase)) return jr({ error: 'This shift is no longer open. Thank you for looking!' }, 409)
       if (String(body.shift_key || '') !== key) return jr({ error: 'This shift changed while you were looking. Please look at the new details.', changed: true }, 409)
       if (`${key.slice(0, 10)}T${key.slice(11, 16)}` <= chiNowNaive()) return jr({ error: 'This shift has started. Thank you for looking!' }, 409)
       // deno-lint-ignore no-explicit-any

@@ -3,7 +3,8 @@
 // "I'm Interested = same as a Yes on the shift page"; "Yes, build part 5b with its switch off")
 // =============================================================================
 //   Which shifts   open one-time shifts and call-offs in the next PRN_OPEN_DAYS days that haven't started and that we
-//                  haven't asked them about yet (those are in Offered to You). Never a regular weekly opening.
+//                  haven't asked them about yet (those are in Offered to You). Never a regular weekly opening, and never one
+//                  the office ticked "Keep off the PRN page" (decision 13).
 //   Who sees one   exactly the office's ask list for that shift (coverage-run askListFor: the same safety checks, Do Not
 //                  Return, care level, skills, clearance, already working then, a break). They see it when they are on the
 //                  Ready to ask list, or when the only thing in the way is their own days and times (her default: their own
@@ -33,13 +34,15 @@ const addDays = (ymd: string, n: number) => new Date(Date.parse(ymd + 'T12:00:00
 /** A regular weekly opening (coverage-run isOngoingCase): never on the page. */
 export const isOngoing = (c: Any) => S(c?.kind) === 'interest' || c?.shift_pattern?.kind === 'open_ongoing' || S(c?.reason) === 'open'
 
+/** The office ticked "Keep off the PRN page" on the case (her decision 13, 2026-10-28; for example a sensitive family situation). */
+export const keptOff = (c: Any) => c?.prn_page_off === true
 /** The shifts worth checking for one member: open, one-time, a day and hours, today to PRN_OPEN_DAYS out, not started
     (nowNaive "YYYY-MM-DDTHH:MM" Chicago), not asked of them already. Soonest first, at most PRN_OPEN_MAX. */
 export function openCandidates(cases: Any[], ax: string | null, today: string, nowNaive: string): Any[] {
   if (!ax) return []
   const last = addDays(today, PRN_OPEN_DAYS)
   return (cases || []).filter((c) => {
-    if (!c || S(c.status, 20) !== 'open' || isOngoing(c) || c.no_client === true || !S(c.client, 80)) return false
+    if (!c || S(c.status, 20) !== 'open' || isOngoing(c) || c.no_client === true || !S(c.client, 80) || keptOff(c)) return false
     const d = S(c.shift_date, 10), t = S(c.shift_time, 20)
     if (!/^\d{4}-\d\d-\d\d$/.test(d) || !/^\d\d:\d\d-\d\d:\d\d$/.test(t) || d < today || d > last) return false
     if (`${d}T${t.slice(0, 5)}` <= S(nowNaive, 16)) return false
