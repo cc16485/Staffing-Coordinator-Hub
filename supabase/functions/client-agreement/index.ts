@@ -20,6 +20,9 @@
 // 875 (Stage 4, Samantha 2026-10-17): countersigning ticks Start of Care "Care Agreement provided" + "Signed Care Agreement
 // received" and the journey's "Service agreement signed and on file" (_shared/agreement-steps.ts). Upload to AxisCare stays
 // a person's tick. The GoHighLevel agreement is retired.
+// 2026-10-29 (Samantha: "the more they only have to tap the better"): start fills the typing boxes from AxisCare, the
+// Family Circle, the lead and the home visit (_shared/agreement-prefill.ts); prefill shows the office what will be filled and
+// the home visit's level and rate; fill_blanks fills only the empty boxes of a draft. Facts only, never a Yes / No choice.
 // =============================================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
@@ -32,6 +35,7 @@ import { familySign } from '../_shared/agreement-family-sign.ts'
 import { tickAgreementSteps } from '../_shared/agreement-steps.ts'
 import { LINK_DAYS, SIGN_PAGE, secret, sha256, digits, linkMessages, sendFamily, linkView } from '../_shared/agreement-links.ts'
 import { contactsFrom, withEdits, planContacts, rpBody, memberRow, todoFor, badState, nameKey } from '../_shared/agreement-contacts.ts'
+import { prefillFrom, officeFromVisit, latestVisit, fillBlanks, type Prefill } from '../_shared/agreement-prefill.ts'
 
 // deno-lint-ignore no-explicit-any
 type Any = any
@@ -151,6 +155,33 @@ export const FORM_INFO = {
 }
 
 /** The row as the Hub may see it: no signature images, no file paths beyond whether a PDF exists. */
+/* ---------- 2026-10-29: what the Hub already knows about this client, for the agreement's blanks ---------- */
+async function gather(db: Any, ax: string): Promise<{ prefill: Prefill; office: Record<string, string | boolean>; visit_found: boolean }> {
+  const notes: string[] = []
+  const [cl, rp] = await Promise.all([axis('GET', `/api/clients/${ax}`), axis('GET', `/api/clients/${ax}/responsibleParties`)])
+  const client = okS(cl.status) ? (cl.json?.results?.client ?? cl.json?.results ?? null) : null
+  if (!client) notes.push("AxisCare could not be read (" + axErr(cl) + "), so the client's details come from the lead where it has them.")
+  const rps = okS(rp.status) ? listOf(rp.json?.results?.responsibleParties ?? rp.json?.results ?? []).filter((p: Any) => tt(p?.name)) : []
+  if (!okS(rp.status) && rp.status !== 404) notes.push("AxisCare's responsible parties could not be read (" + axErr(rp) + ').')
+  let members: Any[] = []
+  const { data: circs, error: ce } = await db.from('care_circles').select('id').eq('active', true).eq('axiscare_client_id', ax)
+  if (ce) notes.push('The Family Circle could not be read.')
+  else if ((circs ?? []).length === 1) {
+    const { data: m, error: me } = await db.from('circle_contacts').select('*').eq('circle_id', circs![0].id)
+    if (me) notes.push('The Family Circle could not be read.'); else members = m ?? []
+  }
+  let lead: Any = null, visit: Any = null
+  const [{ data: lr, error: le }, { data: vr, error: ve }] = await Promise.all([
+    db.from('app_data').select('data').eq('key', 'leads').maybeSingle(), db.from('app_data').select('data').eq('key', 'care_assessments').maybeSingle()])
+  if (le) notes.push('The lead could not be read.')
+  else lead = (Array.isArray(lr?.data) ? lr.data : []).find((l: Any) => l && tt(l.axiscare_client_id) === ax) ?? null
+  if (ve) notes.push('The home visit could not be read.')
+  else visit = latestVisit(Array.isArray(vr?.data) ? vr.data : [], ax, lead ? tt(lead.id) : null)
+  const prefill = prefillFrom({ client, rps, members, lead, visit, fields: FIELDS })
+  prefill.notes.unshift(...notes)
+  return { prefill, office: officeFromVisit(visit), visit_found: !!visit }
+}
+
 function view(r: Any) {
   return {
     id: r.id, client_ax: r.axiscare_client_id, status: r.status, version: r.version, pdf_sha256: r.pdf_sha256, office: r.office, answers: r.answers,
@@ -201,12 +232,35 @@ if (typeof Deno !== 'undefined' && Deno.serve) Deno.serve(async (req: Request) =
       if (problems.length) return json({ error: 'Some office answers are not right.', problems }, 422)
       const addenda = (Array.isArray(b.addenda) ? b.addenda : []).map(String).filter((x: string) => ADDENDA.includes(x))
       const start_date = /^\d{4}-\d{2}-\d{2}$/.test(String(b.start_date || '')) ? String(b.start_date) : null
+      const { prefill } = await gather(db, ax)
       const { data, error } = await db.from('client_agreements').insert({
         axiscare_client_id: ax, doc: DOC, version: VERSION, pdf_sha256: PDF_SHA256, status: 'draft',
-        office: { answers, addenda, start_date, by: who.name }, answers: {}, created_by: who.email,
+        office: { answers, addenda, start_date, by: who.name, prefill: prefill.from, prefill_values: prefill.answers, prefill_notes: prefill.notes }, answers: prefill.answers, created_by: who.email,
       }).select('*')
       if (error) throw error
       return json({ ok: true, outcome: 'saved', agreement: view(data[0]), form: FORM_INFO })
+    }
+
+    /* 2026-10-29: the set-up screen shows what will be filled in, and picks the home visit's level and rate */
+    if (action === 'prefill') {
+      const ax = S(b.client_ax, 12)
+      if (!AX.test(ax)) return json({ error: 'Which client?' }, 400)
+      const g = await gather(db, ax)
+      return json({ ok: true, count: Object.keys(g.prefill.answers).length, sources: [...new Set(Object.values(g.prefill.from))], notes: g.prefill.notes, office: g.office, visit_found: g.visit_found })
+    }
+
+    /* 2026-10-29: a draft started before (or the Family Circle changed since): fill only its empty boxes */
+    if (action === 'fill_blanks') {
+      const r = await row(b.id)
+      if (!r) return json({ error: 'Agreement not found.' }, 404)
+      if (r.status !== 'draft') return json({ error: 'This agreement is already signed.', outcome: 'stale' }, 409)
+      const add = fillBlanks(r.answers ?? {}, (await gather(db, String(r.axiscare_client_id))).prefill)
+      const answers = { ...(r.answers ?? {}), ...add.answers }
+      const office = { ...r.office, prefill: { ...(r.office?.prefill ?? {}), ...add.from }, prefill_values: { ...(r.office?.prefill_values ?? {}), ...add.answers }, prefill_notes: add.notes }
+      const { data, error } = await db.from('client_agreements').update({ answers, office, updated_at: new Date().toISOString() }).eq('id', r.id).eq('status', 'draft').select('*')
+      if (error) throw error
+      if (!data?.length) return json({ error: 'This agreement is already signed.', outcome: 'stale' }, 409)
+      return json({ ok: true, filled: Object.keys(add.answers).length, notes: add.notes, agreement: view(data[0]) })
     }
 
     if (action === 'get') {
