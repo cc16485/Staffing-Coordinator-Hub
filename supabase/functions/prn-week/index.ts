@@ -65,7 +65,7 @@ import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { contactForOutbound, maySendTo, normalisePhone } from '../_shared/outreach.ts'
 import { opEvent } from '../_shared/events.ts'
 import { MO_FROM } from '../_shared/office-from.ts'   // every text goes out from (417) 234-8494
-import { computeWeek, onCallWeekends, onCallMonth, THANKS_DEFAULT, PATTERNS, SHIFTS, SHIFT_SHORT, type Member } from '../_shared/prn-week.ts'
+import { computeWeek, memberSigns, onCallWeekends, onCallMonth, THANKS_DEFAULT, PATTERNS, SHIFTS, SHIFT_SHORT, type Member } from '../_shared/prn-week.ts'
 import { pageLines, lookingState } from '../_shared/prn-page.ts'
 import { makePageLink, pageExpiry } from '../_shared/prn-page-links.ts'
 import { welcomeLines, readCall, callSummary, WELCOME_DEFAULT } from '../_shared/prn-welcome.ts'
@@ -159,13 +159,20 @@ Deno.serve(async (req) => {
     const plog: Any[] = pl.error ? [] : (pl.data ?? [])
     extra.push(...pageLines({ members: mem, log: plog, touches: tc.data ?? [], today: t }))
     const { data: apPrn } = ids.length ? await sb.from('job_applicants').select('id, prn').in('id', ids) : { data: [] }
+    /* per-person signs for Our teams (switch prn_team_signs_live): the 60-day check-ins and each member's shift texts */
+    const axs = mem.map((m) => m.axiscare_id).filter(Boolean) as string[]
+    const ckr = axs.length ? await sb.from('prn_checkins').select('axiscare_caregiver_id, sent_at, answered_at').in('axiscare_caregiver_id', axs) : { data: [], error: null }
+    const asksBy: Record<string, Any[]> = {}
+    for (const c of allCases) for (const a of (Array.isArray(c?.asked) ? c.asked : [])) { const ax = S(a?.axiscare_id, 20); if (ax && axs.includes(ax) && (a.auto === true || a.picked_by_coordinator === true)) (asksBy[ax] ||= []).push(a) }
     const page: Record<string, Any> = {}
     for (const m of mem) {
       const mine = plog.filter((r) => r.applicant_id === m.applicant_id), seen = mine.filter((r) => r.kind === 'viewed').pop()
       const bu = S((apPrn ?? []).find((x: Any) => x.id === m.applicant_id)?.prn?.break_until, 10)
       const gm = (apPrn ?? []).find((x: Any) => x.id === m.applicant_id)?.prn?.gap_mentor
       page[m.applicant_id] = { last_looked: seen?.at ?? null, looking: lookingState(mine, t), break_until: /^\d{4}-\d\d-\d\d$/.test(bu) && bu >= t ? bu : null,
-        gap_mentor: gm?.on === true ? { skills: gm.skills || [], evidence: gm.evidence || '', by: gm.by || null, at: gm.at || null } : null }
+        gap_mentor: gm?.on === true ? { skills: gm.skills || [], evidence: gm.evidence || '', by: gm.by || null, at: gm.at || null } : null,
+        signs: memberSigns({ member: m, shifts: sh.data ?? [], touches: tc.data ?? [], kindAt: m.axiscare_id ? kindTo[m.axiscare_id] || null : null, wantsMore: m.axiscare_id ? wantsMore[m.axiscare_id] ?? null : null,
+          looking: lookingState(mine, t).on, checkins: ckr.error ? [] : (ckr.data ?? []), asks: m.axiscare_id ? asksBy[m.axiscare_id] || [] : [], today: t }) }
     }
     const wk = computeWeek({ members: mem, shifts: sh.data ?? [], touches: tc.data ?? [], kindTo, wantsMore, cases, today: t, sender: who.name, thanksTmpl: st.prn_thanks_msg, extra })
     const oncall = onCallWeekends(oc.data ?? [], mem, t)
@@ -177,7 +184,7 @@ Deno.serve(async (req) => {
       members: mem.map((m) => ({ applicant_id: m.applicant_id, name: m.name, team: m.team, axiscare_id: m.axiscare_id, familiar: familiar[m.applicant_id] || { clients: [], why: null }, page: page[m.applicant_id] || null })),
       page_live: st.prn_page_live === true,
       familiar_note: anyWhy ? `Familiar clients could not all be read (${anyWhy}), so no client is flagged as having no PRN backup today.` : null,
-      mentor_live: mentorLive(st), mentor_skills: SKILLS,
+      mentor_live: mentorLive(st), mentor_skills: SKILLS, signs_live: st.prn_team_signs_live === true,
       goback_live: st.prn_goback_live === true, goback_default: GOBACK_DEFAULT, welcome_live: st.prn_welcome_live === true, welcome_default: WELCOME_DEFAULT,
       oncall: { ...oncall, patterns: PATTERNS, stipend: null, shifts: SHIFTS, shift_live: st.prn_oncall_shift_live === true,
         /* for payroll: this month and last month, by shift (counts only) */

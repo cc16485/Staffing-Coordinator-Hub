@@ -145,3 +145,31 @@ export function onCallMonth(oncall: Any[], members: Member[], month: string): An
   }
   return [...by.values()].sort((a, b) => a.name.localeCompare(b.name))
 }
+
+/* ── PER-PERSON SIGNS FOR OUR TEAMS (plan section 8; built 2026-10-29, switch ops_settings.prn_team_signs_live) ──
+   Last heard from us (personal contact only: a thank-you, a card, a call, the welcome call, kind words; never a shift ask or an
+   automatic text), last PRN shift, would like more hours, and "may be drifting" only when two or more signs line up: the last
+   60-day check-in has gone unanswered for a week, no PRN shift in 45 days (on the team 45+ days), or no answer to the last 3
+   shift texts in 30 days. Shown as "worth a call", never as a mark against anyone. Declines are never counted. */
+export const DRIFT_SHIFT_DAYS = 45, DRIFT_ASK_DAYS = 30, DRIFT_ASKS = 3, CHECKIN_WAIT_DAYS = 7
+const PERSONAL = ['thanks_sent', 'card_mailed', 'called', 'welcome_call', 'handled']
+/** asks: coverage_cases' asked[] rows for this member's AxisCare id, each { at, state, replied_at }; checkins: prn_checkins rows. */
+export function memberSigns(x: { member: Member; shifts: Any[]; touches: Any[]; kindAt: string | null; wantsMore: number | null; looking: boolean; checkins: Any[]; asks: Any[]; today: string }): Any {
+  const m = x.member
+  const mine = x.shifts.filter((s) => s.applicant_id === m.applicant_id || (m.axiscare_id && String(s.axiscare_caregiver_id) === m.axiscare_id))
+  const out_ = mine.filter((s) => s.kind === 'backed_out')
+  const lastShift = mine.filter((s) => s.kind === 'confirmed' && !out_.some((o) => o.case_id === s.case_id)).map((s) => S(s.shift_date, 10) || S(s.recorded_at, 10)).sort().pop() || null
+  const contact = x.touches.filter((t) => t.applicant_id === m.applicant_id && PERSONAL.includes(t.kind)).map((t) => S(t.at, 10))
+  if (x.kindAt) contact.push(S(x.kindAt, 10))
+  const lastContact = contact.filter(Boolean).sort().pop() || null
+  const why: string[] = []
+  const ci = x.checkins.filter((c) => m.axiscare_id && String(c.axiscare_caregiver_id) === m.axiscare_id).sort((a, b) => S(a.sent_at, 40).localeCompare(S(b.sent_at, 40))).pop()
+  if (ci && !ci.answered_at && days(S(ci.sent_at, 10), x.today) >= CHECKIN_WAIT_DAYS) why.push('no answer to the 60-day check-in')
+  if (days(m.since, x.today) >= DRIFT_SHIFT_DAYS && (!lastShift || days(lastShift, x.today) >= DRIFT_SHIFT_DAYS)) why.push(`no PRN shift in ${DRIFT_SHIFT_DAYS}+ days`)
+  const recent = x.asks.filter((a) => S(a.at, 10) && days(S(a.at, 10), x.today) <= DRIFT_ASK_DAYS && days(S(a.at, 10), x.today) >= 1)
+    .sort((a, b) => S(b.at, 40).localeCompare(S(a.at, 40))).slice(0, DRIFT_ASKS)
+  if (recent.length >= DRIFT_ASKS && recent.every((a) => !a.replied_at && !['yes', 'no', 'inquiry'].includes(S(a.state, 20)))) why.push(`no answer to the last ${DRIFT_ASKS} shift texts`)
+  return { last_contact: lastContact, last_shift: lastShift, wants_more: x.wantsMore && x.wantsMore > 0 ? x.wantsMore : null, looking: x.looking,
+    drifting: why.length >= 2 && !x.looking, drifting_why: why.length >= 2 ? why : [] }
+}
+
