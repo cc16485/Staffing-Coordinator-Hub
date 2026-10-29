@@ -104,6 +104,9 @@ export function computeWeek(x: { members: Member[]; shifts: Any[]; touches: Any[
 }
 
 /* ── ON CALL (PRN CNA Team only, her decision 20; two shifts a day, daytime 7am to 5pm and overnight 5pm to 7am, decision 19 as changed 2026-10-29) ── */
+/* the shift on a confirmed date (2026-10-29): what payroll pays from ($25 a shift, $50 a whole day, in her plan) */
+export const SHIFTS: Record<string, string> = { day: 'Daytime, 7am to 5pm', overnight: 'Overnight, 5pm to 7am', whole: 'Whole day, 24 hours' }
+export const SHIFT_SHORT: Record<string, string> = { day: 'daytime', overnight: 'overnight', whole: 'whole day' }
 export const PATTERNS: Record<string, string> = { every_weekend: 'Every weekend', every_other_weekend: 'Every other weekend', one_weekend_month: 'One weekend a month', weekday: 'A weekday', not_now: 'Not right now' }
 /** The next n weekends (Saturday dates) from today, each with who is confirmed, and the gaps. */
 export function onCallWeekends(oncall: Any[], members: Member[], today: string, n = 8): { weekends: Any[]; offers: Any[] } {
@@ -114,7 +117,7 @@ export function onCallWeekends(oncall: Any[], members: Member[], today: string, 
   const weekends = Array.from({ length: n }, (_, i) => {
     const sat = new Date(first.getTime() + i * 7 * DAY).toISOString().slice(0, 10), sun = new Date(first.getTime() + (i * 7 + 1) * DAY).toISOString().slice(0, 10)
     const who = live.filter((r) => r.kind === 'confirmed' && S(r.start_date, 10) <= sun && S(r.end_date, 10) >= sat)
-      .map((r) => ({ id: r.id, applicant_id: r.applicant_id, name: nameOf(r.applicant_id) }))
+      .map((r) => ({ id: r.id, applicant_id: r.applicant_id, name: nameOf(r.applicant_id), shift: SHIFTS[S(r.shift, 10)] ? S(r.shift, 10) : null }))
     return { saturday: sat, sunday: sun, confirmed: who, gap: !who.length }
   })
   const latest = new Map<string, Any>()
@@ -122,4 +125,23 @@ export function onCallWeekends(oncall: Any[], members: Member[], today: string, 
   const offers = [...latest.values()].filter((r) => members.some((m) => m.applicant_id === r.applicant_id && m.team === 'cna'))
     .map((r) => ({ applicant_id: r.applicant_id, name: nameOf(r.applicant_id), pattern: r.pattern, pattern_word: PATTERNS[r.pattern] || r.pattern, note: r.note || null, at: r.at }))
   return { weekends, offers }
+}
+
+/** For payroll: each member's confirmed on-call days in a month, by shift (a confirmed stretch counts once for each day in it
+    that falls in the month). Counts only, never dollars (the amounts are in her plan). Dates from before shifts were recorded
+    count as "not recorded". */
+export function onCallMonth(oncall: Any[], members: Member[], month: string): Any[] {
+  const by = new Map<string, Any>()
+  const nameOf = (aid: string) => (members.find((m) => m.applicant_id === aid) || { name: 'Someone no longer on the team' }).name
+  for (const r of oncall.filter((r) => r?.kind === 'confirmed' && !r.cancelled_at)) {
+    const s = S(r.start_date, 10), e = S(r.end_date, 10) || s
+    if (!/^\d{4}-\d\d-\d\d$/.test(s)) continue
+    for (let d = s; d <= e; d = new Date(Date.parse(d + 'T12:00:00Z') + DAY).toISOString().slice(0, 10)) {
+      if (d.slice(0, 7) !== month) continue
+      const cur = by.get(r.applicant_id) || { applicant_id: r.applicant_id, name: nameOf(r.applicant_id), day: 0, overnight: 0, whole: 0, not_recorded: 0 }
+      const k = SHIFTS[S(r.shift, 10)] ? S(r.shift, 10) : 'not_recorded'
+      cur[k]++; by.set(r.applicant_id, cur)
+    }
+  }
+  return [...by.values()].sort((a, b) => a.name.localeCompare(b.name))
 }

@@ -58,7 +58,8 @@ export const ONCALL_WORDS = 'On call comes in two shifts: daytime, 7am to 5pm, a
 export function onCallFor(rows: Any[], today: string, patterns: Record<string, string>): { pattern: string | null; pattern_word: string | null; offered_at: string | null; confirmed: Any[] } {
   const offer = rows.filter((r) => r?.kind === 'offer').sort((a, b) => S(a.at, 40).localeCompare(S(b.at, 40))).pop()
   const confirmed = rows.filter((r) => r?.kind === 'confirmed' && !r.cancelled_at && S(r.end_date, 10) >= today)
-    .sort((a, b) => S(a.start_date, 10).localeCompare(S(b.start_date, 10))).map((r) => ({ start_date: S(r.start_date, 10), end_date: S(r.end_date, 10) }))
+    .sort((a, b) => S(a.start_date, 10).localeCompare(S(b.start_date, 10))).map((r) => ({ start_date: S(r.start_date, 10), end_date: S(r.end_date, 10),
+      shift: ['day', 'overnight', 'whole'].includes(S(r.shift, 10)) ? S(r.shift, 10) : null }))
   return { pattern: offer ? S(offer.pattern, 30) : null, pattern_word: offer ? (patterns[S(offer.pattern, 30)] || null) : null, offered_at: offer ? S(offer.at, 40) : null, confirmed }
 }
 
