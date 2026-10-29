@@ -65,7 +65,7 @@ ck('switch: off by default; needs the page open too', !R.feedbackLive({}) && !R.
 const oc = R.onCallFor([{ kind: 'offer', pattern: 'weekday', at: '2026-10-01T10:00:00Z' }, { kind: 'offer', pattern: 'every_other_weekend', at: '2026-10-20T10:00:00Z' },
   { kind: 'confirmed', start_date: '2026-11-07', end_date: '2026-11-08' }, { kind: 'confirmed', start_date: '2026-10-24', end_date: '2026-10-25' }, { kind: 'confirmed', start_date: '2026-11-14', end_date: '2026-11-15', cancelled_at: 'x' }], '2026-10-29', PW.PATTERNS)
 ck('on call: their latest offer, and only confirmed dates still ahead (a taken-back one is gone)', oc.pattern === 'every_other_weekend' && oc.pattern_word === 'Every other weekend' && JSON.stringify(oc.confirmed) === '[{"start_date":"2026-11-07","end_date":"2026-11-08"}]', oc)
-ck('...the expectations she decided, and no pay', /reply within 15 minutes and can start a shift within 1 hour\. A weekend runs Saturday 7am to Sunday 11pm; a weekday runs 7am to 11pm\. The office confirms each date with you first\./.test(R.ONCALL_WORDS) && !/\$|stipend|pay/i.test(R.ONCALL_WORDS))
+ck('...her two shifts and the expectations she decided, word for word, and no pay', R.ONCALL_WORDS === 'On call comes in two shifts: daytime, 7am to 5pm, and overnight, 5pm to 7am the next morning. Take one, or both for a whole day. On call means you reply within 15 minutes and can start a shift within 1 hour. The office confirms each date and shift with you first.' && !/\$|stipend|pay/i.test(R.ONCALL_WORDS))
 
 /* ── 3. milestones (their own only, never compared) ── */
 const ms = (covered, shifts = [], since = '2026-03-01', today = '2026-10-29') => R.milestonesFor({ covered, shifts, since, today }).map((m) => m.text)
