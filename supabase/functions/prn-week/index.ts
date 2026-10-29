@@ -18,6 +18,20 @@
 //                 ops_settings.prn_oncall_shift_live is on (2026-10-29), so payroll knows what to pay. Shows on
 //                 their PRN Team page later (step 5).
 //   oncall_cancel {id}: takes a confirmed date back (kept, marked cancelled).
+// ON-CALL CALENDAR (2026-10-29, her decisions 22 to 27; rules in _shared/prn-oncall.ts):
+//   week          also returns oncall.calendar (every day, 4 weeks, daytime and overnight: confirmed, asked, gaps), who has
+//                 signed the current On-Call Expectations, who can't sign up (a miss), and payroll counts with misses.
+//   oncall_confirm also takes {ask_id} (the office's one-tap OK on a member's ask) or {applicant_id, date, shift: day |
+//                 overnight | whole} (whole = both shifts, two rows). One person per shift. With ops_settings.prn_oncall_signup_live
+//                 on, only someone who signed the current expectations and isn't blocked by a miss.
+//   oncall_decline {ask_id}: "Not this one" on a member's ask (kept, marked cancelled).
+//   oncall_mark   {oncall_id, kind: covering | no_answer | not_covered, case_id?, note?}: how the office's call went. A miss
+//                 (no_answer, not_covered): that on-call shift is not paid, they can't sign up again, and their other future
+//                 on-call shifts and asks are taken back (listed back so the office calls them). covering with a case puts
+//                 their Yes on the case (said yes on the phone), so the board shows it and the office confirms as usual.
+//   oncall_lift   {applicant_id, reason}: an owner lets them sign up again (owner_admin only, reason required).
+//   oncall_now    {}: the open shifts that start during someone's on-call time, with who, their phone, how the call went,
+//                 and until when the automatic texts wait (switch ops_settings.prn_oncall_first_live; owners see it as practice).
 //   goback_mark   {applicant_id, ref, answer: yes | no}: the office read an answer to "Would you be glad to go back?" (step 3).
 //   client_mark   {ref, kind: intro_planned | not_this_one}: a "no PRN backup who knows them" line, planned or set aside for
 //                 the month. Planning only records it: a person gets the family's OK and schedules it in AxisCare.
@@ -61,6 +75,7 @@ import { monthFacts, readDraft, lastMonth, isMonth, monthWord, monthlyText, mont
 import { keptMessage } from '../_shared/prn-page-texts.ts'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
 import { readMentor, readAsk, mentorLive, SKILLS, KINDS } from '../_shared/prn-mentor.ts'
+import { calendar, payMonth, blockOf, signedCurrent, termsText, termsVersion, onCallNow, holdFor, outcomeFor, takeBackOnMiss, onCallAsk, slotsOf, SLOT_WORD, MISS_KINDS, OUTCOMES, HOLD_MIN } from '../_shared/prn-oncall.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
@@ -87,6 +102,14 @@ async function members(sb: any): Promise<Member[]> {
       axiscare_id: t.axiscare_caregiver_id ? String(t.axiscare_caregiver_id) : null, linked_at: t.linked_at || null } })
 }
 
+/* on-call marks and signed expectations; missing tables (prn_oncall_calendar.sql not run yet) = none, ok false */
+// deno-lint-ignore no-explicit-any
+async function onCallRecords(sb: any, ids: string[]): Promise<{ ok: boolean; marks: Any[]; terms: Any[] }> {
+  if (!ids.length) return { ok: true, marks: [], terms: [] }
+  const [mk, tm] = await Promise.all([sb.from('prn_oncall_marks').select('*').in('applicant_id', ids).order('at'), sb.from('prn_oncall_terms').select('applicant_id, version, typed_name, agreed_at').in('applicant_id', ids)])
+  return { ok: !mk.error && !tm.error, marks: mk.error ? [] : (mk.data ?? []), terms: tm.error ? [] : (tm.data ?? []) }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
   if (req.method !== 'POST') return json({ error: 'POST only' }, 405)
@@ -99,6 +122,7 @@ Deno.serve(async (req) => {
   const st = (await readKey(sb, 'ops_settings')) || {}
   const mem = await members(sb)
   const memberOf = (aid: unknown) => mem.find((m) => m.applicant_id === S(aid, 40)) || null
+  const onCallExtras = (ids: string[]) => onCallRecords(sb, ids)
 
   if (action === 'week') {
     const ids = mem.map((m) => m.applicant_id)
@@ -152,6 +176,9 @@ Deno.serve(async (req) => {
     }
     const wk = computeWeek({ members: mem, shifts: sh.data ?? [], touches: tc.data ?? [], kindTo, wantsMore, cases, today: t, sender: who.name, thanksTmpl: st.prn_thanks_msg, extra })
     const oncall = onCallWeekends(oc.data ?? [], mem, t)
+    /* the on-call calendar (her decisions 22 to 27): missing tables = the calendar SQL isn't in yet; the calendar still shows */
+    const ocx = await onCallExtras(ids)
+    const tv = termsVersion(termsText(st))
     return json({ ok: true, today: t, live: st.prn_week_live === true, thanks_live: st.prn_thanks_live === true, owner: S(st.prn_week_owner, 80) || 'Krystal',
       thanks_default: THANKS_DEFAULT, items: wk.items, more: wk.more,
       members: mem.map((m) => ({ applicant_id: m.applicant_id, name: m.name, team: m.team, axiscare_id: m.axiscare_id, familiar: familiar[m.applicant_id] || { clients: [], why: null }, page: page[m.applicant_id] || null })),
@@ -161,7 +188,13 @@ Deno.serve(async (req) => {
       goback_live: st.prn_goback_live === true, goback_default: GOBACK_DEFAULT, welcome_live: st.prn_welcome_live === true, welcome_default: WELCOME_DEFAULT,
       oncall: { ...oncall, patterns: PATTERNS, stipend: null, shifts: SHIFTS, shift_live: st.prn_oncall_shift_live === true,
         /* for payroll: this month and last month, by shift (counts only) */
-        payroll: [t.slice(0, 7), new Date(Date.parse(t.slice(0, 7) + '-01T12:00:00Z') - 86_400_000).toISOString().slice(0, 7)].map((mo) => ({ month: mo, members: onCallMonth(oc.data ?? [], mem, mo) })) } })
+        payroll: [t.slice(0, 7), new Date(Date.parse(t.slice(0, 7) + '-01T12:00:00Z') - 86_400_000).toISOString().slice(0, 7)].map((mo) => ({ month: mo, members: ocx.ok ? payMonth(oc.data ?? [], ocx.marks, mem, mo) : onCallMonth(oc.data ?? [], mem, mo) })),
+        calendar: calendar({ rows: oc.data ?? [], marks: ocx.marks, members: mem, today: t }), slot_words: SLOT_WORD, miss_kinds: MISS_KINDS,
+        records_ready: ocx.ok, signup_live: st.prn_oncall_signup_live === true, first_live: st.prn_oncall_first_live === true, hold_min: HOLD_MIN,
+        terms_version: tv, terms: termsText(st),
+        people: mem.filter((m) => m.team === 'cna').map((m) => { const sig = ocx.terms.filter((x: Any) => x.applicant_id === m.applicant_id).sort((a: Any, b: Any) => S(a.agreed_at).localeCompare(S(b.agreed_at))).pop()
+          return { applicant_id: m.applicant_id, name: m.name, signed: signedCurrent(ocx.terms, m.applicant_id, tv), signed_at: sig?.agreed_at || null, signed_old: !!sig && sig.version !== tv,
+            ...blockOf(ocx.marks, m.applicant_id) } }) } })
   }
 
   if (action === 'mark') {
@@ -277,40 +310,140 @@ Deno.serve(async (req) => {
     return json({ outcome: 'sent', warning: error ? 'The text was sent, but it could not be marked as sent: ' + error.message : null })
   }
 
-  if (action === 'oncall_offer' || action === 'oncall_confirm') {
+  if (action === 'oncall_offer') {
     const m = memberOf(b.applicant_id); if (!m) return json({ error: 'That person is not on a PRN Team.' }, 404)
     if (m.team !== 'cna') return json({ error: 'On call is for the PRN CNA Team only.' }, 422)
     const note = S(b.note, 300) || null
-    if (action === 'oncall_offer') {
-      const pattern = S(b.pattern, 30); if (!PATTERNS[pattern]) return json({ error: 'What did they offer?' }, 400)
-      const { error } = await sb.from('prn_oncall').insert({ applicant_id: m.applicant_id, kind: 'offer', pattern, note, by_email: who.email, by_name: who.name })
-      if (error) return json({ error: 'Could not record it: ' + error.message }, 500)
-      await opEvent(sb, { verb: 'prn_oncall_offer', actor_name: who.name, actor_email: who.email, item_id: m.applicant_id, area: 'caregivers', summary: `${m.name} offered on call: ${PATTERNS[pattern]}` })
-      return json({ outcome: 'recorded' })
-    }
-    const s = ymd(b.start_date), e = ymd(b.end_date) || s
-    if (!s || e < s) return json({ error: 'Which dates?' }, 400)
-    if ((Date.parse(e) - Date.parse(s)) / 86_400_000 > 6) return json({ error: 'One on-call stretch is at most 7 days.' }, 400)
-    if (s < today()) return json({ error: 'That date has passed.' }, 400)
-    const shift = S(b.shift, 10)
-    if (shift && !SHIFTS[shift]) return json({ error: 'Which shift: daytime, overnight or the whole day?' }, 400)
-    if (!shift && st.prn_oncall_shift_live === true) return json({ error: 'Which shift: daytime (7am to 5pm), overnight (5pm to 7am) or the whole day?' }, 400)
-    const { error } = await sb.from('prn_oncall').insert({ applicant_id: m.applicant_id, kind: 'confirmed', start_date: s, end_date: e, note, by_email: who.email, by_name: who.name, ...(shift ? { shift } : {}) })
-    if (error) return json(/duplicate|unique/i.test(error.message) ? { outcome: 'already' } : { error: 'Could not record it: ' + error.message }, /duplicate|unique/i.test(error.message) ? 200 : 500)
-    await opEvent(sb, { verb: 'prn_oncall_confirmed', actor_name: who.name, actor_email: who.email, item_id: m.applicant_id, area: 'caregivers', summary: `${m.name} confirmed on call ${s} to ${e}${shift ? ' (' + SHIFT_SHORT[shift] + ')' : ''}` })
+    const pattern = S(b.pattern, 30); if (!PATTERNS[pattern]) return json({ error: 'What did they offer?' }, 400)
+    const { error } = await sb.from('prn_oncall').insert({ applicant_id: m.applicant_id, kind: 'offer', pattern, note, by_email: who.email, by_name: who.name })
+    if (error) return json({ error: 'Could not record it: ' + error.message }, 500)
+    await opEvent(sb, { verb: 'prn_oncall_offer', actor_name: who.name, actor_email: who.email, item_id: m.applicant_id, area: 'caregivers', summary: `${m.name} offered on call: ${PATTERNS[pattern]}` })
     return json({ outcome: 'recorded' })
   }
 
-  if (action === 'oncall_cancel') {
-    const id = Number(b.id); if (!Number.isInteger(id) || id <= 0) return json({ error: 'Which date?' }, 400)
+  if (action === 'oncall_confirm') {
+    /* the office's one-tap OK on a member's ask (decision 23), or the office putting someone on a shift */
+    let ask: Any = null
+    if (b.ask_id != null) {
+      const id = Number(b.ask_id); if (!Number.isInteger(id) || id <= 0) return json({ error: 'Which ask?' }, 400)
+      const { data } = await sb.from('prn_oncall').select('*').eq('id', id).maybeSingle()
+      if (!data || data.kind !== 'asked') return json({ error: 'No such ask.' }, 404)
+      if (data.cancelled_at) return json({ error: 'That ask was already answered or taken back.' }, 409)
+      ask = data
+    }
+    const m = memberOf(ask ? ask.applicant_id : b.applicant_id); if (!m) return json({ error: 'That person is not on a PRN Team.' }, 404)
+    if (m.team !== 'cna') return json({ error: 'On call is for the PRN CNA Team only.' }, 422)
+    const note = S(b.note, 300) || null
+    const one = ask ? S(ask.start_date, 10) : ymd(b.date)
+    const s = one || ymd(b.start_date), e = one || ymd(b.end_date) || s
+    if (!s || e < s) return json({ error: 'Which dates?' }, 400)
+    if ((Date.parse(e) - Date.parse(s)) / 86_400_000 > 6) return json({ error: 'One on-call stretch is at most 7 days.' }, 400)
+    if (s < today()) return json({ error: 'That date has passed.' }, 400)
+    const shift = ask ? S(ask.shift, 10) : S(b.shift, 10)
+    if (shift && !SHIFTS[shift]) return json({ error: 'Which shift: daytime, overnight or the whole day?' }, 400)
+    if (!shift && (st.prn_oncall_shift_live === true || one)) return json({ error: 'Which shift: daytime (7am to 5pm), overnight (5pm to 7am) or the whole day?' }, 400)
+    /* decision 24/25: with sign-up on, only someone who signed the current expectations and isn't blocked by a miss */
+    if (st.prn_oncall_signup_live === true) {
+      const r = await onCallExtras([m.applicant_id])
+      if (!r.ok) return json({ error: 'The on-call records are not set up yet (prn_oncall_calendar.sql).' }, 500)
+      if (blockOf(r.marks, m.applicant_id).blocked) return json({ error: `${m.name} can't be put on call: they missed an on-call shift. An owner can let them sign up again.` }, 409)
+      if (!signedCurrent(r.terms, m.applicant_id, termsVersion(termsText(st)))) return json({ error: `${m.first || m.name} hasn't signed the current On-Call Expectations yet. They sign on their PRN Team page before their first on-call shift.` }, 409)
+    }
+    /* one person per shift */
+    const want = slotsOf({ start_date: s, end_date: e, shift })
+    const { data: near } = await sb.from('prn_oncall').select('*').eq('kind', 'confirmed').is('cancelled_at', null).gte('end_date', s).lte('start_date', e)
+    const clash = (near ?? []).find((r: Any) => slotsOf(r).some((x) => want.some((w) => w.date === x.date && w.slot === x.slot)))
+    if (clash && clash.applicant_id === m.applicant_id) return json({ outcome: 'already' })
+    if (clash) return json({ error: `${memberOf(clash.applicant_id)?.name || 'Someone else'} is already on call then. Take theirs back first if it should change.` }, 409)
+    const { error } = await sb.from('prn_oncall').insert({ applicant_id: m.applicant_id, kind: 'confirmed', start_date: s, end_date: e, note, by_email: who.email, by_name: who.name, ...(shift ? { shift } : {}), ...(ask ? { ask_id: ask.id } : {}) })
+    if (error) return json(/duplicate|unique/i.test(error.message) ? { outcome: 'already' } : { error: 'Could not record it: ' + error.message }, /duplicate|unique/i.test(error.message) ? 200 : 500)
+    if (ask) await sb.from('prn_oncall').update({ cancelled_at: new Date().toISOString(), cancelled_by: `Confirmed by ${who.name || who.email}` }).eq('id', ask.id).is('cancelled_at', null)
+    await opEvent(sb, { verb: 'prn_oncall_confirmed', actor_name: who.name, actor_email: who.email, item_id: m.applicant_id, area: 'caregivers', summary: `${m.name} confirmed on call ${s}${e !== s ? ' to ' + e : ''}${shift ? ' (' + SHIFT_SHORT[shift] + ')' : ''}${ask ? ', as they asked' : ''}` })
+    return json({ outcome: 'recorded' })
+  }
+
+  if (action === 'oncall_cancel' || action === 'oncall_decline') {
+    const id = Number(action === 'oncall_decline' ? b.ask_id : b.id); if (!Number.isInteger(id) || id <= 0) return json({ error: 'Which date?' }, 400)
     const { data: row } = await sb.from('prn_oncall').select('*').eq('id', id).maybeSingle()
-    if (!row || row.kind !== 'confirmed') return json({ error: 'No such confirmed date.' }, 404)
+    if (!row || (action === 'oncall_decline' ? row.kind !== 'asked' : !['confirmed', 'asked'].includes(row.kind))) return json({ error: action === 'oncall_decline' ? 'No such ask.' : 'No such confirmed date.' }, 404)
     if (row.cancelled_at) return json({ outcome: 'already' })
-    const { error } = await sb.from('prn_oncall').update({ cancelled_at: new Date().toISOString(), cancelled_by: who.name || who.email }).eq('id', id).is('cancelled_at', null)
+    const by = action === 'oncall_decline' || row.kind === 'asked' ? `Not this one (${who.name || who.email})` : who.name || who.email
+    const { error } = await sb.from('prn_oncall').update({ cancelled_at: new Date().toISOString(), cancelled_by: by }).eq('id', id).is('cancelled_at', null)
     if (error) return json({ error: 'Could not take it back: ' + error.message }, 500)
     const m = memberOf(row.applicant_id)
-    await opEvent(sb, { verb: 'prn_oncall_cancelled', actor_name: who.name, actor_email: who.email, item_id: row.applicant_id, area: 'caregivers', summary: `On call ${row.start_date} to ${row.end_date} taken back for ${m?.name || 'a PRN member'}` })
+    await opEvent(sb, { verb: row.kind === 'asked' ? 'prn_oncall_declined' : 'prn_oncall_cancelled', actor_name: who.name, actor_email: who.email, item_id: row.applicant_id, area: 'caregivers',
+      summary: row.kind === 'asked' ? `${m?.name || 'A PRN member'}'s on-call ask ${row.start_date} (${SHIFT_SHORT[row.shift] || row.shift}): not this one` : `On call ${row.start_date} to ${row.end_date} taken back for ${m?.name || 'a PRN member'}` })
     return json({ outcome: 'cancelled' })
+  }
+
+  /* decision 25/26: how the office's call went */
+  if (action === 'oncall_mark') {
+    const id = Number(b.oncall_id), kind = S(b.kind, 20)
+    if (!Number.isInteger(id) || id <= 0) return json({ error: 'Which on-call shift?' }, 400)
+    if (!OUTCOMES[kind]) return json({ error: 'What happened: covering it, didn\'t answer, or didn\'t cover the shift?' }, 400)
+    const { data: row } = await sb.from('prn_oncall').select('*').eq('id', id).maybeSingle()
+    if (!row || row.kind !== 'confirmed') return json({ error: 'No such on-call shift.' }, 404)
+    if (row.cancelled_at) return json({ error: 'That on-call shift was taken back.' }, 409)
+    const m = memberOf(row.applicant_id); if (!m) return json({ error: 'That person is no longer on a PRN Team.' }, 404)
+    const caseId = S(b.case_id, 80) || null
+    const kase = caseId ? list(await readKey(sb, 'coverage_cases')).find((c: Any) => S(c?.id, 80) === caseId) : null
+    if (caseId && !kase) return json({ error: 'That open shift is no longer on the board.' }, 404)
+    if (!caseId && kind === 'covering') return json({ error: 'Covering which shift? Use the button on the open shift.' }, 400)
+    const { error } = await sb.from('prn_oncall_marks').insert({ applicant_id: m.applicant_id, oncall_id: id, kind, case_id: caseId, note: S(b.note, 600) || null, by_email: who.email, by_name: who.name })
+    if (error) return json(/duplicate|unique/i.test(error.message) ? { outcome: 'already' } : { error: 'Not saved: ' + error.message }, /duplicate|unique/i.test(error.message) ? 200 : 500)
+    const when = `${row.start_date} (${SHIFT_SHORT[row.shift] || 'on call'})`
+    if (MISS_KINDS[kind]) {
+      const { data: theirs } = await sb.from('prn_oncall').select('*').eq('applicant_id', m.applicant_id)
+      const back = takeBackOnMiss(theirs ?? [], m.applicant_id, id, today()), failed: string[] = []
+      for (const r of back) {
+        const { error: ce } = await sb.from('prn_oncall').update({ cancelled_at: new Date().toISOString(), cancelled_by: `Taken back after a missed on-call shift (${who.name || who.email})` }).eq('id', r.id).is('cancelled_at', null)
+        if (ce) failed.push(`${r.start_date} ${SHIFT_SHORT[r.shift] || ''}`.trim())
+      }
+      await opEvent(sb, { verb: 'prn_oncall_missed', actor_name: who.name, actor_email: who.email, item_id: m.applicant_id, area: 'caregivers',
+        summary: `${m.name}: ${MISS_KINDS[kind].toLowerCase()} on call ${when}. Not paid for it; can't sign up again; ${back.length} future on-call shift${back.length === 1 ? '' : 's'} taken back`, data: { case_id: caseId } })
+      const { data: app } = await sb.from('job_applicants').select('phone').eq('id', m.applicant_id).maybeSingle()
+      return json({ outcome: 'missed', taken_back: back.filter((r) => !failed.includes(`${r.start_date} ${SHIFT_SHORT[r.shift] || ''}`.trim())).map((r) => ({ date: r.start_date, shift: r.shift, kind: r.kind })),
+        failed, name: m.name, phone: normalisePhone(app?.phone) || null })
+    }
+    await opEvent(sb, { verb: 'prn_oncall_covering', actor_name: who.name, actor_email: who.email, item_id: m.applicant_id, area: 'caregivers', summary: `${m.name} (on call ${when}) is covering ${firstOf(kase?.client) || 'the open shift'}`, data: { case_id: caseId } })
+    /* their Yes on the case, so the board shows it and the office confirms it the usual way (puts them on the AxisCare visit) */
+    let onCase = 'not_open'
+    if (kase && kase.status === 'open') {
+      const { data: app } = await sb.from('job_applicants').select('phone').eq('id', m.applicant_id).maybeSingle()
+      const ask = onCallAsk({ id: crypto.randomUUID(), name: m.name, phone: normalisePhone(app?.phone) || null, ax: m.axiscare_id, key: `${S(kase.shift_date, 10)}|${S(kase.shift_time, 20)}`, now: new Date().toISOString(), by: who.name })
+      const { data: held, error: he } = await sb.rpc('coverage_case_add_ask', { p_id: caseId, p_ask: ask })
+      onCase = he ? 'failed' : String(held || 'failed')
+    }
+    return json({ outcome: 'covering', on_case: onCase, linked: !!m.axiscare_id })
+  }
+
+  if (action === 'oncall_lift') {
+    if (!(who.roles || []).includes('owner_admin')) return json({ error: 'Only an owner can let someone sign up for on call again.' }, 403)
+    const m = memberOf(b.applicant_id); if (!m) return json({ error: 'That person is not on a PRN Team.' }, 404)
+    const reason = S(b.reason, 600); if (reason.length < 3) return json({ error: 'Say why they can sign up again.' }, 400)
+    const r = await onCallExtras([m.applicant_id])
+    if (!blockOf(r.marks, m.applicant_id).blocked) return json({ outcome: 'not_blocked' })
+    const { error } = await sb.from('prn_oncall_marks').insert({ applicant_id: m.applicant_id, kind: 'lifted', note: reason, by_email: who.email, by_name: who.name })
+    if (error) return json({ error: 'Not saved: ' + error.message }, 500)
+    await opEvent(sb, { verb: 'prn_oncall_lifted', actor_name: who.name, actor_email: who.email, item_id: m.applicant_id, area: 'caregivers', summary: `${who.name} let ${m.name} sign up for on call again: ${reason}` })
+    return json({ outcome: 'lifted' })
+  }
+
+  /* decision 26: open shifts that start during someone's on-call time */
+  if (action === 'oncall_now') {
+    const cna = mem.filter((m) => m.team === 'cna'), ids = cna.map((m) => m.applicant_id)
+    const open = list(await readKey(sb, 'coverage_cases')).filter((c: Any) => c?.status === 'open')
+    if (!ids.length || !open.length) return json({ ok: true, live: st.prn_oncall_first_live === true, cases: [] })
+    const [{ data: rows }, ocx] = await Promise.all([sb.from('prn_oncall').select('*').in('applicant_id', ids).eq('kind', 'confirmed').is('cancelled_at', null), onCallExtras(ids)])
+    const { data: apps } = await sb.from('job_applicants').select('id, phone').in('id', ids)
+    const out: Any[] = []
+    for (const c of open) {
+      const n = onCallNow({ c, rows: rows ?? [], marks: ocx.marks, members: mem }); if (!n) continue
+      const o = outcomeFor(ocx.marks, S(c.id, 80)), h = holdFor({ c, now: n, marks: ocx.marks, nowMs: Date.now() })
+      out.push({ case_id: c.id, ...n, phone: normalisePhone((apps ?? []).find((x: Any) => x.id === n.applicant_id)?.phone) || null,
+        outcome: o ? { kind: o.kind, word: OUTCOMES[o.kind], by: o.by_name || null, at: o.at } : null, hold_until: st.prn_oncall_first_live === true ? h.until : null })
+    }
+    return json({ ok: true, live: st.prn_oncall_first_live === true, records_ready: ocx.ok, hold_min: HOLD_MIN, cases: out })
   }
 
   /* STEP 8a · GAP MENTORS */

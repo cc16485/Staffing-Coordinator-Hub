@@ -21,6 +21,14 @@
 //               the first 30 days; switch ops_settings.prn_feedback_live). Once per round; shows on This week.
 //   oncall      {p, e, t, pattern} (step 7, PRN CNA Team only): would they like to be on call, and how often. An offer never
 //               puts anyone on call; the office confirms each date, and confirmed dates show on their page.
+//   ON-CALL SIGN-UP (2026-10-29, her decisions 23, 24, 27; rules in _shared/prn-oncall.ts; PRN CNA Team only; switch
+//   ops_settings.prn_oncall_signup_live, off: the page shows nothing new and these refuse; the office preview shows it):
+//   oncall_sign {p, e, t, agree: true, typed_name, version}: they read and signed the On-Call Expectations (the exact words
+//               kept with the version and time). Needed before their first sign-up, and again whenever the words change.
+//   oncall_ask  {p, e, t, slots: [{date, slot: day|overnight}]}: one-time asks for open shifts in the next 4 weeks. Each lands
+//               on the office calendar as "asked"; the office confirms. Never while blocked by a missed on-call shift.
+//   oncall_withdraw {p, e, t, id}: takes back their own ask the office hasn't answered. A confirmed shift is given back by
+//               calling the office at least 24 hours ahead (decision 27), never from the page.
 //   mentor_answer {p, e, t, id, answer: yes|no} (step 8a, Gap Mentors only): "I can do it" / "Not this time" on a Gap Mentor
 //               visit, checked again first (skill, break, Do Not Return, AxisCare at that time). Switch prn_mentor_live.
 //   mentor_note {p, e, t, id, ...fields}: their note after a visit assigned to them (from the visit day on). A refresher goes
@@ -45,6 +53,7 @@ import { openLive } from '../_shared/prn-open.ts'
 import { pageUpdate } from '../_shared/prn-monthly.ts'
 import { feedbackRound, feedbackLive, readFeedback, FEEDBACK_QUESTIONS, onCallFor, ONCALL_WORDS } from '../_shared/prn-recognition.ts'
 import { PATTERNS } from '../_shared/prn-week.ts'
+import { memberSlots, blockOf, readAsks, readSign, signedCurrent, termsText, termsVersion, SLOT_WORD, DAYS_AHEAD, GIVE_BACK_HOURS } from '../_shared/prn-oncall.ts'
 import { mentorLive, mayOffer, offerView, readReport, landing, fieldsFor, KINDS, SKILLS, MENTOR_RULES } from '../_shared/prn-mentor.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
@@ -53,6 +62,7 @@ const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: 
 type Any = any
 const S = (v: unknown, n = 200) => String(v ?? '').trim().slice(0, n)
 const today = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })
+const nowNaive = () => new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).replace(' ', 'T').slice(0, 16)
 const list = (v: Any): Any[] => Array.isArray(v) ? v : (v && typeof v === 'object' ? Object.values(v) : [])
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const digits10 = (p: unknown) => { const d = String(p ?? '').replace(/\D/g, ''); return d.length >= 10 ? d.slice(-10) : '' }
@@ -141,7 +151,17 @@ Deno.serve(async (req) => {
       answered: (plog.data ?? []).some((r: Any) => r.kind === 'feedback' && S(r.note, 600).startsWith('[' + round.id + ']')), waiting: !feedbackLive(st) } : null
     let oncall: Any = null
     if (team === 'cna') { const oc = await sb.from('prn_oncall').select('*').eq('applicant_id', aid)
-      oncall = { ...onCallFor(oc.error ? [] : (oc.data ?? []), t, PATTERNS), patterns: PATTERNS, words: ONCALL_WORDS } }
+      oncall = { ...onCallFor(oc.error ? [] : (oc.data ?? []), t, PATTERNS), patterns: PATTERNS, words: ONCALL_WORDS }
+      /* the calendar sign-up (her decisions 23, 24, 27): only while it's switched on, or in the office preview */
+      if (st.prn_oncall_signup_live === true || action === 'preview') {
+        const all = await sb.from('prn_oncall').select('id, applicant_id, kind, start_date, end_date, shift, cancelled_at, at').in('kind', ['confirmed', 'asked']).is('cancelled_at', null).gte('end_date', t)
+        const [mk, tm] = await Promise.all([sb.from('prn_oncall_marks').select('applicant_id, kind, oncall_id, at, by_name').eq('applicant_id', aid), sb.from('prn_oncall_terms').select('version, agreed_at').eq('applicant_id', aid)])
+        const text = termsText(st), ver = termsVersion(text)
+        oncall.signup = all.error || mk.error || tm.error ? { ready: false } : { ready: true, waiting: st.prn_oncall_signup_live !== true, terms: text, version: ver,
+          signed: signedCurrent((tm.data ?? []).map((x: Any) => ({ ...x, applicant_id: aid })), aid, ver), signed_before: (tm.data ?? []).length > 0,
+          blocked: blockOf(mk.data ?? [], aid).blocked, slot_words: SLOT_WORD, days: DAYS_AHEAD, give_back_hours: GIVE_BACK_HOURS,
+          slots: memberSlots({ rows: all.data ?? [], aid, today: t, nowNaive: nowNaive() }) }
+      } }
     /* step 8a: Gap Mentor visits offered to them, and their own assigned ones (with the note to fill in) */
     let mentor: Any = null
     if (team === 'cna' && prn.gap_mentor?.on === true && (mentorLive(st) || action === 'preview')) {
@@ -255,6 +275,44 @@ Deno.serve(async (req) => {
     if (error) return json({ error: 'Could not save, please try again.' }, 500)
     await log('oncall_offer', PATTERNS[pattern])
     return json({ ok: true, message: pattern === 'not_now' ? 'Got it. Saying not right now never counts against you.' : 'Thank you! The office will confirm any dates with you first.' })
+  }
+
+  /* ON-CALL SIGN-UP: the member only (the preview never reaches here), PRN CNA Team, switch on */
+  if (action === 'oncall_sign' || action === 'oncall_ask' || action === 'oncall_withdraw') {
+    if (team !== 'cna') return json({ error: 'On call is for the PRN CNA Team for now.' }, 409)
+    if (st.prn_oncall_signup_live !== true) return json({ error: "On-call sign-up isn't open yet. Call the office if you'd like to be on call." }, 409)
+    const text = termsText(st), ver = termsVersion(text)
+    if (action === 'oncall_sign') {
+      const r = readSign(b, ver, S(app.first_name, 40), S(app.last_name, 40)); if (!r.ok) return json({ error: r.error }, 400)
+      const { error } = await sb.from('prn_oncall_terms').insert({ applicant_id: aid, version: ver, body: text, typed_name: r.typed, via: 'prn-page' })
+      if (error && !/duplicate|unique/i.test(error.message)) return json({ error: 'Could not save, please try again.' }, 500)
+      await log('oncall_signed', `${r.typed} (${ver})`)
+      return json({ ok: true, message: `Thank you, ${first}. You can sign up for on-call shifts now.` })
+    }
+    const [mk, tm] = await Promise.all([sb.from('prn_oncall_marks').select('applicant_id, kind, at').eq('applicant_id', aid), sb.from('prn_oncall_terms').select('version').eq('applicant_id', aid)])
+    if (mk.error || tm.error) return json({ error: 'Could not check that just now. Please try again.' }, 500)
+    if (action === 'oncall_withdraw') {
+      const id = Number(b.id); if (!Number.isInteger(id) || id <= 0) return json({ error: 'Which shift?' }, 400)
+      const { data: row } = await sb.from('prn_oncall').select('*').eq('id', id).maybeSingle()
+      if (!row || row.applicant_id !== aid || row.kind !== 'asked') return json({ error: 'That shift could not be found. Call the office.' }, 404)
+      if (row.cancelled_at) return json({ ok: true, message: 'That one was already answered. Look again.' })
+      const { error } = await sb.from('prn_oncall').update({ cancelled_at: new Date().toISOString(), cancelled_by: `${first} took it back on their page` }).eq('id', id).is('cancelled_at', null)
+      if (error) return json({ error: 'Could not save, please try again.' }, 500)
+      return json({ ok: true, message: 'Taken back.' })
+    }
+    if (blockOf(mk.data ?? [], aid).blocked) return json({ error: "On call isn't open to you right now. Call the office with any questions." }, 409)
+    if (!signedCurrent((tm.data ?? []).map((x: Any) => ({ ...x, applicant_id: aid })), aid, ver)) return json({ error: 'Please read and sign the On-Call Expectations first.', sign: true }, 409)
+    const all = await sb.from('prn_oncall').select('id, applicant_id, kind, start_date, end_date, shift, cancelled_at').in('kind', ['confirmed', 'asked']).is('cancelled_at', null).gte('end_date', t)
+    if (all.error) return json({ error: 'Could not check that just now. Please try again.' }, 500)
+    const r = readAsks(b, { rows: all.data ?? [], aid, today: t, nowNaive: nowNaive() }); if (!r.ok) return json({ error: r.error }, 409)
+    let added = 0
+    for (const sl of r.slots) {
+      const { error } = await sb.from('prn_oncall').insert({ applicant_id: aid, kind: 'asked', start_date: sl.date, end_date: sl.date, shift: sl.slot, note: 'Their PRN Team page', by_email: 'prn-page', by_name: first })
+      if (!error) added++
+      else if (!/duplicate|unique/i.test(error.message)) return json({ error: added ? `${added} saved, then something went wrong. Look again and try the rest.` : 'Could not save, please try again.' }, 500)
+    }
+    await log('oncall_ask', r.slots.map((x) => `${x.date} ${x.slot}`).join(', '))
+    return json({ ok: true, message: `Thank you, ${first}! The office will confirm ${added === 1 ? 'it' : 'them'} with you. Nothing is set until they do.` })
   }
 
   /* everything below changes something: the member only, never the office preview */

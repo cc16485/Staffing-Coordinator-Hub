@@ -112,7 +112,7 @@ const reset = (settings = {}) => { SENT = []; EVENTS = []; CALLS = []; NOW_ID = 
   staff_roles: [{ person_id: 'p-kr', entity: 'cc_ihs', role: 'staffing_coordinator' }, { person_id: 'p-cg', entity: 'cc_ihs', role: 'caregiver' }],
   contact_optout_current: [{ address: '+1' + OPTED, channel: 'sms', opted_out: true, source: 'stop_text' }], phone_index: [], circle_contacts: [], op_events: [] } }
 const q = (t) => { const st = { f: [], inF: null, nul: [], upd: null }; const b = {
-  select() { return b }, order() { return b }, limit() { return b }, not() { return b },
+  select() { return b }, order() { return b }, gte() { return b }, lte() { return b }, limit() { return b }, not() { return b },
   eq(c, v) { st.f.push([c, v]); return b }, in(c, v) { st.inF = [c, v]; return b }, is(c, v) { if (v === null) st.nul.push(c); return b },
   update(o) { st.upd = o; return b },
   insert(row) { if (t === 'op_events') { EVENTS.push(row); return Promise.resolve({ data: null, error: null }) }
