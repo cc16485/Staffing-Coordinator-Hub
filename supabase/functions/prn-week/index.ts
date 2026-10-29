@@ -16,6 +16,11 @@
 //   oncall_confirm {applicant_id, start_date, end_date, note?}: a date the office confirmed with them (up to 7 days). Shows on
 //                 their PRN Team page later (step 5).
 //   oncall_cancel {id}: takes a confirmed date back (kept, marked cancelled).
+//   goback_mark   {applicant_id, ref, answer: yes | no}: the office read an answer to "Would you be glad to go back?" (step 3).
+//   client_mark   {ref, kind: intro_planned | not_this_one}: a "no PRN backup who knows them" line, planned or set aside for
+//                 the month. Planning only records it: a person gets the family's OK and schedules it in AxisCare.
+// STEP 3 (2026-10-28): week also returns each linked member's familiar clients (AxisCare visits in the last 6 months, minus
+// Do Not Return, a concern either way, or a NO to the go-back question) and adds the go-back and no-backup lines.
 // The list itself shows to everyone in the office once ops_settings.prn_week_live is on; before that the Hub shows it to
 // owners only, as a practice view. No pay anywhere: the on-call stipend amount is not set (her call).
 // =============================================================================
@@ -25,6 +30,7 @@ import { contactForOutbound, maySendTo, normalisePhone } from '../_shared/outrea
 import { opEvent } from '../_shared/events.ts'
 import { MO_FROM } from '../_shared/office-from.ts'   // every text goes out from (417) 234-8494
 import { computeWeek, onCallWeekends, THANKS_DEFAULT, PATTERNS, type Member } from '../_shared/prn-week.ts'
+import { familiarClients, noBackup, weekLines, GOBACK_DEFAULT, FAMILIAR_DAYS, type Familiar } from '../_shared/prn-familiar.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
@@ -39,6 +45,27 @@ const UUID = /^[0-9a-f-]{36}$/i
 // deno-lint-ignore no-explicit-any
 async function readKey(sb: any, key: string): Promise<Any> { const { data } = await sb.from('app_data').select('data').eq('key', key).maybeSingle(); return data?.data ?? null }
 const list = (v: Any): Any[] => Array.isArray(v) ? v : (v && typeof v === 'object' ? Object.values(v) : [])
+
+// deno-lint-ignore no-explicit-any
+const AC_VERSION = Deno.env.get('AXISCARE_API_VERSION') || '2023-10-01'
+/** One member's AxisCare visits for the last 6 months. Never throws: no visits and why. */
+async function visitsOf(ax: string, from: string, to: string): Promise<{ rows: Any[]; why: string | null }> {
+  const token = Deno.env.get('AXISCARE_VISITS_TOKEN') || Deno.env.get('AXISCARE_API_KEY') || Deno.env.get('AXISCARE_TOKEN') || ''
+  const site = Deno.env.get('AXISCARE_SITE') || Deno.env.get('AXISCARE_SITE_NUMBER') || ''
+  if (!token || !/^\d+$/.test(site)) return { rows: [], why: 'AxisCare is not connected on this project' }
+  const rows: Any[] = []
+  try {
+    let url: string | null = `https://${site}.axiscare.com/api/visits?startDate=${from}&endDate=${to}&caregiverIds=${encodeURIComponent(ax)}`
+    for (let page = 0; url && page < 10; page++) {
+      const r: Response = await fetch(url, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'X-AxisCare-Api-Version': AC_VERSION } })
+      if (!r.ok) return { rows, why: `AxisCare answered ${r.status}` }
+      const j: Any = await r.json().catch(() => ({}))
+      for (const v of list(j?.results?.visits ?? j?.visits)) if (!v?.removed && String(v?.caregiver?.id ?? '') === ax) rows.push(v)
+      url = j?.results?.nextPage ?? j?.nextPage ?? null
+    }
+    return { rows, why: null }
+  } catch (e) { return { rows, why: 'could not reach AxisCare: ' + String((e as Error)?.message ?? e).slice(0, 100) } }
+}
 
 // deno-lint-ignore no-explicit-any
 async function members(sb: any): Promise<Member[]> {
@@ -78,10 +105,28 @@ Deno.serve(async (req) => {
     const cases: Record<string, { client: string; shift_date: string | null }> = {}
     for (const c of list(await readKey(sb, 'coverage_cases'))) if (c?.id) cases[String(c.id)] = { client: firstOf(c.client), shift_date: ymd(c.shift_date) || null }
     const t = today()
-    const wk = computeWeek({ members: mem, shifts: sh.data ?? [], touches: tc.data ?? [], kindTo, wantsMore, cases, today: t, sender: who.name, thanksTmpl: st.prn_thanks_msg })
+    /* STEP 3 · familiar clients for each member linked to AxisCare */
+    const [dnr, checkins, clientMarks] = [list(await readKey(sb, 'dnr_log')), list(await readKey(sb, 'client_checkins')), list(await readKey(sb, 'prn_client_marks'))]
+    const from = new Date(Date.parse(t + 'T12:00:00Z') - FAMILIAR_DAYS * 86_400_000).toISOString().slice(0, 10)
+    const familiar: Record<string, { clients: Familiar[]; why: string | null }> = {}
+    await Promise.all(mem.map(async (m) => {
+      if (!m.axiscare_id) { familiar[m.applicant_id] = { clients: [], why: 'not linked to AxisCare yet' }; return }
+      const v = await visitsOf(m.axiscare_id, from, t)
+      familiar[m.applicant_id] = { why: v.why, clients: familiarClients({ name: m.name, visits: v.rows, dnr, checkins,
+        answers: (tc.data ?? []).filter((x: Any) => x.applicant_id === m.applicant_id), today: t }) }
+    }))
+    const allCases = list(await readKey(sb, 'coverage_cases'))
+    const anyWhy = Object.values(familiar).find((f) => f.why && f.why !== 'not linked to AxisCare yet')?.why || null
+    /* a client with no PRN backup is only claimed when every linked member's visits were read */
+    const nb = anyWhy || !mem.some((m) => m.axiscare_id) ? [] : noBackup(allCases, Object.values(familiar).map((f) => f.clients), t)
+    const extra = weekLines({ members: mem.map((m) => ({ ...m, team: m.team === 'caregiver' ? 'PRN Caregiver Team' : 'PRN CNA Team' })), touches: tc.data ?? [], nobackup: nb, clientMarks, today: t })
+    const wk = computeWeek({ members: mem, shifts: sh.data ?? [], touches: tc.data ?? [], kindTo, wantsMore, cases, today: t, sender: who.name, thanksTmpl: st.prn_thanks_msg, extra })
     const oncall = onCallWeekends(oc.data ?? [], mem, t)
     return json({ ok: true, today: t, live: st.prn_week_live === true, thanks_live: st.prn_thanks_live === true, owner: S(st.prn_week_owner, 80) || 'Krystal',
-      thanks_default: THANKS_DEFAULT, items: wk.items, more: wk.more, members: mem.map((m) => ({ applicant_id: m.applicant_id, name: m.name, team: m.team, axiscare_id: m.axiscare_id })),
+      thanks_default: THANKS_DEFAULT, items: wk.items, more: wk.more,
+      members: mem.map((m) => ({ applicant_id: m.applicant_id, name: m.name, team: m.team, axiscare_id: m.axiscare_id, familiar: familiar[m.applicant_id] || { clients: [], why: null } })),
+      familiar_note: anyWhy ? `Familiar clients could not all be read (${anyWhy}), so no client is flagged as having no PRN backup today.` : null,
+      goback_live: st.prn_goback_live === true, goback_default: GOBACK_DEFAULT,
       oncall: { ...oncall, patterns: PATTERNS, stipend: null } })
   }
 
@@ -94,6 +139,25 @@ Deno.serve(async (req) => {
     if (error && !/duplicate|unique/i.test(error.message)) return json({ error: 'Could not record it: ' + error.message }, 500)
     await opEvent(sb, { verb: 'prn_week_' + kind, actor_name: who.name, actor_email: who.email, item_id: m.applicant_id, area: 'caregivers', summary: `${who.name}: ${kind.replace(/_/g, ' ')} for ${m.name} (${ref})` })
     return json({ outcome: error ? 'already' : 'recorded' })
+  }
+
+  if (action === 'goback_mark') {
+    const m = memberOf(b.applicant_id); if (!m) return json({ error: 'That person is not on a PRN Team.' }, 404)
+    const ref = S(b.ref, 120), ans = S(b.answer, 5)
+    if (!/^client:[a-z]+$/.test(ref) || !['yes', 'no'].includes(ans)) return json({ error: 'Which client, and was it a yes or a no?' }, 400)
+    const { error } = await sb.from('prn_touches').insert({ applicant_id: m.applicant_id, kind: 'goback_' + ans, ref, note: S(b.note, 600) || null, by_email: who.email, by_name: who.name })
+    if (error && !/duplicate|unique/i.test(error.message)) return json({ error: 'Could not record it: ' + error.message }, 500)
+    await opEvent(sb, { verb: 'prn_goback_' + ans, actor_name: who.name, actor_email: who.email, item_id: m.applicant_id, area: 'caregivers', summary: `${who.name}: ${m.name} ${ans === 'yes' ? 'would be glad to go back' : 'would rather not go back'} (${ref})` })
+    return json({ outcome: error ? 'already' : 'recorded' })
+  }
+
+  if (action === 'client_mark') {
+    const ref = S(b.ref, 160), kind = S(b.kind, 20)
+    if (!/^nobackup:[a-z]+:\d{4}-\d\d$/.test(ref) || !['intro_planned', 'not_this_one'].includes(kind)) return json({ error: 'Which client line, and what was done?' }, 400)
+    const { error } = await sb.rpc('upsert_app_data_item', { target_key: 'prn_client_marks', item: { id: ref, kind, note: S(b.note, 300) || null, by_email: who.email, by_name: who.name, at: new Date().toISOString() } })
+    if (error) return json({ error: 'Could not record it: ' + error.message }, 500)
+    await opEvent(sb, { verb: 'prn_client_' + kind, actor_name: who.name, actor_email: who.email, item_id: ref, area: 'caregivers', summary: `${who.name}: ${kind === 'intro_planned' ? 'planning an intro visit' : 'not this one'} (${ref})` })
+    return json({ outcome: 'recorded' })
   }
 
   if (action === 'send_thanks') {
