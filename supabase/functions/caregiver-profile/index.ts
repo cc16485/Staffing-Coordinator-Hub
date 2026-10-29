@@ -31,11 +31,23 @@
 //                 A published profile is left alone. No AI.
 //     'enhance'   {profile_id, phone?, email?} -> 457 "Beef it up with AI": a fuller version of the three sections from
 //                 THEIR words plus their application and interview on file. Never saved here: the office compares it
-//                 section by section and chooses. Never invents; keeps their voice.
+//                 section by section and chooses. Never invents; keeps their voice. 1181: for a quick profile it writes
+//                 all three from their quick answers when the boxes are still empty.
+//     'send_approval' {profile_id, dry?} -> 1181: a quick profile the office wrote goes to them to OK (text + email, their
+//                 own link). Remembers the exact words sent; only sent when it is complete.
+//     'record_ok' {profile_id} -> 1181: they said OK by text or phone; the office records it (who, when, which words).
 //   PUBLIC actions need only the personal token (caregiver_profiles.upload_token, never the public card id):
 //     'mine'       {t}                -> what their page shows
 //     'upload_url' {t, kind, ext}     -> a one-time signed upload link for <id>/<kind>-<time>.<ext>
 //     'submit'     {t, preferred_name, about, experience, why_this_work, photo_path, video_path, consent}
+//                  1181 quick profile: {t, preferred_name, quick: {years, words, outside}, photo_path, video_path, consent}
+//     'approve'    {t, ok: true, words} | {t, change} -> 1181: they OK the words the office wrote (the words their page
+//                  showed must still be the words on file), or tell the office what to change
+// 1181 QUICK PROFILE (Samantha, 2026-10-29: "maybe just ask them send us the photo and we will fill out the profile for
+// them"; "yes, build the quick version: photo plus 3 short answers, office writes it with Beef it up, caregiver replies OK
+// to approve"). A current caregiver sends a photo and three short answers; the office writes the three sections; the
+// caregiver sees them and OKs them (on their page, or by replying OK, which the office records). Publishing a quick
+// profile needs their OK of the exact words on file, so an edit after their OK goes back to them.
 // 452 (Samantha, 2026-10-05: "i need the current active caregivers to fully complete their own caregiver profile and
 // submit the photo and video as well"): a self_complete profile gets its own text and email, its page asks three
 // questions with empty boxes, and it can only be sent (and published) with all three answers and a photo (the video
@@ -66,6 +78,13 @@ export const MAX_SUBMITS_PER_DAY = 20
 export const PUBLISHED_NOTE = 'Your profile is published. Call the office at 417-234-8494 to change it.'
 export const IMAGE_EXT = ['jpg', 'jpeg', 'png', 'heic', 'webp']
 export const VIDEO_EXT = ['mp4', 'mov', 'webm']
+/* 1181: the three quick questions, her approved list. Short answers; the office writes the paragraphs. */
+export const QUICK_Q = {
+  years: 'How many years have you been a caregiver?',
+  words: 'Three words that describe you as a caregiver',
+  outside: 'One thing you love doing outside of work',
+}
+export const QUICK_MAX = { years: 30, words: 80, outside: 100 }
 export const PROMPTS = {
   about: '[ask: two or three things a family should know about them]',
   experience: '[ask: who they have cared for, and for how long]',
@@ -125,6 +144,62 @@ export function catchupMessages(first: string, link: string) {
       `<p>This link is just for you, so please do not share it. Questions? Call us at ${OFFICE}.</p>`),
   }
 }
+/* 1181 quick profile: the link (a photo and 3 quick questions) and the "please look it over" message. Her words, one place,
+   so the Hub preview and the send never differ. */
+export function quickMessages(first: string, link: string) {
+  return {
+    text: withStop(`Hi ${first}, it's Caring Companions! Families see a short profile of you before you visit, so they know who's coming. ` +
+      `We'll write it for you! Just tap here, add a friendly photo and answer 3 quick questions. It takes about 2 minutes: ${link}`),
+    subject: 'Your Caring Companions profile: a photo and 3 quick questions',
+    html: shell(`<p>Hi ${esc(first)},</p>` +
+      `<p>Families see a short profile of you before you visit, so they know a friendly face is coming. <b>We'll write it for you.</b> It takes about 2 minutes:</p>` +
+      `<ol><li><b>Add a friendly photo of yourself.</b> A phone selfie in good light, from the shoulders up, is perfect.</li>` +
+      `<li><b>Answer 3 quick questions:</b> how many years you have been a caregiver, three words that describe you, and one thing you love doing outside of work.</li>` +
+      `<li><b>We write your profile</b> and send it to you to look over before any family sees it.</li></ol>` +
+      btn(link, 'Add my photo and answers') +
+      `<p>This link is just for you, so please do not share it. Questions? Call us at ${OFFICE}.</p>`),
+  }
+}
+export function approvalMessages(first: string, link: string) {
+  return {
+    text: withStop(`Hi ${first}, it's Caring Companions! We wrote your caregiver profile. Please take a look here: ${link} ` +
+      `If it looks good, tap "Looks good" or just reply OK. Want something changed? Tell us on that page or reply here.`),
+    subject: 'Your caregiver profile is ready for your OK',
+    html: shell(`<p>Hi ${esc(first)},</p>` +
+      `<p>We wrote your caregiver profile from your answers. Families see it before you visit, so please take a look and make sure it sounds like you.</p>` +
+      btn(link, 'See my profile') +
+      `<p>If it looks good, tap <b>Looks good</b> on that page, or just reply OK. Want something changed? Tell us on that page, reply to this email, or call us at ${OFFICE}.</p>`),
+  }
+}
+/* 1181: the words they OK are remembered exactly, so publishing can tell whether anyone changed them after. */
+// deno-lint-ignore no-explicit-any
+export const wordsOf = (p: any) => ({ about: noDash(p?.about).trim(), experience: noDash(p?.experience).trim(), why_this_work: noDash(p?.why_this_work).trim() })
+// deno-lint-ignore no-explicit-any
+export const sameWords = (a: any, b: any) => !!a && !!b && ['about', 'experience', 'why_this_work'].every((k) => String(a[k] ?? '').trim() === String(b[k] ?? '').trim())
+// deno-lint-ignore no-explicit-any
+export function quickAnswers(v: any) {
+  const o = v && typeof v === 'object' ? v : {}
+  return { years: clean(o.years, QUICK_MAX.years), words: clean(o.words, QUICK_MAX.words), outside: clean(o.outside, QUICK_MAX.outside) }
+}
+// deno-lint-ignore no-explicit-any
+export function quickMissing(p: any): string[] {
+  const out: string[] = [], a = quickAnswers(p?.quick_answers)
+  if (!p?.photo_path) out.push('a photo of yourself')
+  if (!a.years) out.push('how many years you have been a caregiver')
+  if (!a.words) out.push('three words that describe you')
+  if (!a.outside) out.push('one thing you love doing outside of work')
+  if (p?.consent !== true) out.push('your permission (the box at the bottom)')
+  return out
+}
+/* Where a quick profile stands, for their page. */
+// deno-lint-ignore no-explicit-any
+export function quickStage(p: any): 'answers' | 'writing' | 'approve' | 'approved' {
+  if (!p?.quick) return 'answers'
+  if (p.approved_at && sameWords(p.approval_words, wordsOf(p))) return 'approved'
+  if (p.approval_sent_at && p.approval_words) return 'approve'
+  return p.submitted_at && p.photo_path && p.consent ? 'writing' : 'answers'
+}
+
 /* 522 (Samantha, 2026-10-08): "the video is now optional", one text and email to each current caregiver, once. Her words,
    one place, so the Hub preview and the send never differ. */
 export function videoOptionalMessages(first: string) {
@@ -168,6 +243,11 @@ export function publishProblems(p: any): string[] {
     if (!v) out.push(`"${label}" is empty.`)
     else if (hasPrompt(v)) out.push(`"${label}" still has an [ask: ...] prompt. Ask them, type their answer, and take the brackets out.`)
   }
+  /* 1181: a quick profile was written by the office, so the caregiver OKs these exact words first */
+  if (p.quick === true && !out.length) {
+    if (!p.approved_at) out.push(p.approval_sent_at ? 'They have not OK\'d the words yet. Wait for their OK, or if they said OK by text or phone, press "They said OK".' : 'They have not seen the words yet. Press "Send it to them to OK" first.')
+    else if (!sameWords(p.approval_words, wordsOf(p))) out.push('The words changed after they OK\'d them. Send it to them to OK again.')
+  }
   return out
 }
 
@@ -205,6 +285,7 @@ Rules, in order of importance:
 4. Each section 3 to 5 short, warm sentences in simple everyday words. If there is truly nothing more to say, keep it as it is.
 5. Never mention anything private: age, health or disability (theirs or anyone's), background checks, drug screens, driving record, pay, work papers or immigration, interview scores, smoking or vaping, or the name of any employer, client or family member.
 6. Never mention the application, the interview, or this office. Never use an em dash.
+7. Sometimes their profile is still empty and you get "their_quick_answers" instead: how many years they have been a caregiver, three words they chose to describe themselves, and one thing they love doing outside of work. Then write all three sections from those answers and the facts, about them by first name. Use their three words and their outside-of-work answer as they gave them. If there is truly nothing for "why", leave it as an empty string.
 
 Reply with JSON only: {"about": "...", "experience": "...", "why": "..."}`
 /* The suggestion, made safe: no em dashes, no last name, capped, and any section that grew a number nobody gave goes back
@@ -392,7 +473,7 @@ async function findApplication(db: any, w: { applicant_id?: unknown; cand?: stri
 }
 
 const APP_COLS = 'id, first_name, last_name, phone, email, position, posting_title, experience, experience_years, experience_kinds, work_history, post_interview, created_at'
-const PROFILE_COLS = 'id, candidate_id, axiscare_id, applicant_id, first_name, last_name, preferred_name, about, experience, why_this_work, years_experience, photo_path, video_path, consent, consent_at, published, status, drafted_at, drafted_by, link_sent_at, link_sent_by, submitted_at, published_at, published_by, updated_at, needs_review, self_complete, photo_hidden, video_hidden'
+const PROFILE_COLS = 'id, candidate_id, axiscare_id, applicant_id, first_name, last_name, preferred_name, about, experience, why_this_work, years_experience, photo_path, video_path, consent, consent_at, published, status, drafted_at, drafted_by, link_sent_at, link_sent_by, submitted_at, published_at, published_by, updated_at, needs_review, self_complete, photo_hidden, video_hidden, quick, quick_answers, approval_sent_at, approval_words, approved_at, approved_by, change_request, change_request_at'
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
@@ -405,7 +486,7 @@ Deno.serve(async (req) => {
   const publicUrl = (p: string | null) => p ? Deno.env.get('SUPABASE_URL') + '/storage/v1/object/public/' + BUCKET + '/' + p : null
 
   /* ── PUBLIC: the new hire's own page, by personal token ── */
-  if (['mine', 'upload_url', 'submit'].includes(action)) {
+  if (['mine', 'upload_url', 'submit', 'approve'].includes(action)) {
     const t = String(b.t || '')
     const sorry = { error: 'We could not find your profile. Please use the newest link we texted or emailed you, or call ' + OFFICE + '.' }
     if (!UUID.test(t)) return json(sorry, 404)
@@ -417,11 +498,32 @@ Deno.serve(async (req) => {
       first_name: p.first_name, preferred_name: p.preferred_name, about: p.about, experience: p.experience,
       why_this_work: p.why_this_work, years_experience: p.years_experience, photo_url: publicUrl(p.photo_path),
       video_url: publicUrl(p.video_path), published: locked(p), consent: !!p.consent, self_complete: p.self_complete === true,
+      quick: p.quick === true, quick_answers: p.quick === true ? quickAnswers(p.quick_answers) : undefined, stage: p.quick === true ? quickStage(p) : undefined,
+      change_sent: p.quick === true && !!p.change_request && Date.parse(p.change_request_at || 0) >= Date.parse(p.approval_sent_at || 0),
     })
     if (locked(p)) return json({ error: PUBLISHED_NOTE, published: true }, 409)
     const today = now.slice(0, 10)
     if (p.submit_day === today && (p.submit_count ?? 0) >= MAX_SUBMITS_PER_DAY)
       return json({ error: 'That is a lot of saves for one day. Please try again tomorrow, or call ' + OFFICE + '.' }, 429)
+
+    /* 1181: they OK the words the office wrote, or say what to change. Only once the office has sent the words. */
+    if (action === 'approve') {
+      if (p.quick !== true || !p.approval_sent_at) return json({ error: 'There is nothing to look over yet. We will text you when your profile is ready.' }, 409)
+      const now_ = wordsOf(p)
+      if (b.ok === true) {
+        const seen = b.words && typeof b.words === 'object' ? { about: cleanLong(b.words.about), experience: cleanLong(b.words.experience), why_this_work: cleanLong(b.words.why_this_work) } : null
+        if (!sameWords(seen, { about: cleanLong(now_.about), experience: cleanLong(now_.experience), why_this_work: cleanLong(now_.why_this_work) }))
+          return json({ error: 'We just updated your profile. Please read it once more, then tap Looks good.', changed: true }, 409)
+        const { error: ae } = await db.from('caregiver_profiles').update({ approved_at: now, approved_by: 'them, on their page', approval_words: now_, updated_at: now }).eq('id', p.id)
+        if (ae) return json({ error: 'That did not save. Please try again, or call ' + OFFICE + '.' }, 500)
+        return json({ ok: true, approved: true })
+      }
+      const change = cleanLong(b.change, 600)
+      if (!change) return json({ error: 'Please tell us what you would like changed.' }, 400)
+      const { error: ce } = await db.from('caregiver_profiles').update({ change_request: change, change_request_at: now, approved_at: null, approved_by: null, updated_at: now }).eq('id', p.id)
+      if (ce) return json({ error: 'That did not save. Please try again, or call ' + OFFICE + '.' }, 500)
+      return json({ ok: true, change_sent: true })
+    }
 
     if (action === 'upload_url') {
       const kind = String(b.kind || ''), ext = String(b.ext || '').toLowerCase().replace(/^\./, '')
@@ -446,8 +548,13 @@ Deno.serve(async (req) => {
       // deno-lint-ignore no-explicit-any
       return Array.isArray(data) && data.some((o: any) => o?.name === path.slice(slash + 1))
     }
+    /* 1181: once the office has sent the words for their OK, their answers are closed; they OK or ask for a change */
+    if (p.quick === true && p.approval_sent_at) return json({ error: 'Your profile is written. Please open your link again to look it over.' }, 409)
     // deno-lint-ignore no-explicit-any
-    const patch: Record<string, any> = {
+    const patch: Record<string, any> = p.quick === true
+      ? { preferred_name: clean(b.preferred_name, 40) || null, quick_answers: quickAnswers(b.quick),
+        submitted_at: now, updated_at: now, submit_day: today, submit_count: p.submit_day === today ? (p.submit_count ?? 0) + 1 : 1 }
+      : {
       preferred_name: clean(b.preferred_name, 40) || null,
       about: cleanLong(b.about) || null, experience: cleanLong(b.experience) || null, why_this_work: cleanLong(b.why_this_work) || null,
       submitted_at: now, updated_at: now,
@@ -469,7 +576,10 @@ Deno.serve(async (req) => {
     if (b.consent === true) { patch.consent = true; if (!p.consent) patch.consent_at = now }
     else if (b.consent === false) { patch.consent = false; patch.consent_at = null }
     /* 452: a current caregiver's profile is only sent complete (the page checks too; this is the server's word). */
-    if (p.self_complete === true) {
+    if (p.quick === true) {
+      const missing = quickMissing({ ...p, ...patch })
+      if (missing.length) return json({ error: 'Not sent yet. Please add ' + missing.join(', ') + '.' }, 400)
+    } else if (p.self_complete === true) {
       const missing = selfCompleteMissing({ ...p, ...patch })
       if (missing.length) return json({ error: 'Not sent yet. Please add ' + missing.join(', ') + '.' }, 400)
     }
@@ -596,15 +706,17 @@ Deno.serve(async (req) => {
     if (!p && legacy) p = (await db.from('caregiver_profiles').select(PROFILE_COLS).eq('candidate_id', legacy).neq('status', 'withdrawn').limit(1)).data?.[0] ?? null
     if (p && locked(p)) return json({ ok: true, skipped: 'published', profile: p })
     const blank = (v: unknown) => (hasPrompt(v) ? null : (v ?? null))
+    /* 1181: the quick version; a profile already sent in complete the long way is left as it is */
+    const quick = b.quick === true && !(p && p.self_complete && !p.quick && p.submitted_at && p.photo_path && p.consent)
     if (p) {
-      const { data, error } = await db.from('caregiver_profiles').update({ self_complete: true, axiscare_id: axid,
+      const { data, error } = await db.from('caregiver_profiles').update({ self_complete: true, axiscare_id: axid, ...(quick && !p.quick ? { quick: true, link_sent_at: null, link_sent_by: null } : {}),
         about: blank(p.about), experience: blank(p.experience), why_this_work: blank(p.why_this_work), updated_at: now })
         .eq('id', p.id).select(PROFILE_COLS).single()
       if (error) return json({ error: error.message }, 500)
       return json({ ok: true, profile: data })
     }
     const { data, error } = await db.from('caregiver_profiles').insert({ axiscare_id: axid, candidate_id: legacy || null, first_name: first,
-      last_name: last || null, status: 'new', published: false, consent: false, self_complete: true, updated_at: now }).select(PROFILE_COLS).single()
+      last_name: last || null, status: 'new', published: false, consent: false, self_complete: true, quick, updated_at: now }).select(PROFILE_COLS).single()
     if (error) return json({ error: /duplicate|unique/i.test(error.message) ? 'Someone just started their profile. Refresh and try again.' : error.message }, 500)
     return json({ ok: true, profile: data, started: true })
   }
@@ -616,11 +728,14 @@ Deno.serve(async (req) => {
 
   if (action === 'enhance') {
     const theirs = { about: String(p.about ?? '').trim(), experience: String(p.experience ?? '').trim(), why: String(p.why_this_work ?? '').trim() }
-    if (!theirs.about && !theirs.experience && !theirs.why) return json({ error: 'There are no words yet to build on. They fill in their profile first.' }, 409)
+    const qa = p.quick === true ? quickAnswers(p.quick_answers) : null
+    const hasQuick = !!(qa && (qa.years || qa.words || qa.outside))
+    if (!theirs.about && !theirs.experience && !theirs.why && !hasQuick) return json({ error: 'There are no words yet to build on. They fill in their profile first.' }, 409)
     const first = p.preferred_name || p.first_name || ''
     const { app, qs } = await findApplication(db, { applicant_id: p.applicant_id, cand: p.candidate_id || '', email: clean(b.email, 120).toLowerCase(), phone: clean(b.phone, 30), first })
     // deno-lint-ignore no-explicit-any
     const facts: Record<string, any> = applicationFacts(first, app, qs)
+    if (hasQuick) facts.their_quick_answers = { [QUICK_Q.years]: qa!.years, [QUICK_Q.words]: qa!.words, [QUICK_Q.outside]: qa!.outside }
     /* 458: what they wrote on their Step 1 application (from GoHighLevel), the family-appropriate parts only */
     const s1 = await step1Facts(db, p)
     if (s1) facts.from_their_step1_application = s1
@@ -645,11 +760,30 @@ Deno.serve(async (req) => {
     }
   }
 
-  if (action === 'send_link') {
+  /* 1181: the office wrote a quick profile; it goes to them to OK, with the exact words remembered */
+  if (action === 'record_ok') {
+    if (p.quick !== true) return json({ error: 'Only a quick profile needs their OK.' }, 409)
+    const w = wordsOf(p)
+    if (!w.about || !w.experience || !w.why_this_work || hasPrompt(w.about + w.experience + w.why_this_work)) return json({ error: 'Fill in all three sections and Save first.' }, 409)
+    const { error } = await db.from('caregiver_profiles').update({ approved_at: now, approved_by: 'said OK by text or phone, recorded by ' + staff, approval_words: w, updated_at: now }).eq('id', id)
+    if (error) return json({ error: error.message }, 500)
+    return json({ ok: true, approved: true })
+  }
+
+  if (action === 'send_link' || action === 'send_approval') {
     if (p.status === 'withdrawn') return json({ error: 'This profile was withdrawn.' }, 409)
     if (locked(p)) return json({ error: 'Their profile is published, so their own link is locked. To change the photo, use "Replace photo" here, or Unpublish first and then send the link.' }, 409)
     const first = p.preferred_name || p.first_name || 'there'
-    const m = (p.self_complete === true ? catchupMessages : linkMessages)(first, profileLink(p.upload_token))
+    const approval = action === 'send_approval'
+    if (approval) {
+      if (p.quick !== true) return json({ error: 'Only a quick profile goes to them to OK.' }, 409)
+      const w = wordsOf(p), miss: string[] = []
+      if (!w.about || !w.experience || !w.why_this_work) miss.push('all three sections filled in and saved')
+      if (hasPrompt(w.about + w.experience + w.why_this_work)) miss.push('no [brackets] left')
+      if (!p.photo_path) miss.push('their photo')
+      if (miss.length) return json({ error: 'Not ready to send yet. It needs ' + miss.join(', ') + '.' }, 409)
+    }
+    const m = (approval ? approvalMessages : p.quick === true ? quickMessages : p.self_complete === true ? catchupMessages : linkMessages)(first, profileLink(p.upload_token))
     /* where to send: what the office passed, else their Orientation Video Call, else their application */
     let phone = clean(b.phone, 30), email = clean(b.email, 120).toLowerCase()
     if ((!phone || !email) && p.candidate_id) {
@@ -687,7 +821,10 @@ Deno.serve(async (req) => {
           notSent.push('email: GoHighLevel did not accept it (a card is on Needs Attention)')
       }
     }
-    if (texted || emailed) {
+    if ((texted || emailed) && approval) {
+      const { error: se } = await db.from('caregiver_profiles').update({ approval_sent_at: now, approval_words: wordsOf(p), approved_at: null, approved_by: null, updated_at: now }).eq('id', id)
+      if (se) notSent.push('sent, but it could not be written down (' + String(se.message ?? se).slice(0, 80) + '), so their page cannot show it yet. Tell Samantha.')
+    } else if (texted || emailed) {
       await db.from('caregiver_profiles').update({ link_sent_at: now, link_sent_by: staff, updated_at: now }).eq('id', id)
       if (p.candidate_id) await db.from('welcome_calls').update({ photo_link_sent: true, updated_at: now })
         .eq('candidate_id', p.candidate_id).in('status', ['invited', 'booked'])
