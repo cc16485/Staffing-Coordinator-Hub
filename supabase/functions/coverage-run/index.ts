@@ -136,12 +136,19 @@ export const PRN_DEFAULT_MSG = `Hi {first_name}, it's Caring Companions. PRN opp
    client; {care}: the care note the office wrote on the case. No pay, no order, never "who we asked first". */
 export const PRN_FAMILIAR_MSG = `Hi {first_name}, it's Caring Companions. {client} in {town} needs someone {when}. You cared for {client} in {month}, so you'd be a familiar face. Can you take it? Reply YES or NO. No pressure either way.`
 export const PRN_TEAM_MSG = `Hi {first_name}, it's Caring Companions. You're part of our care continuity team, and {client} in {town} needs someone {when}. {care}Can you take it? Reply YES or NO. No pressure either way.`
+/* With the shift-page link (shift_link_texts_live), approved by Samantha 2026-10-28: the same words, the link sentence every
+   shift text uses ({tail}), no care line (the shift page has the details). */
+export const PRN_FAMILIAR_LINK_MSG = `Hi {first_name}, it's Caring Companions. {client} in {town} needs someone {when}. You cared for {client} in {month}, so you'd be a familiar face. {tail} No pressure either way.`
+export const PRN_TEAM_LINK_MSG = `Hi {first_name}, it's Caring Companions. You're part of our care continuity team, and {client} in {town} needs someone {when}. {tail} No pressure either way.`
+const PRN_TAIL_PART = 'View details and let us know if you can work all or part of it: {link} You can also reply YES or NO.'
+const PRN_TAIL_WHOLE = 'It needs one caregiver for the whole shift. View details and answer here: {link} You can also reply YES or NO.'
 /** The PRN text for one person, with the day, town and month filled in ({first_name}, {client} and {care} are left for the
     caller's own filling). Familiar = they have cared for this client before. */
 // deno-lint-ignore no-explicit-any
-export function prnStep1Template(st: any, kase: any, last: string | null | undefined): string {
+export function prnStep1Template(st: any, kase: any, last: string | null | undefined, o: { link?: boolean; part?: boolean } = {}): string {
   const fam = !!last
-  const t = fam ? (String(st?.coverage_msg_prn_familiar || '') || PRN_FAMILIAR_MSG) : (String(st?.coverage_msg_prn_team || '') || PRN_TEAM_MSG)
+  const own = String((fam ? st?.coverage_msg_prn_familiar : st?.coverage_msg_prn_team) || '')
+  const t = own || (o.link ? (fam ? PRN_FAMILIAR_LINK_MSG : PRN_TEAM_LINK_MSG).replace('{tail}', o.part ? PRN_TAIL_PART : PRN_TAIL_WHOLE) : (fam ? PRN_FAMILIAR_MSG : PRN_TEAM_MSG))
   const day = kase?.shift_date ? friendlyDay(String(kase.shift_date)).replace(/^([A-Z][a-z]{2}), /, '$1 ') : ''
   const time = String(kase?.shift_time || '').trim() ? span12(String(kase.shift_time)).replace('-', ' to ') : ''
   const when = [day, time].filter(Boolean).join(', ') || 'soon (the office has the details)'
@@ -1607,7 +1614,11 @@ async function sendAsksTo(kase: any, st: any, sendable: any[], extra: { askedBy?
     if (lk && LINK_SECRET.length >= 32 && linkEnd) {
       const kindT = x.prn_ask ? 'prn' : x.tier === 1 ? 'tier1' : isSameDay ? 'sameday' : 'other'
       const custom = customFor(kindT)
-      const tmplL = custom ? (custom.includes('{link}') ? custom : null) : shiftLinkTemplate(kindT, partWelcome(kase))
+      /* PRN step 1 (prn_order_live): the approved PRN texts with the link; wording edited in the Hub gets a link only where {link} was typed */
+      const step1 = x.prn_ask && st.prn_order_live === true, last1 = x.history?.visits ? x.history.last : null
+      const own1 = step1 ? String((last1 ? st.coverage_msg_prn_familiar : st.coverage_msg_prn_team) || '') : ''
+      const tmplL = step1 ? (own1 ? (own1.includes('{link}') ? prnStep1Template(st, kase, last1) : null) : prnStep1Template(st, kase, last1, { link: true, part: partWelcome(kase) }))
+        : custom ? (custom.includes('{link}') ? custom : null) : shiftLinkTemplate(kindT, partWelcome(kase))
       if (tmplL) {
         try {
           const link = await makeShiftLink(LINK_SECRET, String(kase.id), askId, linkEnd)

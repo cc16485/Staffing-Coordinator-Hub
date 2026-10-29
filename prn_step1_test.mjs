@@ -158,6 +158,10 @@ const team = M.prnStep1Template({}, { ...KS, client_city: 'Nixa' }, null).replac
 ck('PRN Team text, word for word as approved', team === `Hi Tasha, it's Caring Companions. You're part of our care continuity team, and Mary in Nixa needs someone ${thuW}, 8am to 12pm. This visit needs CNA care (transfers). Can you take it? Reply YES or NO. No pressure either way.`, team)
 ck('no town on the case: " in {town}" drops out whole', !/ in \{|in ,| in needs/.test(M.prnStep1Template({}, { ...KS, client_city: '' }, null)), M.prnStep1Template({}, { ...KS, client_city: '' }, null))
 ck('edited wording in the Hub is used instead (coverage_msg_prn_team)', M.prnStep1Template({ coverage_msg_prn_team: 'Hey {first_name}, {client} {when}?' }, KS, null) === `Hey {first_name}, {client} ${thuW}, 8am to 12pm?`)
+const famL = fill(M.prnStep1Template({}, KS, '2026-10-12', { link: true, part: false })).replace('{link}', 'https://x/s')
+ck('familiar PRN text with the link, word for word as approved', famL === `Hi Grace, it's Caring Companions. Ruth in Springfield needs someone ${thuW}, 8am to 12pm. You cared for Ruth in October, so you'd be a familiar face. It needs one caregiver for the whole shift. View details and answer here: https://x/s You can also reply YES or NO. No pressure either way.`, famL)
+ck('part of the shift welcome: the "all or part of it" link sentence', M.prnStep1Template({}, KS, null, { link: true, part: true }).includes('View details and let us know if you can work all or part of it: {link} You can also reply YES or NO. No pressure either way.'))
+ck('no em dashes in the link versions', !/\u2014/.test(M.PRN_FAMILIAR_LINK_MSG + M.PRN_TEAM_LINK_MSG))
 ck('no em dashes in either approved text', !/\u2014/.test(M.PRN_FAMILIAR_MSG + M.PRN_TEAM_MSG))
 
 /* ── 2. the real coverage-run: working right now ── */
@@ -198,6 +202,10 @@ ck('with nobody familiar, the PRN Teams are first in line', (L.ready || []).slic
 j = await act({ action: 'ask_everyone', case_id: 'cv1', send: true, names: ['Ben Test'] }, KAY)
 const benMsg = (CG_SENT()[0] || {}).msg || ''
 ck('Ben gets the approved PRN Team text', /^Hi Ben, it's Caring Companions\. You're part of our care continuity team, and Ruth in Nixa needs someone \w{3} \w{3} \d+, 8am to 12pm\. Can you take it\? Reply YES or NO\. No pressure either way\.$/.test(benMsg), [benMsg, j])
+prn({ shift_link_texts_live: true })
+j = await act({ action: 'ask_everyone', case_id: 'cv1', send: true, names: ['Ben Test'] }, KAY)
+const benL = (CG_SENT()[0] || {}).msg || ''
+ck('links on (as live today): Ben gets the approved PRN Team text with the link sentence', /^Hi Ben, it's Caring Companions\. You're part of our care continuity team, and Ruth in Nixa needs someone \w{3} \w{3} \d+, 8am to 12pm\. It needs one caregiver for the whole shift\. View details and answer here: https:\/\/\S+ You can also reply YES or NO\. No pressure either way\.$/.test(benL), [benL, j])
 prn({ prn_order_live: false })
 j = await act({ action: 'ask_everyone', case_id: 'cv1', send: true, names: ['Ben Test'] }, KAY)
 ck('switch off: the old "PRN opportunity" text, as before', /PRN opportunity/.test((CG_SENT()[0] || {}).msg || ''), CG_SENT())
