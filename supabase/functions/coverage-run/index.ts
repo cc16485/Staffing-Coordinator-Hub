@@ -67,6 +67,7 @@ import { LIVE_STATES, runRules, nextStep, pickWave, waveOrder, combosOf, partsWi
 import { judgeForWaves, pickWaveV2, bandsOfTimes, caseBands, sameTimeOfDay } from '../_shared/cara-waves.ts'
 import { skillCode, threeGroups, checkApproval } from '../_shared/ask-list.ts'
 import { conflictsFor, readRange, wallMin, workingNow, withWorkingNow } from '../_shared/overlap.ts'   // already working then (her top priority, 2026-10-25)   // the three-group ask list (2026-10-24), switch ask_list_live   // her wave rules (2026-10-24), switch cara_wave_rules_live
+import { onBreak } from '../_shared/prn-break.ts'
 
 /* Straight-line miles between two zips' Census centroids — an honest
    estimate for "who lives closest", never a route. Null when either zip
@@ -165,7 +166,8 @@ const DAY_WORD: Record<string, string> = { mon: 'Mondays', tue: 'Tuesdays', wed:
 const BAND_WORD: Record<string, string> = { morning: 'mornings', afternoon: 'daytimes', evening: 'evenings', overnight: 'overnights' }
 type PrnMember = { notice: string | null; windows: Record<string, string[]> | null; confirmed_at: string | null; outside_ok?: boolean
   /* her wave rules (2026-10-24, _shared/cara-waves.ts): the rest of their PRN answers */
-  days?: string[] | null; times?: string[] | null; interests?: string[] | null; short_notice_ok?: boolean; team?: string }
+  days?: string[] | null; times?: string[] | null; interests?: string[] | null; short_notice_ok?: boolean; team?: string
+  break_until?: string | null   /* PRN step 5a: "I'm taking a break until" from their page (_shared/prn-break.ts) */ }
 // deno-lint-ignore no-explicit-any
 export function isOngoingCase(c: any): boolean {
   return String(c?.kind) === 'interest' || c?.shift_pattern?.kind === 'open_ongoing' || String(c?.reason) === 'open'
@@ -181,6 +183,8 @@ export function bandOf(hhmm: string): string {
 export function prnFit(c: any, p: PrnMember, busy: boolean, nowChicago?: Date): { fit: boolean; why: string | null; outside?: boolean } {
   const date = String(c?.shift_date || ''), time = String(c?.shift_time || '')
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d\d:\d\d-\d\d:\d\d$/.test(time)) return { fit: false, why: 'the shift has no date and time yet' }
+  const brk = onBreak(p.break_until, date)   // PRN step 5a: a break they set on their page; never texted until it ends
+  if (brk) return { fit: false, why: brk }
   const start = time.slice(0, 5)
   const wd = new Date(date + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' }).toLowerCase().slice(0, 3)
   const band = bandOf(start)
@@ -251,7 +255,7 @@ async function prnTeamLoad(): Promise<Map<string, PrnMember>> {
       const item = av.find((x) => String(x?.axiscare_id ?? '') === id || String(x?.id ?? '') === id)
       out.set(id, { notice: a?.prn?.notice ?? null, windows: item?.windows ?? null, confirmed_at: item?.updated_at ?? null, outside_ok: item?.outside_ok === true,
         days: a?.prn?.days ?? null, times: a?.prn?.times ?? null, interests: a?.prn?.interests ?? null, short_notice_ok: a?.prn?.short_notice_ok === true,
-        team: (t as { team?: string }).team === 'caregiver' ? 'caregiver' : 'cna' })
+        team: (t as { team?: string }).team === 'caregiver' ? 'caregiver' : 'cna', break_until: a?.prn?.break_until ?? null })
     }
   } catch { /* no PRN data = nobody is treated as PRN; everything else unchanged */ }
   return out
@@ -1153,7 +1157,7 @@ async function buildCandidatesForCase(c: any, opts: { v2?: boolean; includeAsked
       /* her wave rules (_shared/cara-waves.ts): their availability for the whole shift, and a PRN member's own answers */
       const avw = availAll.get(gid), pmw = prnTeam.get(gid)
       Object.assign(row, { windows: avw?.windows ?? null, outside_ok: avw?.outside_ok === true,
-        prn_pref: pmw ? { notice: pmw.notice, days: pmw.days ?? null, times: pmw.times ?? null, interests: pmw.interests ?? null, short_notice_ok: pmw.short_notice_ok === true, team: pmw.team ?? 'cna' } : null })
+        prn_pref: pmw ? { notice: pmw.notice, days: pmw.days ?? null, times: pmw.times ?? null, interests: pmw.interests ?? null, short_notice_ok: pmw.short_notice_ok === true, team: pmw.team ?? 'cna', break_until: pmw.break_until ?? null } : null })
     }
     /* NEEDS VERIFICATION (Samantha, 2026-10-23): "caregivers with expired or missing required clearances cannot receive shift
        offers until they're verified as eligible. They can appear in the list marked Needs Verification so our office knows

@@ -34,7 +34,7 @@ export const CALL_CODES = ['overtime', 'outside', 'prn_notice', 'prn_conflict', 
 export const HIDDEN_CODES = ['inactive', 'nurse', 'office', 'asked']
 const DONT_WORDS: Record<string, string> = { dnr: 'Do Not Return', needs_verification: 'Clearance', working: 'Working then', working_now: 'Working right now', lock: 'Not approved to work yet',
   in_training: 'In Training', caller: 'Called off', plan_only: "Client's call-in plan", held: 'Could not be checked', no_phone: 'No phone on file',
-  do_not_offer: 'Asked not to be offered shifts', training: 'Required care', restriction: 'Their own limit', client_requires: "Client's requirement", skills_other: 'Not a match', skipped: 'Not on the list', other: 'Not on the list' }
+  do_not_offer: 'Asked not to be offered shifts', on_break: 'On a break', training: 'Required care', restriction: 'Their own limit', client_requires: "Client's requirement", skills_other: 'Not a match', skipped: 'Not on the list', other: 'Not on the list' }
 const CALL_WORDS: Record<string, string> = { overtime: 'Overtime', outside: 'Outside their times', prn_notice: 'PRN notice', prn_conflict: 'PRN preference to clarify', prn_ongoing: 'PRN, regular opening', overlap: 'Said yes elsewhere then' }
 const CARE_WORDS: Record<string, string> = { level: 'Level', drive: 'Driving', skill: 'Skill' }
 

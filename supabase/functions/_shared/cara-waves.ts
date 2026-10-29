@@ -28,6 +28,7 @@
 // Only decisions here (no reads or writes), so every rule is tested. Switch ops_settings.cara_wave_rules_live (off): the
 // waves work as before and each wave records who these rules would have asked instead.
 // =============================================================================
+import { onBreak } from './prn-break.ts'
 // deno-lint-ignore no-explicit-any
 type Any = any
 const S = (v: unknown, n = 200) => String(v ?? '').trim().slice(0, n)
@@ -119,7 +120,9 @@ export function shiftTypes(c: Any, minsToStart: number | null): string[] {
 }
 
 /** A PRN member and this shift: may Cara ask them, and why not. */
-export function prnRule(c: Any, p: Any, minsToStart: number | null, ongoing: boolean): { ok: boolean; why: string | null; conflict: string | null } {
+export function prnRule(c: Any, p: Any, minsToStart: number | null, ongoing: boolean): { ok: boolean; why: string | null; conflict: string | null; brk?: boolean } {
+  const brk = onBreak(p?.break_until, c?.shift_date)   // PRN step 5a: a break they set on their page
+  if (brk) return { ok: false, why: brk, conflict: null, brk: true }
   if (ongoing) return { ok: false, why: 'PRN Team: a regular ongoing opening (taking it means moving to ongoing; the office asks)', conflict: null }
   const need = NOTICE_H[S(p?.notice)] ?? 0
   const picks: string[] = Array.isArray(p?.interests) ? p.interests : []
@@ -152,7 +155,7 @@ export function judgeForWaves(rows: Any[], c: Any, x: { minsToStart: number | nu
     if (isPrn) {
       const pr = prnRule(c, r.prn_pref, x.minsToStart, x.ongoing)
       if (pr.conflict) conflicts.push({ name: S(r.name, 80), axiscare_id: r.axiscare_id != null ? S(r.axiscare_id, 20) : null, why: pr.conflict })
-      if (!pr.ok) { out(r, pr.why || 'PRN Team: not for this shift', x.ongoing ? 'prn_ongoing' : pr.conflict ? 'prn_conflict' : 'prn_notice'); continue }
+      if (!pr.ok) { out(r, pr.why || 'PRN Team: not for this shift', pr.brk ? 'on_break' : x.ongoing ? 'prn_ongoing' : pr.conflict ? 'prn_conflict' : 'prn_notice'); continue }
       const picks: string[] = Array.isArray(r.prn_pref.interests) ? r.prn_pref.interests : []
       prnMatch = picks.some((p) => types.includes(p))
     }
