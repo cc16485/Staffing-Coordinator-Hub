@@ -1,4 +1,4 @@
-// PRN STEP 8a (Samantha 2026-10-29: "Yes, build step 8 (Gap Mentors) with its switches off"): Gap Mentors. The rules
+// PRN STEP 8a (Samantha 2026-10-29: "Yes, build step 8 (Gap Mentors) with its switches off"; renamed the same day: Field Support Visits). The rules
 // (_shared/prn-mentor.ts), the REAL prn-week (naming, asking, assigning, with the REAL staff check) and the REAL prn-page
 // (offers, answers, the note) against a fake database and a fake AxisCare, and the SQL on a throwaway Postgres when PGLITE is
 // set. Nothing real is reached. node prn_mentor_test.mjs
@@ -25,9 +25,9 @@ ck('...the caregiver is only kept on a refresher; GUIDE / VA ticks kept', sup.ca
 const visit = { id: 9, ...M.readAsk(A(), TODAY).ask, status: 'open' }
 const mentor = (o = {}) => ({ name: 'Grace Hill', team: 'cna', axiscare_id: '11', prn: { gap_mentor: { on: true, skills: ['hoyer'] }, ...o } })
 const V = (s, e) => ({ scheduledStartDate: `${day(3)}T${s}:00-05:00`, scheduledEndDate: `${day(3)}T${e}:00-05:00` })
-ck('offered: a Gap Mentor with the skill, free then', M.mayOffer({ mentor: mentor(), visit, dnr: [], rows: [V('11:00', '13:00')] }).ok)
-ck('...not a Gap Mentor, or not verified for the skill: no', !M.mayOffer({ mentor: { ...mentor(), prn: {} }, visit, dnr: [], rows: [] }).ok && !M.mayOffer({ mentor: mentor({ gap_mentor: { on: true, skills: ['dementia'] } }), visit, dnr: [], rows: [] }).ok)
-ck('...a care update with no skill: any Gap Mentor', M.mayOffer({ mentor: mentor({ gap_mentor: { on: true, skills: ['dementia'] } }), visit: { ...visit, kind: 'care_update', skill: null }, dnr: [], rows: [] }).ok)
+ck('offered: approved for Field Support Visits with the skill, free then', M.mayOffer({ mentor: mentor(), visit, dnr: [], rows: [V('11:00', '13:00')] }).ok)
+ck('...not approved for Field Support Visits, or not verified for the skill: no', !M.mayOffer({ mentor: { ...mentor(), prn: {} }, visit, dnr: [], rows: [] }).ok && !M.mayOffer({ mentor: mentor({ gap_mentor: { on: true, skills: ['dementia'] } }), visit, dnr: [], rows: [] }).ok)
+ck('...a care update with no skill: anyone approved for Field Support Visits', M.mayOffer({ mentor: mentor({ gap_mentor: { on: true, skills: ['dementia'] } }), visit: { ...visit, kind: 'care_update', skill: null }, dnr: [], rows: [] }).ok)
 ck('...on a break that day: no', M.mayOffer({ mentor: mentor({ break_until: day(5) }), visit, dnr: [], rows: [] }).why === 'on a break then')
 ck('...Do Not Return for this client: no', M.mayOffer({ mentor: mentor(), visit, dnr: [{ client: 'Ruth Lane', caregiver: 'Grace Hill' }], rows: [] }).why === 'Do Not Return for this client')
 ck('...working then in AxisCare (any overlap): no', M.mayOffer({ mentor: mentor(), visit, dnr: [], rows: [V('08:00', '09:30')] }).why === 'working then' && M.mayOffer({ mentor: mentor(), visit, dnr: [], rows: [V('10:00', '12:00')] }).ok)
@@ -42,7 +42,7 @@ const now = '2026-11-03T18:00:00Z'
 const lr = M.landing({ ...visit, visit_date: '2026-11-03' }, 'Grace Hill', { practiced: 'Hoyer', comfort: 'yes' }, now)
 ck('a refresher goes on the caregiver\'s record: "Refresher with Grace (CNA), Nov 3: Hoyer lift transfers", hands-on', lr.kind === 'mentor_refresher' && lr.title === 'Refresher with Grace (CNA), Nov 3: Hoyer lift transfers' && lr.caregiver_ax === '77' && lr.hands_on === true, lr)
 const lu = M.landing({ ...visit, kind: 'care_update', visit_date: '2026-11-03', guide: true }, 'Grace Hill', { mobility: 'Harder to stand', eating: 'Less' }, now)
-ck("a care update goes to the client's Care plan reviews as \"What's changed\" (never a review: the 90-day clock is untouched)", lu.kind === 'mentor_report' && lu.title === "What's changed, from Grace (Gap Mentor), Nov 3" && lu.axiscare_client_id === '501')
+ck("a care update goes to the client's Care plan reviews as \"What's changed\" (never a review: the 90-day clock is untouched)", lu.kind === 'mentor_report' && lu.title === "What's changed, from Grace (Field Support Visit), Nov 3" && lu.axiscare_client_id === '501')
 ck('...GUIDE: share with their care navigator through Continuum; VA: check the authorization', /GUIDE care navigator through Continuum/.test(lu.reminder) && /VA authorization/.test(M.landing({ ...visit, kind: 'supervisory', va: true }, 'G', {}, now).reminder))
 ck('switch: off by default; needs the page open', !M.mentorLive({}) && !M.mentorLive({ prn_mentor_live: true }) && M.mentorLive({ prn_mentor_live: true, prn_page_live: true }))
 ck('no em dash and no "AI" in anything a member reads', ![M.MENTOR_RULES, ...Object.values(M.SKILLS), ...Object.values(M.KINDS).map((k) => k.label), ...M.UPDATE_FIELDS.flat(), ...M.REFRESHER_FIELDS.flat()].some((t) => /—|\bAI\b/.test(t)))
@@ -110,20 +110,20 @@ try {
   ck('...asked: saved with who asked; nothing texted', r.j.outcome === 'asked' && T.prn_mentor_visits[0].asked_by === 'Krystal Office' && T.prn_mentor_visits[0].status === 'open', [r.j, T.prn_mentor_visits])
   AXIS = { 11: [V('11:00', '13:00')], 13: [] }
   r = await Pg(G, { action: 'view' })
-  ck("Grace's page: the refresher in her Gap Mentor visits (she has the skill and is free then)", r.j.mentor && r.j.mentor.offers.length === 1 && r.j.mentor.offers[0].id === vid && r.j.mentor.offers[0].skill === 'Hoyer lift transfers' && r.j.mentor.skills.join() === 'Hoyer lift transfers,Dementia care', r.j.mentor)
+  ck("Grace's page: the refresher in her Field Support Visits (she has the skill and is free then)", r.j.mentor && r.j.mentor.offers.length === 1 && r.j.mentor.offers[0].id === vid && r.j.mentor.offers[0].skill === 'Hoyer lift transfers' && r.j.mentor.skills.join() === 'Hoyer lift transfers,Dementia care', r.j.mentor)
   r = await Pg(DE, { action: 'view' }); ck("Denise's page: not offered (not verified for Hoyer)", r.j.mentor && r.j.mentor.offers.length === 0, r.j.mentor)
-  r = await Pg(TI, { action: 'view' }); ck("Tina (PRN Caregiver Team): no Gap Mentor section", r.j.mentor === null)
+  r = await Pg(TI, { action: 'view' }); ck("Tina (PRN Caregiver Team): no Field Support Visit section", r.j.mentor === null)
   AXIS = { 11: [V('08:30', '09:30')] }; r = await Pg(G, { action: 'view' }); ck('Grace working then in AxisCare: not offered', r.j.mentor.offers.length === 0, r.j.mentor)
   AXIS = { down: true }; r = await Pg(G, { action: 'view' }); ck("AxisCare can't be read: not offered", r.j.mentor.offers.length === 0)
   r = await Pg(G, { action: 'mentor_answer', id: vid, answer: 'yes' }); ck("...and a yes then isn't saved (503)", r.s === 503 && !T.prn_mentor_answers.length)
   AXIS = { 11: [] }
   r = await Pg(G, { action: 'mentor_answer', id: vid, answer: 'yes' })
-  ck('"I can do it": saved, and the office gets a card to pick a Gap Mentor', r.j.ok && T.prn_mentor_answers.some((a) => a.applicant_id === G && a.answer === 'yes') && APPS.ops_items.some((i) => i.id === 'ops_gapmentor_' + vid && /Grace can do the Gap Mentor visit for Ruth/.test(i.title) && /non-billable/.test(i.detail)), [r.j, APPS.ops_items])
+  ck('"I can do it": saved, and the office gets a card to pick who goes', r.j.ok && T.prn_mentor_answers.some((a) => a.applicant_id === G && a.answer === 'yes') && APPS.ops_items.some((i) => i.id === 'ops_gapmentor_' + vid && /Grace can do the Field Support Visit for Ruth/.test(i.title) && /non-billable/.test(i.detail)), [r.j, APPS.ops_items])
   r = await Pg(G, { action: 'mentor_answer', id: vid, answer: 'no' }); ck('..."Not this time" replaces it, and never counts against her', r.j.ok && /never counts against you/.test(r.j.message) && T.prn_mentor_answers.filter((a) => a.applicant_id === G).length === 1 && T.prn_mentor_answers[0].answer === 'no')
   await Pg(G, { action: 'mentor_answer', id: vid, answer: 'yes' })
   r = await W({ action: 'mentor_list', client_ax: '501' })
   ck("the client's Care tab: the ask, with Grace's yes", r.j.visits.length === 1 && r.j.visits[0].answers[0].name === 'Grace Hill' && r.j.visits[0].answers[0].answer === 'yes', r.j)
-  r = await W({ action: 'mentor_assign', id: vid, applicant_id: TI }); ck('assign: only to a Gap Mentor', r.s === 409)
+  r = await W({ action: 'mentor_assign', id: vid, applicant_id: TI }); ck('assign: only to someone approved for Field Support Visits', r.s === 409)
   r = await W({ action: 'mentor_assign', id: vid, applicant_id: G }); ck('...Grace: recorded with who and when (it goes in AxisCare by hand)', r.j.outcome === 'assigned' && T.prn_mentor_visits[0].status === 'assigned' && T.prn_mentor_visits[0].assigned_to === G && T.prn_mentor_visits[0].assigned_by === 'Krystal Office')
   r = await W({ action: 'mentor_assign', id: vid, applicant_id: G }); ck('...twice: refused', r.s === 409)
   r = await Pg(G, { action: 'view' }); const mine = r.j.mentor.mine[0]
@@ -136,14 +136,14 @@ try {
   ck("the note: the visit is done; the refresher is on Amy's record, hands-on, apart from online courses", r.j.ok && T.prn_mentor_visits[0].status === 'done' && ref && ref.caregiver_ax === '77' && /^Refresher with Grace \(CNA\), \w+ \d+: Hoyer lift transfers$/.test(ref.title) && ref.report.practiced === 'Hoyer from bed to chair, twice', [r.j, ref])
   ck('...the office gets a card to read it', APPS.ops_items.some((i) => i.id === 'ops_gapnote_' + vid && /Read Grace's note/.test(i.title) && /on Amy Dale's record/.test(i.detail)))
   r = await Pg(G, { action: 'mentor_note', id: vid, practiced: 'again', comfort: 'no' }); ck('...once in, it stays as written', r.s === 409 && ref.report.practiced === 'Hoyer from bed to chair, twice')
-  r = await Pg(G, { action: 'view' }); ck('...and her first visit as a Gap Mentor shows in her thank-yous', r.j.thanks.some((x) => x.text === 'Your first visit as a Gap Mentor. Thank you for helping our caregivers and families.'))
+  r = await Pg(G, { action: 'view' }); ck('...and her first Field Support Visit shows in her thank-yous', r.j.thanks.some((x) => x.text === 'Your first Field Support Visit. Thank you for helping our caregivers and families.'))
   /* a care update for a GUIDE client */
   r = await W({ action: 'mentor_ask', ...A({ kind: 'care_update', skill: '', caregiver_ax: '', caregiver_name: '', guide: true, visit_date: TODAY, visit_time: '20:00-21:00' }) })
   const cu = r.j.id; AXIS = { 13: [] }
   await Pg(DE, { action: 'mentor_answer', id: cu, answer: 'yes' }); await W({ action: 'mentor_assign', id: cu, applicant_id: DE })
   r = await Pg(DE, { action: 'mentor_note', id: cu, mobility: 'Needs two people to stand now', eating: 'Eating about half', safety: 'Rug in the hallway' })
   const rep = APPS.care_plan_reviews.find((x) => x.kind === 'mentor_report')
-  ck("a care update: \"What's changed\" in Ruth's Care plan reviews, with the GUIDE reminder; the coordinator decides", r.j.ok && rep && rep.axiscare_client_id === '501' && /^What's changed, from Denise \(Gap Mentor\)/.test(rep.title) && /GUIDE care navigator through Continuum/.test(rep.reminder)
+  ck("a care update: \"What's changed\" in Ruth's Care plan reviews, with the GUIDE reminder; the coordinator decides", r.j.ok && rep && rep.axiscare_client_id === '501' && /^What's changed, from Denise \(Field Support Visit\)/.test(rep.title) && /GUIDE care navigator through Continuum/.test(rep.reminder)
     && APPS.ops_items.some((i) => i.id === 'ops_gapnote_' + cu && i.urgency === 'high' && /Care Coordinator decides any care plan change/.test(i.detail)), [rep, APPS.ops_items])
   r = await W({ action: 'mentor_cancel', id: cu }); ck('a visit that happened cannot be cancelled', r.s === 409)
   T.settings.prn_mentor_live = false; r = await Pg(G, { action: 'mentor_answer', id: vid, answer: 'yes' }); ck('switched off: answers refused', r.s === 409)
