@@ -70,6 +70,7 @@ import { conflictsFor, readRange, wallMin, workingNow, withWorkingNow } from '..
 import { onBreak } from '../_shared/prn-break.ts'
 import { openCandidates, eligibleOn, openView, interestAsk, interestCardLine, interestOfficeText, isOngoing as prnOngoingCase, keptOff as prnKeptOff } from '../_shared/prn-open.ts'   // PRN step 5b
 import { visitMatches } from '../_shared/shift-offer.ts'
+import { lookingState } from '../_shared/prn-page.ts'   // 2026-10-29: the ask list's "Looking for hours" tag
 
 /* Straight-line miles between two zips' Census centroids — an honest
    estimate for "who lives closest", never a route. Null when either zip
@@ -1490,7 +1491,26 @@ async function askListFor(kase: any, st: any): Promise<{ groups: any; meta: any 
   const p = await buildCandidatesForCase(kase, { v2: true, includeAsked: true })
   const judged = judgeForWaves([...p.group0, ...p.prn_other, ...p.group1, ...p.group2, ...p.prn_ongoing, ...(p.needs_verification || [])], kase,
     { minsToStart: minsToStart(kase, chiNowNaive()), ongoing: isOngoingCase(kase), sameTime: st?.cara_same_time_live === true, groupFirst: st?.prn_order_live === true })
-  return { groups: threeGroups(kase, judged.ordered, judged.excluded, p.excluded), meta: p.meta }
+  const groups = threeGroups(kase, judged.ordered, judged.excluded, p.excluded)
+  /* 2026-10-29 (plan section 5): PRN members who tapped "I'm looking for hours" on their page carry a "Looking for hours" tag
+     in whichever group they are in. It never changes the order or who is asked. A read that fails = no tags. */
+  const looking = await lookingAxIds()
+  // deno-lint-ignore no-explicit-any
+  for (const g of ['ready', 'review', 'dont']) for (const r of (groups[g] || []) as any[]) if (r?.axiscare_id && looking.has(String(r.axiscare_id))) r.looking = true
+  return { groups, meta: p.meta }
+}
+/** AxisCare ids of PRN members whose "I'm looking for hours" is on right now (their PRN Team page, 7 days from the tap). */
+async function lookingAxIds(): Promise<Set<string>> {
+  try {
+    const { data: tr } = await sb.from('pay_tracks').select('applicant_id, axiscare_caregiver_id').eq('track', 'prn_team')
+    const linked = (tr ?? []).filter((t: { axiscare_caregiver_id?: string | null }) => t.axiscare_caregiver_id)
+    if (!linked.length) return new Set()
+    const { data: log, error } = await sb.from('prn_page_log').select('applicant_id, kind, note, at').in('applicant_id', linked.map((t: { applicant_id: string }) => t.applicant_id)).in('kind', ['looking_on', 'looking_off'])
+    if (error) return new Set()
+    const today = chiNowNaive().slice(0, 10)
+    // deno-lint-ignore no-explicit-any
+    return new Set(linked.filter((t: any) => lookingState((log ?? []).filter((r: any) => r.applicant_id === t.applicant_id), today).on).map((t: any) => String(t.axiscare_caregiver_id)))
+  } catch { return new Set() }
 }
 /** A visit's date as the office reads it ("Oct 24"), from AxisCare's "2026-10-24T07:45:00-05:00" (2026-10-24, her screenshots). */
 export function dayWord(iso: unknown): string {
