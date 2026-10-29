@@ -29,7 +29,9 @@ export async function saveSweepFields(db: any, c: any, recompute: (fresh: any) =
    Platform's dates, hours and certificate references, and the monthly OIG result with its evidence. Never a typed office
    date: the sync fills blanks and newer facts only (training-sync.ts decides). */
 export const AUDIT_FIELDS = ['orient_date', 'orient_proof', 'alz_date', 'alz_hrs', 'alz_proof', 'ojt_online', 'ojt_online_proof', 'annual_date', 'annual_hrs', 'annual_proof',
-  'hire_date', 'first_contact', 'axiscare_id', 'th_synced', 'oig', 'oig_date', 'oig_proof', 'oig_evidence']
+  'hire_date', 'first_contact', 'axiscare_id', 'th_synced', 'oig', 'oig_date', 'oig_proof', 'oig_evidence',
+  /* ORIENTATION PROOF (2026-10-28): the office's verification of a historical orientation record */
+  'orient_verified']
 const pickOf = (fields: string[], r: any) => Object.fromEntries(fields.filter((k) => k in r).map((k) => [k, r[k] === undefined ? null : r[k]]))
 export async function saveOwnedFields(db: any, rpcName: string, fields: string[], c: any, recompute: (fresh: any) => void, tries = 3): Promise<'saved' | 'skipped' | 'error'> {
   if (c?.id == null || c.id === '') return 'skipped'
