@@ -32,7 +32,7 @@ export function skillCode(reason: string): string {
 export const CARE_CODES = ['level', 'drive', 'skill']
 export const CALL_CODES = ['overtime', 'outside', 'prn_notice', 'prn_conflict', 'prn_ongoing', 'overlap']
 export const HIDDEN_CODES = ['inactive', 'nurse', 'office', 'asked']
-const DONT_WORDS: Record<string, string> = { dnr: 'Do Not Return', needs_verification: 'Clearance', working: 'Working then', lock: 'Not approved to work yet',
+const DONT_WORDS: Record<string, string> = { dnr: 'Do Not Return', needs_verification: 'Clearance', working: 'Working then', working_now: 'Working right now', lock: 'Not approved to work yet',
   in_training: 'In Training', caller: 'Called off', plan_only: "Client's call-in plan", held: 'Could not be checked', no_phone: 'No phone on file',
   do_not_offer: 'Asked not to be offered shifts', training: 'Required care', restriction: 'Their own limit', client_requires: "Client's requirement", skills_other: 'Not a match', skipped: 'Not on the list', other: 'Not on the list' }
 const CALL_WORDS: Record<string, string> = { overtime: 'Overtime', outside: 'Outside their times', prn_notice: 'PRN notice', prn_conflict: 'PRN preference to clarify', prn_ongoing: 'PRN, regular opening', overlap: 'Said yes elsewhere then' }
@@ -71,7 +71,7 @@ export function threeGroups(kase: Any, ready: Any[], judgedOut: Any[], listOut: 
   const add = (g: string, x: Any) => { const k = x.axiscare_id || nk(x.name); if (seen.has(k)) return; seen.add(k); out[g].push(x) }
   for (const j of ready) {
     const r = j.row
-    const label = r.history?.visits ? 'Familiar' : j.prn ? 'PRN Team' : ''
+    const label = r.history?.visits ? 'Familiar' : j.prn ? (r.prn_pref?.team === 'caregiver' ? 'PRN Caregiver Team' : 'PRN CNA Team') : ''
     add('ready', row(r, 'ready', 'ready', label, j.note ? `${r.why || ''}. ${j.note}` : (r.why || ''), { prn: !!j.prn }))
   }
   for (const e of judgedOut) {

@@ -66,7 +66,7 @@ import { isPlaceholderCaregiver } from '../_shared/cg-placeholder.ts'   // 2026-
 import { LIVE_STATES, runRules, nextStep, pickWave, waveOrder, combosOf, partsWithoutHours, nextMorning, needsLine } from '../_shared/cara-run.ts'   // CARA PHASE 2 PART A
 import { judgeForWaves, pickWaveV2, bandsOfTimes, caseBands, sameTimeOfDay } from '../_shared/cara-waves.ts'
 import { skillCode, threeGroups, checkApproval } from '../_shared/ask-list.ts'
-import { conflictsFor, readRange, wallMin } from '../_shared/overlap.ts'   // already working then (her top priority, 2026-10-25)   // the three-group ask list (2026-10-24), switch ask_list_live   // her wave rules (2026-10-24), switch cara_wave_rules_live
+import { conflictsFor, readRange, wallMin, workingNow, withWorkingNow } from '../_shared/overlap.ts'   // already working then (her top priority, 2026-10-25)   // the three-group ask list (2026-10-24), switch ask_list_live   // her wave rules (2026-10-24), switch cara_wave_rules_live
 
 /* Straight-line miles between two zips' Census centroids — an honest
    estimate for "who lives closest", never a route. Null when either zip
@@ -131,13 +131,41 @@ const WAVE_SIZE = Number(Deno.env.get('COVERAGE_WAVE_SIZE') || '5')
    ongoing, so PRN members are listed apart, unticked, and never in a wave. */
 /* Her positioning: accept or decline, no pressure. No pay in it: a PRN member's rate is always $20 and never changes by shift. */
 export const PRN_DEFAULT_MSG = `Hi {first_name}, it's Caring Companions. PRN opportunity: {client} at {address}, {when}. {care}Can you take it? Reply YES or NO. No pressure either way.`
+/* PRN STEP 1 WORDING (approved by Samantha 2026-10-28; used while ops_settings.prn_order_live is on; editable in the Hub as
+   coverage_msg_prn_familiar / coverage_msg_prn_team). {town}: the client's town; {month}: the month they last cared for this
+   client; {care}: the care note the office wrote on the case. No pay, no order, never "who we asked first". */
+export const PRN_FAMILIAR_MSG = `Hi {first_name}, it's Caring Companions. {client} in {town} needs someone {when}. You cared for {client} in {month}, so you'd be a familiar face. Can you take it? Reply YES or NO. No pressure either way.`
+export const PRN_TEAM_MSG = `Hi {first_name}, it's Caring Companions. You're part of our care continuity team, and {client} in {town} needs someone {when}. {care}Can you take it? Reply YES or NO. No pressure either way.`
+/* With the shift-page link (shift_link_texts_live), approved by Samantha 2026-10-28: the same words, the link sentence every
+   shift text uses ({tail}), no care line (the shift page has the details). */
+export const PRN_FAMILIAR_LINK_MSG = `Hi {first_name}, it's Caring Companions. {client} in {town} needs someone {when}. You cared for {client} in {month}, so you'd be a familiar face. {tail} No pressure either way.`
+export const PRN_TEAM_LINK_MSG = `Hi {first_name}, it's Caring Companions. You're part of our care continuity team, and {client} in {town} needs someone {when}. {tail} No pressure either way.`
+const PRN_TAIL_PART = 'View details and let us know if you can work all or part of it: {link} You can also reply YES or NO.'
+const PRN_TAIL_WHOLE = 'It needs one caregiver for the whole shift. View details and answer here: {link} You can also reply YES or NO.'
+/** The PRN text for one person, with the day, town and month filled in ({first_name}, {client} and {care} are left for the
+    caller's own filling). Familiar = they have cared for this client before. */
+// deno-lint-ignore no-explicit-any
+export function prnStep1Template(st: any, kase: any, last: string | null | undefined, o: { link?: boolean; part?: boolean } = {}): string {
+  const fam = !!last
+  const own = String((fam ? st?.coverage_msg_prn_familiar : st?.coverage_msg_prn_team) || '')
+  const t = own || (o.link ? (fam ? PRN_FAMILIAR_LINK_MSG : PRN_TEAM_LINK_MSG).replace('{tail}', o.part ? PRN_TAIL_PART : PRN_TAIL_WHOLE) : (fam ? PRN_FAMILIAR_MSG : PRN_TEAM_MSG))
+  const day = kase?.shift_date ? friendlyDay(String(kase.shift_date)).replace(/^([A-Z][a-z]{2}), /, '$1 ') : ''
+  const time = String(kase?.shift_time || '').trim() ? span12(String(kase.shift_time)).replace('-', ' to ') : ''
+  const when = [day, time].filter(Boolean).join(', ') || 'soon (the office has the details)'
+  const lastD = /^\d{4}-\d\d-\d\d/.test(String(last || '')) ? new Date(String(last).slice(0, 10) + 'T12:00:00Z') : null
+  const month = lastD ? lastD.toLocaleDateString('en-US', { month: 'long', timeZone: 'UTC' }) : ''
+  const town = String(kase?.client_city || '').trim()
+  return t.replaceAll(' in {town}', town ? ` in ${town}` : '').replaceAll('{town}', town)
+    .replaceAll(' in {month}', month ? ` in ${month}` : ' before').replaceAll('{month}', month)
+    .replaceAll('{when}', when)
+}
 export const PRN_NOTICE_H: Record<string, number> = { same_day: 0, few_hours: 3, '24h': 24, '48h': 48 }
 const PRN_NOTICE_WORD: Record<string, string> = { few_hours: 'a few hours', '24h': '24 hours', '48h': '48 hours' }
 const DAY_WORD: Record<string, string> = { mon: 'Mondays', tue: 'Tuesdays', wed: 'Wednesdays', thu: 'Thursdays', fri: 'Fridays', sat: 'Saturdays', sun: 'Sundays' }
 const BAND_WORD: Record<string, string> = { morning: 'mornings', afternoon: 'daytimes', evening: 'evenings', overnight: 'overnights' }
 type PrnMember = { notice: string | null; windows: Record<string, string[]> | null; confirmed_at: string | null; outside_ok?: boolean
   /* her wave rules (2026-10-24, _shared/cara-waves.ts): the rest of their PRN answers */
-  days?: string[] | null; times?: string[] | null; interests?: string[] | null; short_notice_ok?: boolean }
+  days?: string[] | null; times?: string[] | null; interests?: string[] | null; short_notice_ok?: boolean; team?: string }
 // deno-lint-ignore no-explicit-any
 export function isOngoingCase(c: any): boolean {
   return String(c?.kind) === 'interest' || c?.shift_pattern?.kind === 'open_ongoing' || String(c?.reason) === 'open'
@@ -211,7 +239,7 @@ async function availLoad(): Promise<Map<string, { windows?: Record<string, strin
 async function prnTeamLoad(): Promise<Map<string, PrnMember>> {
   const out = new Map<string, PrnMember>()
   try {
-    const { data: tr } = await sb.from('pay_tracks').select('applicant_id, axiscare_caregiver_id').eq('track', 'prn_team').not('axiscare_caregiver_id', 'is', null)
+    const { data: tr } = await sb.from('pay_tracks').select('applicant_id, axiscare_caregiver_id, team').eq('track', 'prn_team').not('axiscare_caregiver_id', 'is', null)
     if (!tr?.length) return out
     const { data: apps } = await sb.from('job_applicants').select('id, prn').in('id', tr.map((t: { applicant_id: string }) => t.applicant_id))
     const { data: avRow } = await sb.from('app_data').select('data').eq('key', 'caregiver_availability').maybeSingle()
@@ -222,7 +250,8 @@ async function prnTeamLoad(): Promise<Map<string, PrnMember>> {
       const a = (apps ?? []).find((x: { id: string }) => x.id === t.applicant_id)
       const item = av.find((x) => String(x?.axiscare_id ?? '') === id || String(x?.id ?? '') === id)
       out.set(id, { notice: a?.prn?.notice ?? null, windows: item?.windows ?? null, confirmed_at: item?.updated_at ?? null, outside_ok: item?.outside_ok === true,
-        days: a?.prn?.days ?? null, times: a?.prn?.times ?? null, interests: a?.prn?.interests ?? null, short_notice_ok: a?.prn?.short_notice_ok === true })
+        days: a?.prn?.days ?? null, times: a?.prn?.times ?? null, interests: a?.prn?.interests ?? null, short_notice_ok: a?.prn?.short_notice_ok === true,
+        team: (t as { team?: string }).team === 'caregiver' ? 'caregiver' : 'cna' })
     }
   } catch { /* no PRN data = nobody is treated as PRN; everything else unchanged */ }
   return out
@@ -1049,7 +1078,10 @@ async function buildCandidatesForCase(c: any, opts: { v2?: boolean; includeAsked
     /* ALREADY WORKING THEN (her top priority, 2026-10-25): never offered a shift that overlaps one they are scheduled for or
        clocked in on, whoever sends; AxisCare unreadable = nobody (fail closed) */
     if (sched.held) { cut(x, 'held: ' + sched.held + ', so nobody is texted until it can be checked (fail closed)', 'held'); continue }
-    { const cf = sched.by.get(String(x.axiscare_id)); if (cf && cf.length) { cut(x, 'Already working then: ' + cf.map((k: { line: string }) => k.line).join('; '), 'working', { conflicts: cf }); continue } }
+    { const cf = sched.by.get(String(x.axiscare_id)); if (cf && cf.length) {
+      /* working right now on a visit that doesn't overlap (switch working_now_live): its own reason, back on the list at clock-out */
+      if (cf.every((k: { now_only?: boolean }) => k.now_only)) { cut(x, cf[0].line, 'working_now', { conflicts: cf }); continue }
+      cut(x, 'Already working then: ' + cf.map((k: { line: string }) => k.line).join('; '), 'working', { conflicts: cf }); continue } }
     if (clientLv != null) {
       const cgLv = caregiverLevel.get(String(x.axiscare_id))
       if (cgLv != null && cgLv < clientLv) { cut(x, `Level ${cgLv} caregiver; client needs Level ${clientLv}`, 'level', { cg_level: cgLv, client_level: clientLv, care: skills?.detail ? skills.detail(String(x.axiscare_id)) : null }); continue }
@@ -1121,7 +1153,7 @@ async function buildCandidatesForCase(c: any, opts: { v2?: boolean; includeAsked
       /* her wave rules (_shared/cara-waves.ts): their availability for the whole shift, and a PRN member's own answers */
       const avw = availAll.get(gid), pmw = prnTeam.get(gid)
       Object.assign(row, { windows: avw?.windows ?? null, outside_ok: avw?.outside_ok === true,
-        prn_pref: pmw ? { notice: pmw.notice, days: pmw.days ?? null, times: pmw.times ?? null, interests: pmw.interests ?? null, short_notice_ok: pmw.short_notice_ok === true } : null })
+        prn_pref: pmw ? { notice: pmw.notice, days: pmw.days ?? null, times: pmw.times ?? null, interests: pmw.interests ?? null, short_notice_ok: pmw.short_notice_ok === true, team: pmw.team ?? 'cna' } : null })
     }
     /* NEEDS VERIFICATION (Samantha, 2026-10-23): "caregivers with expired or missing required clearances cannot receive shift
        offers until they're verified as eligible. They can appear in the list marked Needs Verification so our office knows
@@ -1366,7 +1398,7 @@ async function caraAdvance(caseId: string, st: any): Promise<string> {
         const asked0 = Array.isArray(c.asked) ? c.asked : []
         const p2 = await buildCandidatesForCase(c, { v2: true })
         const all2 = [...p2.group0, ...p2.prn_other, ...p2.group1, ...p2.group2, ...p2.prn_ongoing]
-        const judged = judgeForWaves(all2, c, { minsToStart: m, ongoing: isOngoingCase(c), sameTime: st.cara_same_time_live === true })
+        const judged = judgeForWaves(all2, c, { minsToStart: m, ongoing: isOngoingCase(c), sameTime: st.cara_same_time_live === true, groupFirst: st.prn_order_live === true })
         const since0 = (Number(cur.wave) || 0) - (Number(cur.wave_base) || 0)
         const v2pick = pickWaveV2(judged.ordered, asked0, { size: rules.size, wavesLeft: Math.max(1, rules.maxWaves - since0), urgent: m != null && m <= 1440,
           partSlots: Number.isFinite(Number(st.cara_wave_part_slots)) ? Math.max(0, Math.min(rules.size, Number(st.cara_wave_part_slots))) : 2 })
@@ -1429,8 +1461,21 @@ async function scheduleConflicts(c: any): Promise<{ checked: boolean; held: stri
   if (!range || !/^\d\d:\d\d-\d\d:\d\d$/.test(String(c?.shift_time || ''))) return { checked: false, held: null, by: new Map(), read_at: nowIso() }
   const r = await fetchVisits(`startDate=${range[0]}&endDate=${range[1]}`)
   if (r.error) return { checked: false, held: `AxisCare's schedule could not be read (${r.error})`, by: new Map(), read_at: nowIso() }
-  let ph = '618'; try { const { data } = await sb.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle(); if (/^\d+$/.test(String(data?.data?.placeholder_caregiver_id || ''))) ph = String(data!.data.placeholder_caregiver_id) } catch { /* default */ }
-  return { checked: true, held: null, by: conflictsFor(r.rows, c, wallMin(chiNowNaive())!, { ownVisitId: c?.axiscare_visit_id ?? null, placeholderId: ph }), read_at: nowIso() }
+  let ph = '618', nowLive = false
+  try { const { data } = await sb.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle(); if (/^\d+$/.test(String(data?.data?.placeholder_caregiver_id || ''))) ph = String(data!.data.placeholder_caregiver_id); nowLive = data?.data?.working_now_live === true } catch { /* default */ }
+  const nowMin = wallMin(chiNowNaive())!
+  const by = conflictsFor(r.rows, c, nowMin, { ownVisitId: c?.axiscare_visit_id ?? null, placeholderId: ph })
+  if (!nowLive) return { checked: true, held: null, by, read_at: nowIso() }
+  /* WORKING RIGHT NOW (PRN step 1, switch working_now_live): anyone clocked in at this moment is not texted, even for a shift
+     that doesn't overlap. Today's visits are read too when the shift's range doesn't cover today; unreadable = nobody (fail closed). */
+  const today = chiNowNaive().slice(0, 10)
+  let nowRows = r.rows
+  if (!(today >= range[0] && today <= range[1])) {
+    const r2 = await fetchVisits(`startDate=${today}&endDate=${today}`)
+    if (r2.error) return { checked: false, held: `AxisCare's schedule for today could not be read (${r2.error})`, by: new Map(), read_at: nowIso() }
+    nowRows = r2.rows
+  }
+  return { checked: true, held: null, by: withWorkingNow(by, workingNow(nowRows, nowMin, { placeholderId: ph })), read_at: nowIso() }
 }
 
 /** The three groups for one case (her ask-list rules): the list with everyone already asked kept, judged by her wave rules. */
@@ -1438,7 +1483,7 @@ async function scheduleConflicts(c: any): Promise<{ checked: boolean; held: stri
 async function askListFor(kase: any, st: any): Promise<{ groups: any; meta: any }> {
   const p = await buildCandidatesForCase(kase, { v2: true, includeAsked: true })
   const judged = judgeForWaves([...p.group0, ...p.prn_other, ...p.group1, ...p.group2, ...p.prn_ongoing, ...(p.needs_verification || [])], kase,
-    { minsToStart: minsToStart(kase, chiNowNaive()), ongoing: isOngoingCase(kase), sameTime: st?.cara_same_time_live === true })
+    { minsToStart: minsToStart(kase, chiNowNaive()), ongoing: isOngoingCase(kase), sameTime: st?.cara_same_time_live === true, groupFirst: st?.prn_order_live === true })
   return { groups: threeGroups(kase, judged.ordered, judged.excluded, p.excluded), meta: p.meta }
 }
 /** A visit's date as the office reads it ("Oct 24"), from AxisCare's "2026-10-24T07:45:00-05:00" (2026-10-24, her screenshots). */
@@ -1563,13 +1608,17 @@ async function sendAsksTo(kase: any, st: any, sendable: any[], extra: { askedBy?
     if (!contact) { failed.push(`${x.name} (refused by the outbound gate or opted out of texts)`); continue }
     const askId = uid()
     let message = fillMsg(String(kase.kind) === 'interest' ? tmplInt
-      : x.prn_ask ? tmplP : (x.tier === 1 ? tmpl1 : tmplO), x)
+      : x.prn_ask ? (st.prn_order_live === true ? prnStep1Template(st, kase, x.history?.visits ? x.history.last : null) : tmplP) : (x.tier === 1 ? tmpl1 : tmplO), x)
     const lk = linkFor(st, kase, x.axiscare_id, x.name)
     let linked: 'live' | 'pilot' | null = null
     if (lk && LINK_SECRET.length >= 32 && linkEnd) {
       const kindT = x.prn_ask ? 'prn' : x.tier === 1 ? 'tier1' : isSameDay ? 'sameday' : 'other'
       const custom = customFor(kindT)
-      const tmplL = custom ? (custom.includes('{link}') ? custom : null) : shiftLinkTemplate(kindT, partWelcome(kase))
+      /* PRN step 1 (prn_order_live): the approved PRN texts with the link; wording edited in the Hub gets a link only where {link} was typed */
+      const step1 = x.prn_ask && st.prn_order_live === true, last1 = x.history?.visits ? x.history.last : null
+      const own1 = step1 ? String((last1 ? st.coverage_msg_prn_familiar : st.coverage_msg_prn_team) || '') : ''
+      const tmplL = step1 ? (own1 ? (own1.includes('{link}') ? prnStep1Template(st, kase, last1) : null) : prnStep1Template(st, kase, last1, { link: true, part: partWelcome(kase) }))
+        : custom ? (custom.includes('{link}') ? custom : null) : shiftLinkTemplate(kindT, partWelcome(kase))
       if (tmplL) {
         try {
           const link = await makeShiftLink(LINK_SECRET, String(kase.id), askId, linkEnd)
@@ -1958,7 +2007,7 @@ Deno.serve(async (req) => {
       const mE = minsToStart(kase, chiNowNaive())
       const p2 = await buildCandidatesForCase(kase, { v2: true })
       const judged = judgeForWaves([...p2.group0, ...p2.prn_other, ...p2.group1, ...p2.group2, ...p2.prn_ongoing, ...(p2.needs_verification || [])], kase,
-        { minsToStart: mE, ongoing: isOngoingCase(kase), sameTime: st.cara_same_time_live === true })
+        { minsToStart: mE, ongoing: isOngoingCase(kase), sameTime: st.cara_same_time_live === true, groupFirst: st.prn_order_live === true })
       const asked0 = Array.isArray(kase.asked) ? kase.asked : []
       const everyone = pickWaveV2(judged.ordered, asked0, { size: 500, wavesLeft: 1, urgent: false })
       const night = caregiverNightHold(kase, st)
@@ -2785,7 +2834,12 @@ Deno.serve(async (req) => {
       const pm = x.axiscare_id ? prnTeamW.get(String(x.axiscare_id)) : undefined
       if (!pm || !x.may_autosend) continue
       const f = prnFit(c, pm, busyThen.has(String(x.axiscare_id)))
-      if (!ongoingW && f.fit) { x.tier = 0; x.tier_why = 'PRN CNA Team, fits this shift'; x.prn_ask = true }
+      if (!ongoingW && f.fit) {
+        /* PRN step 1 (switch prn_order_live): people who know the client first (tier 1, a PRN member who knows them included),
+           then the PRN Teams (1.5), then everyone else; before it, every PRN member who fit went first (tier 0) */
+        if (settings.prn_order_live === true) { x.tier = history.get(String(x.axiscare_id))?.visits ? 1 : 1.5; x.tier_why = (x.tier === 1 ? x.tier_why + '; ' : '') + (pm.team === 'caregiver' ? 'PRN Caregiver Team' : 'PRN CNA Team') + ', fits this shift' }
+        else { x.tier = 0; x.tier_why = 'PRN CNA Team, fits this shift' }
+        x.prn_ask = true }
       /* 2026-10-14: outside their stated times but they asked to hear about those shifts: asked in their normal place, not first */
       else if (!ongoingW && f.outside) { x.outside_ask = true; x.tier_why = (x.tier_why ? x.tier_why + '; ' : '') + 'outside their stated times, said OK to texts about those' }
       else x.prn_skip = ongoingW ? 'PRN Team: a regular opening' : 'PRN Team: ' + f.why
@@ -3014,7 +3068,8 @@ Deno.serve(async (req) => {
         const contact = await contactForOutbound(sb, ghl,
           { phone: x.phone, firstName: x.first || x.name }, 'urgent_internal', { audience: 'caregiver', channel: 'sms', sender: 'coverage-run' })
         if (!contact) continue
-        const message = fill(x.prn_ask ? tmplP : x.tier === 1 ? tmpl1 : tmplO, x)
+        const hW = history.get(String(x.axiscare_id ?? ''))
+        const message = fill(x.prn_ask ? (settings.prn_order_live === true ? prnStep1Template(settings, c, hW?.visits ? hW.last : null) : tmplP) : x.tier === 1 ? tmpl1 : tmplO, x)
         const ok = await ghlSendChecked(sb, { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
           'coverage-run', { channel: 'sms', contactId: contact.contactId, address: x.phone, who: x.name }, { message })
         if (ok) {

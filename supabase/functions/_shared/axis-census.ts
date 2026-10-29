@@ -9,6 +9,8 @@ export type CensusRow = {
   /** the number to reach them on: AxisCare's mobile, else its other phone, else its home phone (the first with 10 digits);
       '' when AxisCare has none (her ask 2026-10-18: "any AxisCare phone") */
   phone: string; phone_field: '' | 'mobilePhone' | 'otherPhone' | 'homePhone'
+  /** their AxisCare class labels (PRN step 1: who is tagged PRN TEAM in AxisCare) */
+  classes?: string[]; home?: string
 }
 export type Census = { ok: true; rows: CensusRow[]; total: number; truncated: boolean } | { ok: false; error: string }
 
@@ -51,6 +53,7 @@ export async function readCensus(send: typeof fetch = fetch): Promise<Census> {
           id: String(g.id), first: S(g.firstName), last: S(g.lastName), goes_by: S(g.goesBy),
           active: g?.status?.active === true, status_label: S(g?.status?.label),
           hire_date: S(g.hireDate) || S(g.startDate), mobile: S(g.mobilePhone), email: S(g.personalEmail), ...bestPhone(g),
+          classes: rowsOf(g?.classes).map((c) => S(c?.label ?? c?.code)).filter(Boolean), home: S(g.homePhone),
         })
       }
       url = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null

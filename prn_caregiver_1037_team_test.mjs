@@ -73,7 +73,7 @@ const ENV = { SUPABASE_URL: 'https://x.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 
 let handler; globalThis.Deno = { env: { get: (k) => ENV[k] }, serve: (h) => { handler = h } }
 fs.writeFileSync(`${FN}/_shared/_staff-auth_stub.ts`, "export const OFFICE_ROLES = ['owner_admin','care_coordinator','staffing_coordinator']\nexport const requireStaff = async () => globalThis.__staff()\n")
 /* the owner's key, as job-auth's ownerCaller recognises it (its probe is tested with the jobs) */
-fs.writeFileSync(`${FN}/_shared/_job-auth_prn.ts`, "export const ownerCaller = async (req) => (req.headers.get('Authorization') || '') === 'Bearer ' + globalThis.__ownerKey\n")
+fs.writeFileSync(`${FN}/_shared/_job-auth_prn.ts`, "export const ownerCaller = async (req) => (req.headers.get('Authorization') || '') === 'Bearer ' + globalThis.__ownerKey\nexport const jobCaller = async (req) => (req.headers.get('x-cron-secret') || '') === 'cron-secret' ? 'cron' : ((req.headers.get('Authorization') || '') === 'Bearer ' + globalThis.__ownerKey ? 'owner' : null)\n")
 process.on('exit', () => { for (const f of ['_staff-auth_stub.ts', '_job-auth_prn.ts']) { try { fs.unlinkSync(`${FN}/_shared/${f}`) } catch { /* */ } } })
 globalThis.__staff = () => STAFF.ok ? STAFF : { ok: false, status: 401, error: 'Sign in first.' }
 const src = fs.readFileSync(`${FN}/prn-team/index.ts`, 'utf8')
