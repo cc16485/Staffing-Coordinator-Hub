@@ -70,6 +70,7 @@ import { conflictsFor, readRange, wallMin, workingNow, withWorkingNow } from '..
 import { onBreak } from '../_shared/prn-break.ts'
 import { openCandidates, eligibleOn, openView, interestAsk, interestCardLine, interestOfficeText, isOngoing as prnOngoingCase, keptOff as prnKeptOff } from '../_shared/prn-open.ts'   // PRN step 5b
 import { visitMatches } from '../_shared/shift-offer.ts'
+import { onCallNow, holdFor } from '../_shared/prn-oncall.ts'   // PRN on-call calendar, decision 26
 
 /* Straight-line miles between two zips' Census centroids — an honest
    estimate for "who lives closest", never a route. Null when either zip
@@ -645,6 +646,33 @@ async function appendAskFresh(caseId: string, entry: any): Promise<any | null> {
 /* CI2 (2026-10-03): an office text's board address becomes the admin's own call-in link. A template that already
    says {link} keeps it; one that ends with the board's address (cc.mo-care.com...) has it swapped for {link}. */
 const linkTemplate = (t: string) => /\{link\}/.test(t) ? t : (/(https?:\/\/)?cc\.mo-care\.com\S*\s*$/.test(t) ? t.replace(/(https?:\/\/)?cc\.mo-care\.com\S*\s*$/, '{link}') : t)
+/* PRN ON-CALL FIRST (Samantha 2026-10-29, decision 26): a shift that starts during a PRN CNA's confirmed on-call time is
+   called to them first, by the office. The automatic texts (the sweep's waves and Cara's waves) wait until the office records
+   how the call went (prn-week oncall_mark), at most HOLD_MIN minutes after the case opened. Manual sends are never held.
+   Switch ops_settings.prn_oncall_first_live (off: nothing waits). Any record that can't be read = no hold (the texts go). */
+// deno-lint-ignore no-explicit-any
+async function onCallHoldFor(c: any, st: any): Promise<{ hold: boolean; until: string | null; name: string | null }> {
+  const none = { hold: false, until: null, name: null }
+  if (st?.prn_oncall_first_live !== true || !c?.shift_date) return none
+  try {
+    const d = String(c.shift_date).slice(0, 10), back = new Date(Date.parse(d + 'T12:00:00Z') - 7 * 86_400_000).toISOString().slice(0, 10)
+    const [oc, mk, tr] = await Promise.all([
+      sb.from('prn_oncall').select('id, applicant_id, kind, start_date, end_date, shift, cancelled_at').eq('kind', 'confirmed').is('cancelled_at', null).gte('end_date', back).lte('start_date', d),
+      sb.from('prn_oncall_marks').select('oncall_id, kind, case_id, at'),
+      sb.from('pay_tracks').select('applicant_id, track, team, axiscare_caregiver_id').eq('track', 'prn_team')])
+    if (oc.error || mk.error || tr.error || !(oc.data ?? []).length) return none
+    // deno-lint-ignore no-explicit-any
+    const ids = (tr.data ?? []).map((t: any) => t.applicant_id)
+    const { data: apps } = await sb.from('job_applicants').select('id, first_name, last_name').in('id', ids)
+    // deno-lint-ignore no-explicit-any
+    const members = (tr.data ?? []).map((t: any) => { const a = (apps ?? []).find((x: any) => x.id === t.applicant_id) || {}
+      return { applicant_id: t.applicant_id, team: t.team === 'caregiver' ? 'caregiver' : 'cna', axiscare_id: t.axiscare_caregiver_id ? String(t.axiscare_caregiver_id) : null,
+        name: [a.first_name, a.last_name].filter(Boolean).join(' ') || 'the on-call CNA', first: String(a.first_name || '').split(' ')[0] } })
+    const now = onCallNow({ c, rows: oc.data ?? [], marks: mk.data ?? [], members })
+    const h = holdFor({ c, now, marks: mk.data ?? [], nowMs: Date.now() })
+    return { hold: h.hold, until: h.until, name: now?.name ?? null }
+  } catch { return none }
+}
 /* CI1 (2026-10-03): the caregiver night rule, the same one the automatic waves use (9pm to 8am Chicago, from
    ops_settings.coverage_quiet_from/until), now applied on the server to a coordinator's send too: held at night unless
    the shift starts within 3 hours. Interest checks have no shift, so they wait for morning. */
@@ -1395,6 +1423,16 @@ async function caraAdvance(caseId: string, st: any): Promise<string> {
         if (!(await save({ held_until: until, next_wave_at: until }))) return 'conflict'
         await caraEvent(cur, 'night', 'Cara', `Quiet hours: wave ${(Number(cur.wave) || 0) + 1} waits until ${caraWhen(until)}.`)
         return 'held_night'
+      }
+      if (step.do === 'wave' && c) {
+        /* PRN on-call first (decision 26): the wave waits while the office calls the on-call CNA */
+        const och = await onCallHoldFor(c, st)
+        if (och.hold && och.until) {
+          const firstTime = String(cur.next_wave_at || '') !== och.until
+          if (!(await save({ next_wave_at: och.until }))) return 'conflict'
+          if (firstTime) await caraEvent(cur, 'oncall_first', 'Cara', `${och.name || 'A PRN CNA'} is on call for this shift. The office calls them first; Cara's next wave waits until the office records how the call went, or ${caraWhen(och.until)}.`)
+          return 'held_oncall'
+        }
       }
       if (step.do === 'wave') {
         /* HER WAVE RULES (2026-10-24, _shared/cara-waves.ts): hard exclusions, whole-shift availability, PRN notice, the
@@ -3072,7 +3110,10 @@ Deno.serve(async (req) => {
     if (quietHold && sendLive && !hasYes && wave.length) {
       stats.held_quiet_hours = (Number(stats.held_quiet_hours) || 0) + wave.length
     }
-    if (sendLive && !manualSelect && !planHold && !hasYes && fuseBurned && !quietHold && !shiftOver && wave.length && ghl.token && ghl.locationId) {
+    /* PRN on-call first (decision 26): the office calls the on-call CNA before any automatic text */
+    const onCallHold = sendLive && !manualSelect && !hasYes && wave.length ? (await onCallHoldFor(c, settings)).hold : false
+    if (onCallHold) stats.held_oncall_first = (Number(stats.held_oncall_first) || 0) + wave.length
+    if (sendLive && !manualSelect && !planHold && !onCallHold && !hasYes && fuseBurned && !quietHold && !shiftOver && wave.length && ghl.token && ghl.locationId) {
       /* MESSAGE DESIGN (CareQB's template split, revised live 2026-09-16):
          EVERY caregiver's text names the client by FIRST NAME(S) — her call,
          reading the first real wave, reversing the 09-12 stranger rule. First

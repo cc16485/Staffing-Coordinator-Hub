@@ -111,6 +111,13 @@ export function pageLines(x: { members: Any[]; log: Any[]; touches: Any[]; today
       out.push({ id: `oncall:${m.applicant_id}:${S(r.id, 20)}`, kind: 'oncall', applicant_id: m.applicant_id, name: m.name, team: TEAM[m.team] || TEAM.cna, ref,
         title: `${m.first || m.name} would like to be on call: ${S(r.note, 60).toLowerCase()}`, detail: 'From their PRN Team page. Confirm dates with them in On call, then mark it done here.' })
     }
+    /* the on-call calendar (2026-10-29): shifts they asked for on their page wait on the calendar for the office's OK */
+    for (const r of mine.filter((r) => r.kind === 'oncall_ask')) {
+      const ref = 'oncall:' + S(r.id, 20); if (done(m.applicant_id, ref)) continue
+      const n = S(r.note, 600).split(',').filter((x) => x.trim()).length
+      out.push({ id: `oncall:${m.applicant_id}:${S(r.id, 20)}`, kind: 'oncall', applicant_id: m.applicant_id, name: m.name, team: TEAM[m.team] || TEAM.cna, ref,
+        title: `${m.first || m.name} asked for ${n === 1 ? 'an on-call shift' : n + ' on-call shifts'}`, detail: 'From their PRN Team page. Confirm or say "Not this one" on the On call calendar, then mark it done here.' })
+    }
   }
   return out
 }
