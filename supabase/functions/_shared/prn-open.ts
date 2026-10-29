@@ -20,7 +20,6 @@
 // deno-lint-ignore no-explicit-any
 type Any = any
 const S = (v: unknown, n = 200) => String(v ?? '').trim().slice(0, n)
-const nk = (n: unknown) => S(n, 80).toLowerCase().replace(/[^a-z ]/g, '').replace(/\s+/g, ' ').trim()
 
 export const PRN_OPEN_DAYS = 14, PRN_OPEN_MAX = 8
 /** What a PRN member's own days and times may hold back on their own page (her default: their availability never hides a shift). */
@@ -82,5 +81,3 @@ export function interestCardLine(name: string, clientFirst: string, date: string
 export function interestOfficeText(first: string, clientFirst: string, date: string, time: string): string {
   return `${S(first, 40) || 'A PRN member'} is interested in the ${clientFirst || 'open'} shift (${date} ${time}) from their PRN Team page. Nothing is assigned yet. Pick on the board: {link}`
 }
-/** Same person on a list row (AxisCare id, or the name). */
-export const samePerson = (r: Any, ax: string, name: string) => (ax && S(r?.axiscare_id, 20) === ax) || (!!name && nk(r?.name) === nk(name))
