@@ -169,7 +169,9 @@ Deno.serve(async (req) => {
       const mine = plog.filter((r) => r.applicant_id === m.applicant_id), seen = mine.filter((r) => r.kind === 'viewed').pop()
       const bu = S((apPrn ?? []).find((x: Any) => x.id === m.applicant_id)?.prn?.break_until, 10)
       const gm = (apPrn ?? []).find((x: Any) => x.id === m.applicant_id)?.prn?.gap_mentor
+      const mhr = (apPrn ?? []).find((x: Any) => x.id === m.applicant_id)?.prn?.more_hours   /* "Would you like more hours?" from their page */
       page[m.applicant_id] = { last_looked: seen?.at ?? null, looking: lookingState(mine, t), break_until: /^\d{4}-\d\d-\d\d$/.test(bu) && bu >= t ? bu : null,
+        more_hours: mhr && ['yes', 'no'].includes(S(mhr.answer, 5)) ? { answer: S(mhr.answer, 5), at: S(mhr.at, 40) || null } : null,
         gap_mentor: gm?.on === true ? { skills: gm.skills || [], evidence: gm.evidence || '', by: gm.by || null, at: gm.at || null } : null,
         signs: memberSigns({ member: m, shifts: sh.data ?? [], touches: tc.data ?? [], kindAt: m.axiscare_id ? kindTo[m.axiscare_id] || null : null, wantsMore: m.axiscare_id ? wantsMore[m.axiscare_id] ?? null : null,
           looking: lookingState(mine, t).on, checkins: ckr.error ? [] : (ckr.data ?? []), asks: m.axiscare_id ? asksBy[m.axiscare_id] || [] : [], today: t }) }
