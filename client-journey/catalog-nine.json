@@ -213,6 +213,11 @@
      "auto": "ax_tasks"
     },
     {
+     "key": "plan_approved",
+     "label": "Care plan approved in the Hub",
+     "auto": "care_plan_approved"
+    },
+    {
      "key": "health",
      "label": "Allergies, medications, diagnoses, attributes, pets and directions typed into AxisCare"
     },

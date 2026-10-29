@@ -319,6 +319,18 @@ export function followPlan(windows: Any[], positions: Any[], cc: string, visitDa
 async function flexibleOnly(db: Any, axId: unknown): Promise<boolean> {
   try { const { data } = await db.from('care_circles').select('care_scheduling_type').eq('axiscare_client_id', String(axId)).eq('care_scheduling_type', 'flexible').limit(1); return Array.isArray(data) && data.length > 0 } catch { return false }
 }
+/* 2026-10-29 Care plan Stage 1: the journey's care plans (app_data care_plans, by its assessments) and the newest approved
+   version (approved or active). A plan written before approvals has no versions and never counts as approved. */
+async function journeyPlans(j: Any, db: Any): Promise<Any[]> {
+  const [{ data: ad }, { data: pd }] = await Promise.all([db.from('app_data').select('data').eq('key', 'care_assessments').maybeSingle(), db.from('app_data').select('data').eq('key', 'care_plans').maybeSingle()])
+  const as: Any[] = Array.isArray(ad?.data) ? ad.data : [], ps: Any[] = Array.isArray(pd?.data) ? pd.data : []
+  const ids = new Set(as.filter((a: Any) => a && ((j.lead_id && String(a.lead_id || '') === String(j.lead_id)) || (j.axiscare_client_id && String(a.axiscare_client_id || '').trim() === String(j.axiscare_client_id)))).map((a: Any) => String(a.id)))
+  return ps.filter((p: Any) => p && ids.has(String(p.assessment_id)))
+}
+function approvedPlan(plans: Any[]): Any | null {
+  const vs = plans.flatMap((p: Any) => (Array.isArray(p.versions) ? p.versions : []).filter((v: Any) => v && (v.status === 'approved' || v.status === 'active')))
+  return vs.sort((a: Any, b: Any) => String(b.approved_at || '').localeCompare(String(a.approved_at || '')))[0] ?? null
+}
 export const VERIFY: Record<string, (x: Any) => Promise<Any | null>> = {
   lead_basics: async ({ lead }) => {
     if (!lead) return null
@@ -384,11 +396,29 @@ export const VERIFY: Record<string, (x: Any) => Promise<Any | null>> = {
     const raw = r.json?.results?.responsibleParties ?? r.json?.results ?? [], list = (Array.isArray(raw) ? raw : Object.values(raw)).filter((x: Any) => x && String(x.name || '').trim())
     return list.length ? { detail: list.length + ' responsible part' + (list.length === 1 ? 'y' : 'ies') + ' in AxisCare' } : { why: 'None in AxisCare yet' } as Any
   },
-  ax_tasks: async ({ j, ax }) => {
+  /* 2026-10-29 Care plan Stage 1: with an approved care plan, the step looks for THAT plan's tasks, not any task */
+  ax_tasks: async ({ j, ax, db }) => {
     if (!j.axiscare_client_id) return null
     const r = await ax(`/api/clients/${j.axiscare_client_id}/adls`); if (!r || r.status !== 200) return null
     const raw = r.json?.results?.adls ?? r.json?.results ?? r.json?.adls ?? [], list = Array.isArray(raw) ? raw : Object.values(raw)
+    const v = approvedPlan(await journeyPlans(j, db))
+    if (v && (v.tasks || []).length) {
+      const nk = (x: unknown) => String(x ?? '').trim().toLowerCase()
+      const missing = (v.tasks as Any[]).filter((t) => !list.some((a: Any) => (t.key && a?.key && String(a.key) === String(t.key)) || nk(a?.name) === nk(t.name)))
+      const n = v.tasks.length
+      return !missing.length ? { detail: 'All ' + n + ' task' + (n === 1 ? '' : 's') + ' of care plan version ' + v.n + ' are in AxisCare' }
+        : { why: (n - missing.length) + ' of ' + n + ' care plan tasks in AxisCare; not there yet: ' + missing.map((t) => t.name).slice(0, 4).join(', ') } as Any
+    }
     return list.length ? { detail: list.length + ' care task' + (list.length === 1 ? '' : 's') + ' in AxisCare' } : { why: 'No care tasks in AxisCare yet' } as Any
+  },
+  /* 2026-10-29 Care plan Stage 1 (Samantha approved): the care plan is approved by a care coordinator or owner in the Hub */
+  care_plan_approved: async ({ j, db }) => {
+    const plans = await journeyPlans(j, db); if (!plans.length) return null
+    const v = approvedPlan(plans)
+    if (v) return { detail: 'Care plan version ' + v.n + ' approved' + (v.approved_by ? ' by ' + v.approved_by : '') + ' ' + String(v.approved_at || '').slice(0, 10)
+      + (v.urgent && !v.urgent.done_at ? ' for an urgent start; the rest is due ' + String(v.urgent.finish_by || '').slice(0, 10) : '') }
+    const drafts = plans.some((p: Any) => Array.isArray(p.versions) && p.versions.length)
+    return { why: drafts ? 'Care plan drafted, waiting for review and approval' : 'Care plan written before approvals: open it, review it and approve it' } as Any
   },
   first_shift_yes: async ({ j, db }) => {
     const { data } = await db.from('app_data').select('data').eq('key', 'staffing_plans').maybeSingle()
