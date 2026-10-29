@@ -13,7 +13,9 @@
 //                 (thanks_sent here = thanked another way, in person or by phone). Kept, never edited.
 //   oncall_offer  {applicant_id, pattern, note?}: what a PRN CNA offered (every weekend, every other weekend, one weekend a
 //                 month, a weekday, not right now), usually from the welcome call. An offer never puts anyone on call.
-//   oncall_confirm {applicant_id, start_date, end_date, note?}: a date the office confirmed with them (up to 7 days). Shows on
+//   oncall_confirm {applicant_id, start_date, end_date, shift?, note?}: a date the office confirmed with them (up to 7 days),
+//                 and which shift: day (7am to 5pm), overnight (5pm to 7am) or whole (24 hours); needed once
+//                 ops_settings.prn_oncall_shift_live is on (2026-10-29), so payroll knows what to pay. Shows on
 //                 their PRN Team page later (step 5).
 //   oncall_cancel {id}: takes a confirmed date back (kept, marked cancelled).
 //   goback_mark   {applicant_id, ref, answer: yes | no}: the office read an answer to "Would you be glad to go back?" (step 3).
@@ -49,7 +51,7 @@ import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { contactForOutbound, maySendTo, normalisePhone } from '../_shared/outreach.ts'
 import { opEvent } from '../_shared/events.ts'
 import { MO_FROM } from '../_shared/office-from.ts'   // every text goes out from (417) 234-8494
-import { computeWeek, onCallWeekends, THANKS_DEFAULT, PATTERNS, type Member } from '../_shared/prn-week.ts'
+import { computeWeek, onCallWeekends, onCallMonth, THANKS_DEFAULT, PATTERNS, SHIFTS, SHIFT_SHORT, type Member } from '../_shared/prn-week.ts'
 import { pageLines, lookingState } from '../_shared/prn-page.ts'
 import { makePageLink, pageExpiry } from '../_shared/prn-page-links.ts'
 import { welcomeLines, readCall, callSummary, WELCOME_DEFAULT } from '../_shared/prn-welcome.ts'
@@ -150,7 +152,9 @@ Deno.serve(async (req) => {
       familiar_note: anyWhy ? `Familiar clients could not all be read (${anyWhy}), so no client is flagged as having no PRN backup today.` : null,
       mentor_live: mentorLive(st), mentor_skills: SKILLS,
       goback_live: st.prn_goback_live === true, goback_default: GOBACK_DEFAULT, welcome_live: st.prn_welcome_live === true, welcome_default: WELCOME_DEFAULT,
-      oncall: { ...oncall, patterns: PATTERNS, stipend: null } })
+      oncall: { ...oncall, patterns: PATTERNS, stipend: null, shifts: SHIFTS, shift_live: st.prn_oncall_shift_live === true,
+        /* for payroll: this month and last month, by shift (counts only) */
+        payroll: [t.slice(0, 7), new Date(Date.parse(t.slice(0, 7) + '-01T12:00:00Z') - 86_400_000).toISOString().slice(0, 7)].map((mo) => ({ month: mo, members: onCallMonth(oc.data ?? [], mem, mo) })) } })
   }
 
   if (action === 'mark') {
@@ -281,9 +285,12 @@ Deno.serve(async (req) => {
     if (!s || e < s) return json({ error: 'Which dates?' }, 400)
     if ((Date.parse(e) - Date.parse(s)) / 86_400_000 > 6) return json({ error: 'One on-call stretch is at most 7 days.' }, 400)
     if (s < today()) return json({ error: 'That date has passed.' }, 400)
-    const { error } = await sb.from('prn_oncall').insert({ applicant_id: m.applicant_id, kind: 'confirmed', start_date: s, end_date: e, note, by_email: who.email, by_name: who.name })
+    const shift = S(b.shift, 10)
+    if (shift && !SHIFTS[shift]) return json({ error: 'Which shift: daytime, overnight or the whole day?' }, 400)
+    if (!shift && st.prn_oncall_shift_live === true) return json({ error: 'Which shift: daytime (7am to 5pm), overnight (5pm to 7am) or the whole day?' }, 400)
+    const { error } = await sb.from('prn_oncall').insert({ applicant_id: m.applicant_id, kind: 'confirmed', start_date: s, end_date: e, note, by_email: who.email, by_name: who.name, ...(shift ? { shift } : {}) })
     if (error) return json(/duplicate|unique/i.test(error.message) ? { outcome: 'already' } : { error: 'Could not record it: ' + error.message }, /duplicate|unique/i.test(error.message) ? 200 : 500)
-    await opEvent(sb, { verb: 'prn_oncall_confirmed', actor_name: who.name, actor_email: who.email, item_id: m.applicant_id, area: 'caregivers', summary: `${m.name} confirmed on call ${s} to ${e}` })
+    await opEvent(sb, { verb: 'prn_oncall_confirmed', actor_name: who.name, actor_email: who.email, item_id: m.applicant_id, area: 'caregivers', summary: `${m.name} confirmed on call ${s} to ${e}${shift ? ' (' + SHIFT_SHORT[shift] + ')' : ''}` })
     return json({ outcome: 'recorded' })
   }
 

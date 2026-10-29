@@ -140,7 +140,7 @@ Deno.serve(async (req) => {
     const feedback = round && (feedbackLive(st) || action === 'preview') ? { round: round.id, until: round.until, questions: FEEDBACK_QUESTIONS,
       answered: (plog.data ?? []).some((r: Any) => r.kind === 'feedback' && S(r.note, 600).startsWith('[' + round.id + ']')), waiting: !feedbackLive(st) } : null
     let oncall: Any = null
-    if (team === 'cna') { const oc = await sb.from('prn_oncall').select('kind, pattern, start_date, end_date, cancelled_at, at').eq('applicant_id', aid)
+    if (team === 'cna') { const oc = await sb.from('prn_oncall').select('*').eq('applicant_id', aid)
       oncall = { ...onCallFor(oc.error ? [] : (oc.data ?? []), t, PATTERNS), patterns: PATTERNS, words: ONCALL_WORDS } }
     /* step 8a: Gap Mentor visits offered to them, and their own assigned ones (with the note to fill in) */
     let mentor: Any = null
