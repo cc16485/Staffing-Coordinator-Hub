@@ -2,6 +2,8 @@
 // PRN STEP 8a · GAP MENTORS (Samantha 2026-10-17 direction, 2026-10-28 decisions 14 to 17; 2026-10-29 "Yes, build step 8 (Gap
 // Mentors) with its switches off"; plan section 4b)
 // =============================================================================
+// RENAMED 2026-10-29 (her call): what members and the office read is "Field Support Visits" ("approved for Field Support
+// Visits" for the person), not "Gap Mentor". "mentor" in code, records and switches (prn_mentor_live) means the same thing.
 //   Who        PRN CNA Team members the office names Gap Mentors, for the skills it has verified (references, a past employer,
 //              a registry-checked CNA: her evidence rule, never online training alone). An honor and always optional.
 //   Asking     a coordinator taps "Ask a Gap Mentor" on a client's Care tab: a refresher with a caregiver in the home, a care
@@ -37,7 +39,7 @@ export const MENTOR_RULES = 'You observe, practice and listen. You never change 
 /** The office naming someone a Gap Mentor: PRN CNA Team only, at least one skill, and the evidence it checked. */
 export function readMentor(b: Any, team: string): { ok: true; rec: Any } | { ok: false; error: string } {
   if (b?.on === false) return { ok: true, rec: { on: false } }
-  if (team !== 'cna') return { ok: false, error: 'Gap Mentors are PRN CNA Team members.' }
+  if (team !== 'cna') return { ok: false, error: 'Field Support Visits are for PRN CNA Team members.' }
   const skills = (Array.isArray(b?.skills) ? b.skills : []).map((x: unknown) => S(x, 20)).filter((x: string) => SKILLS[x])
   const evidence = S(b?.evidence, 400)
   if (!skills.length) return { ok: false, error: 'Which skills did you verify?' }
@@ -84,7 +86,7 @@ export function clashes(rows: Any[], date: string, time: string): boolean {
     rows: their AxisCare visits that day (null = AxisCare unreadable: not offered). */
 export function mayOffer(x: { mentor: Any; visit: Any; dnr: Any[]; rows: Any[] | null }): { ok: boolean; why: string | null } {
   const g = x.mentor?.prn?.gap_mentor, v = x.visit
-  if (x.mentor?.team !== 'cna' || g?.on !== true) return { ok: false, why: 'not a Gap Mentor' }
+  if (x.mentor?.team !== 'cna' || g?.on !== true) return { ok: false, why: 'not approved for Field Support Visits' }
   if (v?.skill && !(g.skills || []).includes(v.skill)) return { ok: false, why: 'not verified for ' + (SKILLS[v.skill] || v.skill) }
   const bu = S(x.mentor?.prn?.break_until, 10)
   if (/^\d{4}-\d\d-\d\d$/.test(bu) && bu >= S(v?.visit_date, 10)) return { ok: false, why: 'on a break then' }
@@ -97,7 +99,7 @@ export function mayOffer(x: { mentor: Any; visit: Any; dnr: Any[]; rows: Any[] |
 
 /** The visit as a Gap Mentor's page shows it: the client's first name and town, the day and time, what it is for. */
 export function offerView(v: Any, answer: string | null, familiar: boolean): Any {
-  return { id: Number(v.id), kind: v.kind, kind_label: KINDS[v.kind]?.label || 'Gap Mentor visit', client_first: S(v.client_name, 80).split(/\s+/)[0] || 'A client',
+  return { id: Number(v.id), kind: v.kind, kind_label: KINDS[v.kind]?.label || 'Field Support Visit', client_first: S(v.client_name, 80).split(/\s+/)[0] || 'A client',
     visit_date: S(v.visit_date, 10), visit_time: S(v.visit_time, 11), skill: v.skill ? SKILLS[v.skill] || null : null,
     caregiver_first: v.caregiver_name ? S(v.caregiver_name, 80).split(/\s+/)[0] : null, note: S(v.note, 500) || null, answer, familiar, rules: MENTOR_RULES }
 }
@@ -122,11 +124,11 @@ const words = (d: string) => /^\d{4}-\d\d-\d\d$/.test(d) ? new Date(d + 'T12:00:
 /** What lands in care_plan_reviews (the Hub's own record): a refresher for the caregiver's record, or a report for the client's
     Care plan reviews. Never a review itself (kind 'mentor_refresher' / 'mentor_report'), so it never resets the 90-day clock. */
 export function landing(v: Any, mentorName: string, report: Record<string, string>, nowIso: string): Any {
-  const first = S(mentorName, 80).split(/\s+/)[0] || 'A Gap Mentor'
+  const first = S(mentorName, 80).split(/\s+/)[0] || 'A PRN CNA'
   const base = { id: 'gm' + S(v.id, 20), axiscare_client_id: S(v.client_ax, 20), client_name: S(v.client_name, 80), at: nowIso, by: S(mentorName, 80), mentor_visit_id: Number(v.id), visit_date: S(v.visit_date, 10) }
   if (v.kind === 'refresher') return { ...base, kind: 'mentor_refresher', caregiver_ax: S(v.caregiver_ax, 20), caregiver_name: S(v.caregiver_name, 80), skill: v.skill,
     title: `Refresher with ${first} (CNA), ${words(S(v.visit_date, 10))}: ${SKILLS[v.skill] || v.skill}`, report, hands_on: true }
-  return { ...base, kind: 'mentor_report', visit_kind: v.kind, title: `${v.kind === 'care_update' ? "What's changed" : 'Supervisory visit (concern only)'}, from ${first} (Gap Mentor), ${words(S(v.visit_date, 10))}`,
+  return { ...base, kind: 'mentor_report', visit_kind: v.kind, title: `${v.kind === 'care_update' ? "What's changed" : 'Supervisory visit (concern only)'}, from ${first} (Field Support Visit), ${words(S(v.visit_date, 10))}`,
     report, guide: v.guide === true, va: v.va === true,
     reminder: v.guide === true ? 'GUIDE client: share this with their GUIDE care navigator through Continuum. Their care plan changes only together with them.'
       : v.va === true ? 'VA client: check the VA authorization before changing services.' : null }

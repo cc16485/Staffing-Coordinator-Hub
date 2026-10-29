@@ -318,24 +318,24 @@ Deno.serve(async (req) => {
     const { error } = await sb.from('job_applicants').update({ prn: next }).eq('id', m.applicant_id)
     if (error) return json({ error: 'Could not save it: ' + error.message }, 500)
     await opEvent(sb, { verb: rec.on ? 'prn_mentor_named' : 'prn_mentor_removed', actor_name: who.name, actor_email: who.email, item_id: m.applicant_id, area: 'caregivers',
-      summary: rec.on ? `${who.name} named ${m.name} a Gap Mentor (${rec.skills.map((k: string) => SKILLS[k]).join(', ')})` : `${who.name}: ${m.name} is no longer a Gap Mentor` })
+      summary: rec.on ? `${who.name} approved ${m.name} for Field Support Visits (${rec.skills.map((k: string) => SKILLS[k]).join(', ')})` : `${who.name}: ${m.name} is no longer approved for Field Support Visits` })
     return json({ outcome: 'saved', gap_mentor: rec })
   }
   if (action === 'mentor_ask') {
-    if (!mentorLive(st)) return json({ outcome: 'off', error: st.prn_page_live !== true ? "The PRN Team page isn't open yet, so Gap Mentors can't see the ask. Nothing was saved."
-      : 'Gap Mentor asks are switched off (Settings, PRN Teams). Nothing was saved.' }, 409)
+    if (!mentorLive(st)) return json({ outcome: 'off', error: st.prn_page_live !== true ? "The PRN Team page isn't open yet, so PRN CNAs can't see the ask. Nothing was saved."
+      : 'Field Support Visits are switched off (Settings, PRN Teams). Nothing was saved.' }, 409)
     const r = readAsk(b, today()); if (!r.ok) return json({ error: r.error }, 400)
     const { data, error } = await sb.from('prn_mentor_visits').insert({ ...r.ask, asked_by: who.name || who.email }).select('id').maybeSingle()
     if (error) return json({ error: 'Could not save it: ' + error.message }, 500)
     await opEvent(sb, { verb: 'prn_mentor_asked', actor_name: who.name, actor_email: who.email, item_id: String(data?.id ?? ''), area: 'caregivers',
-      summary: `${who.name} asked for a Gap Mentor: ${KINDS[r.ask.kind].label} for ${r.ask.client_name}, ${r.ask.visit_date} ${r.ask.visit_time}` })
+      summary: `${who.name} asked for a Field Support Visit: ${KINDS[r.ask.kind].label} for ${r.ask.client_name}, ${r.ask.visit_date} ${r.ask.visit_time}` })
     return json({ outcome: 'asked', id: data?.id ?? null })
   }
   if (action === 'mentor_list') {
     const ax = S(b.client_ax, 20).replace(/\D/g, '')
     const base = sb.from('prn_mentor_visits').select('*')
     const { data: vs, error } = await (ax ? base.eq('client_ax', ax) : base.eq('status', 'open')).order('visit_date', { ascending: false }).limit(40)
-    if (error) return json({ error: 'Gap Mentor visits are not set up yet (prn_mentor.sql).' }, 500)
+    if (error) return json({ error: 'Field Support Visits are not set up yet (prn_mentor.sql).' }, 500)
     const ids = (vs ?? []).map((v: Any) => v.id)
     const { data: ans } = ids.length ? await sb.from('prn_mentor_answers').select('visit_id, applicant_id, answer, at').in('visit_id', ids) : { data: [] }
     const nameOf = (aid: string) => memberOf(aid)?.name || 'A PRN member'
@@ -351,17 +351,17 @@ Deno.serve(async (req) => {
       if (v.status === 'done') return json({ error: 'This visit already happened.' }, 409)
       const { error } = await sb.from('prn_mentor_visits').update({ status: 'cancelled', cancelled_by: who.name || who.email, cancelled_at: new Date().toISOString() }).eq('id', id)
       if (error) return json({ error: 'Could not cancel it: ' + error.message }, 500)
-      await opEvent(sb, { verb: 'prn_mentor_cancelled', actor_name: who.name, actor_email: who.email, item_id: String(id), area: 'caregivers', summary: `${who.name} cancelled the Gap Mentor ask for ${v.client_name}` })
+      await opEvent(sb, { verb: 'prn_mentor_cancelled', actor_name: who.name, actor_email: who.email, item_id: String(id), area: 'caregivers', summary: `${who.name} cancelled the Field Support Visit for ${v.client_name}` })
       return json({ outcome: 'cancelled' })
     }
     if (v.status !== 'open') return json({ error: v.status === 'assigned' ? 'It is already assigned.' : 'This ask is no longer open.' }, 409)
     const m = memberOf(b.applicant_id); if (!m) return json({ error: 'That person is not on a PRN Team.' }, 404)
     const { data: ap } = await sb.from('job_applicants').select('prn').eq('id', m.applicant_id).maybeSingle()
-    if (ap?.prn?.gap_mentor?.on !== true) return json({ error: `${m.name} is not a Gap Mentor.` }, 409)
+    if (ap?.prn?.gap_mentor?.on !== true) return json({ error: `${m.name} is not approved for Field Support Visits.` }, 409)
     const { error } = await sb.from('prn_mentor_visits').update({ status: 'assigned', assigned_to: m.applicant_id, assigned_by: who.name || who.email, assigned_at: new Date().toISOString() }).eq('id', id).eq('status', 'open')
     if (error) return json({ error: 'Could not record it: ' + error.message }, 500)
     await opEvent(sb, { verb: 'prn_mentor_assigned', actor_name: who.name, actor_email: who.email, item_id: String(id), area: 'caregivers',
-      summary: `${who.name} assigned ${m.name} the Gap Mentor visit for ${v.client_name} (${v.visit_date} ${v.visit_time}); it goes in AxisCare as a non-billable visit` })
+      summary: `${who.name} assigned ${m.name} the Field Support Visit for ${v.client_name} (${v.visit_date} ${v.visit_time}); it goes in AxisCare as a non-billable visit` })
     return json({ outcome: 'assigned' })
   }
 

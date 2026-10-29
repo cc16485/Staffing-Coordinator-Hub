@@ -121,7 +121,7 @@ Deno.serve(async (req) => {
     for (const o of offered) delete o.ask_id
     /* their familiar clients: first name and how recently (no last names, no addresses) */
     let clients: Any[] = [], clientsWhy: string | null = ax ? null : 'Once you are on the schedule, the clients you care for show here.'
-    const clientNames: string[] = []   /* full names, only to put a Gap Mentor's familiar clients first (never shown) */
+    const clientNames: string[] = []   /* full names, only to put a Field Support Visit's familiar clients first (never shown) */
     if (ax) {
       const from = new Date(Date.parse(t + 'T12:00:00Z') - FAMILIAR_DAYS * 86_400_000).toISOString().slice(0, 10)
       const v = await visitsOf(ax, from, t)
@@ -169,7 +169,7 @@ Deno.serve(async (req) => {
     const brk = /^\d{4}-\d\d-\d\d$/.test(S(prn.break_until, 10)) && S(prn.break_until, 10) >= t ? S(prn.break_until, 10) : null
     return json({ ok: true, preview: action === 'preview', live, open_live: openLive(st), today: t, first, team, team_label: TEAM[team], since: S(tr.since, 10), on_schedule: !!ax,
       looking: lookingState(plog.data ?? [], t), update, feedback, oncall, mentor, offered, clients, clients_why: clientsWhy,
-      thanks: [...(mentor?.first_done ? [{ kind: 'milestone', at: '', text: 'Your first visit as a Gap Mentor. Thank you for helping our caregivers and families.' }] : []), ...thanksFor({ touches: touches.data ?? [], kindTells: list(await readKey(sb, 'kind_tells')), ax, covered, since: S(tr.since, 10), today: t, shifts: sh })],
+      thanks: [...(mentor?.first_done ? [{ kind: 'milestone', at: '', text: 'Your first Field Support Visit. Thank you for helping our caregivers and families.' }] : []), ...thanksFor({ touches: touches.data ?? [], kindTells: list(await readKey(sb, 'kind_tells')), ax, covered, since: S(tr.since, 10), today: t, shifts: sh })],
       hours: { windows: av?.windows ?? null, target_hours: av?.target_hours ?? null, outside_ok: av?.outside_ok === true, updated_at: av?.updated_at ?? null,
         short_notice_ok: typeof prn.short_notice_ok === 'boolean' ? prn.short_notice_ok : null, break_until: brk },
       courses: COURSES.map((c) => ({ ...c, requested: requested.has(c.slug) })), office: officePhone() })
@@ -198,8 +198,8 @@ Deno.serve(async (req) => {
   /* STEP 7: the twice-yearly questions, and on call (PRN CNA Team) */
   /* STEP 8a: a Gap Mentor's answer, and their note after the visit */
   if (action === 'mentor_answer' || action === 'mentor_note') {
-    if (!mentorLive(st)) return json({ error: "Gap Mentor visits aren't on your page yet." }, 409)
-    if (team !== 'cna' || prn.gap_mentor?.on !== true) return json({ error: 'This is for our Gap Mentors.' }, 403)
+    if (!mentorLive(st)) return json({ error: "Field Support Visits aren't on your page yet." }, 409)
+    if (team !== 'cna' || prn.gap_mentor?.on !== true) return json({ error: 'This is for PRN CNAs approved for Field Support Visits.' }, 403)
     const id = Number(b.id); if (!Number.isInteger(id) || id <= 0) return json({ error: 'Which visit?' }, 400)
     const { data: v } = await sb.from('prn_mentor_visits').select('*').eq('id', id).maybeSingle()
     if (!v) return json({ error: 'That visit is no longer there. Thank you for looking!' }, 404)
@@ -216,8 +216,8 @@ Deno.serve(async (req) => {
       const { error } = await sb.from('prn_mentor_answers').upsert({ visit_id: id, applicant_id: aid, answer: ans, at: new Date().toISOString() }, { onConflict: 'visit_id,applicant_id' })
       if (error) return json({ error: 'Could not save, please try again.' }, 500)
       if (ans === 'yes') await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { id: `ops_gapmentor_${id}`, kind: 'gap_mentor', domain: 'scheduling_coverage', status: 'open', urgency: 'normal',
-        title: `${first} can do the Gap Mentor visit for ${S(v.client_name, 80).split(/\s+/)[0]} (${v.visit_date} ${v.visit_time})`, about: S(v.client_name, 80), client_ax: S(v.client_ax, 20),
-        detail: `${KINDS[v.kind]?.label || 'Gap Mentor visit'}. Open the client's Care tab, Care plan reviews, to pick a Gap Mentor. Put the visit in AxisCare as a non-billable visit, then record who.`,
+        title: `${first} can do the Field Support Visit for ${S(v.client_name, 80).split(/\s+/)[0]} (${v.visit_date} ${v.visit_time})`, about: S(v.client_name, 80), client_ax: S(v.client_ax, 20),
+        detail: `${KINDS[v.kind]?.label || 'Field Support Visit'}. Open the client's Care tab, Care plan reviews, to pick who goes. Put the visit in AxisCare as a non-billable visit, then record who.`,
         created_at: new Date().toISOString(), due: new Date(Date.now() + 24 * 3600000).toISOString(), owner: '', owner_name: '', created_by: 'prn-page' } })
       return json({ ok: true, message: ans === 'yes' ? 'Thank you! The office will confirm with you before it is set.' : 'Got it. Saying not this time never counts against you.' })
     }
