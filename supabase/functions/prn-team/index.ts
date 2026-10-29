@@ -290,6 +290,7 @@ Deno.serve(async (req) => {
   if (new URL(req.url).searchParams.get('auto_link') === '1') {
     const caller = await jobCaller(req)
     if (!caller) return json({ error: 'not allowed' }, 401)
+    if (new URL(req.url).searchParams.get('auth_check') === '1') return json({ ok: true, caller })   /* the install proof: its schedule gets in */
     return json(await autoLink(db, new URL(req.url).searchParams.get('dry') === '1'))
   }
   if (await ownerCaller(req)) {

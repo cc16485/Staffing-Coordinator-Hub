@@ -129,6 +129,8 @@ const CEN = [{ id: '9001', first: 'Sarah', last: 'Test', active: true, mobile: '
 globalThis.__census = fakeCensus(CEN)
 setup(false); r = await auto({})
 ck('an outsider is refused', r.status === 401, r)
+r = await auto(CRON, '&auth_check=1')
+ck('the schedule\'s auth check answers who it is, and runs nothing', r.status === 200 && r.j.caller === 'cron' && !('seen' in r.j), r.j)
 setup(false); r = await auto(CRON)
 ck('switch off: worked out (1 to link, Mia carded) and nothing changed', r.status === 200 && r.j.live === false && r.j.would_link === 1 && r.j.cards === 1 && r.j.linked === 0
   && !trk(A1).axiscare_caregiver_id && !PATCHES.length && !APP.ops_items.length, r.j)
