@@ -80,6 +80,14 @@ export function gateVerdict(roster: Any): { ok: boolean; why: string } {
     : 'Orientation is not finished yet.' }
 }
 
+/** REHIRES: earlier Training records under the same name with a finished orientation (a suggestion for the office). */
+export const nameKey = (s: unknown) => S(s, 120).toLowerCase().replace(/[^a-z ]/g, ' ').replace(/\s+/g, ' ').trim()
+export function earlierFor(name: string, earlier: Any[]): Any[] {
+  const k = nameKey(name); if (!k) return []
+  return (earlier || []).filter((x) => nameKey(x.name) === k).map((x) => ({ training_id: x.training_id, completed_at: x.completed_at,
+    document: x.doc ? 'training:' + x.doc : (x.certificate ? `training:certificates/${x.training_id}/agency-orientation.pdf` : null) })).filter((x) => x.document)
+}
+
 /** A historical record the office verifies: what must be there before it is saved. */
 export function checkVerify(b: Any, today: string): { ok: boolean; why: string | null } {
   const d = day(b?.date)

@@ -16,7 +16,8 @@ const H = (key: string, extra: Record<string, string> = {}) => ({ apikey: key, A
 export type TOrient = { training_id: string; name: string; status: string | null; completed_at: string | null; completion_doc_path: string | null; completed_by: string | null; certificate: boolean }
 /** AxisCare number -> that caregiver's Training orientation (only caregivers on the Training Platform). certFor: which
     Training ids to check for a stored certificate (the storage listing is one call per person, so only those that matter). */
-export async function readOrientation(send: typeof fetch = fetch, certFor?: (row: TOrient) => boolean): Promise<{ ok: true; byAx: Map<string, TOrient> } | { ok: false; why: string }> {
+export type Earlier = { training_id: string; name: string; completed_at: string; doc: string | null }
+export async function readOrientation(send: typeof fetch = fetch, certFor?: (row: TOrient) => boolean): Promise<{ ok: true; byAx: Map<string, TOrient>; earlier: Earlier[] } | { ok: false; why: string }> {
   const c = creds(); if (!c) return { ok: false, why: 'the Training Platform connection is not set on this project' }
   try {
     const get = async (q: string) => { const r = await send(`${c.url}/rest/v1/${q}`, { headers: H(c.key) }); if (!r.ok) throw new Error(`Training answered ${r.status} for ${q.split('?')[0]}`); return await r.json() }
@@ -34,7 +35,18 @@ export async function readOrientation(send: typeof fetch = fetch, certFor?: (row
         completion_doc_path: S(e?.completion_doc_path, 300) || null, completed_by: S(e?.completed_by, 80) || null, certificate: false })
     }
     for (const t of byAx.values()) if (!certFor || certFor(t)) t.certificate = await hasCertificate(t.training_id, send)
-    return { ok: true, byAx }
+    /* REHIRES (Samantha 2026-10-28, Rachel Simmons): an earlier, no-longer-active Training record with a finished orientation.
+       Only ever offered to the office as a suggestion by name; never linked on its own. */
+    const earlier: Earlier[] = []
+    try {
+      const old: Any[] = await get('caregivers?select=id,name&active=eq.false')
+      for (const g of old || []) {
+        const e = (ens || []).find((x) => x?.caregiver_id === g.id)
+        if (e && S(e.status, 20) === 'complete' && /^\d{4}-\d\d-\d\d/.test(S(e.completed_at, 30)))
+          earlier.push({ training_id: String(g.id), name: S(g.name, 80), completed_at: S(e.completed_at, 10), doc: S(e.completion_doc_path, 300) || null })
+      }
+    } catch { /* no suggestions rather than wrong ones */ }
+    return { ok: true, byAx, earlier }
   } catch (e) { return { ok: false, why: 'could not read the Training Platform: ' + String((e as Error)?.message ?? e).slice(0, 160) } }
 }
 export async function hasCertificate(tid: string, send: typeof fetch = fetch): Promise<boolean> {

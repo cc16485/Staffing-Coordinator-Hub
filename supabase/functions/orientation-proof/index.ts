@@ -29,7 +29,7 @@ import { jobCaller } from '../_shared/job-auth.ts'
 import { opEvent } from '../_shared/events.ts'
 import { readCensus } from '../_shared/axis-census.ts'
 import { saveAuditFields } from '../_shared/sweep-patch.ts'
-import { orientationStatus, auditList, checkVerify, DEFAULT_EXCLUDE, PRE_AXISCARE_BEFORE, PRE_AXISCARE_BY } from '../_shared/orientation-proof.ts'
+import { orientationStatus, auditList, checkVerify, earlierFor, DEFAULT_EXCLUDE, PRE_AXISCARE_BEFORE, PRE_AXISCARE_BY } from '../_shared/orientation-proof.ts'
 import { mayGenerate, certificatePdf } from '../_shared/orientation-certificate.ts'
 import { readOrientation, storeCertificate, signedLink, certPath, sendOrientationLink } from '../_shared/training-orientation.ts'
 
@@ -57,7 +57,8 @@ async function gather(db: any) {
   if (!t.ok) return { ok: false as const, why: t.why }
   const pre = { before: S(st.orientation_pre_axiscare_before, 10) || PRE_AXISCARE_BEFORE, by: S(st.orientation_pre_axiscare_by, 120) || PRE_AXISCARE_BY }
   const a = auditList(c.rows, rosterByAx, t.byAx, exclude, pre)
-  return { ok: true as const, st, exclude, pre, census: c.rows, rosterByAx, tByAx: t.byAx, ...a }
+  for (const f of a.flagged) f.earlier = earlierFor(f.name, t.earlier)
+  return { ok: true as const, st, exclude, pre, census: c.rows, rosterByAx, tByAx: t.byAx, earlier: t.earlier, ...a }
 }
 // deno-lint-ignore no-explicit-any
 async function makeCertificate(db: any, ax: string, t: Any, roster: Any, by: string): Promise<{ ok: boolean; why: string | null; ref?: string }> {
@@ -172,7 +173,8 @@ Deno.serve(async (req) => {
     const axRow = g.census.find((x: Any) => S(x.id, 20) === ax)
     const ros = g.rosterByAx.get(ax) || null
     const st = orientationStatus(ros, g.tByAx.get(ax) || null, { ...g.pre, hire_date: S(axRow?.hire_date, 10) || S(ros?.hire_date, 10) })
-    return json({ ok: true, axiscare_id: ax, ...st, axiscare: axRow ? { active: axRow.active, status_label: axRow.status_label } : null, excluded: g.exclude.includes(ax), settings })
+    const nm = [axRow?.first, axRow?.last].filter(Boolean).join(' ') || [ros?.first, ros?.last].filter(Boolean).join(' ')
+    return json({ ok: true, axiscare_id: ax, ...st, earlier: st.state === 'verified' ? [] : earlierFor(nm, g.earlier), axiscare: axRow ? { active: axRow.active, status_label: axRow.status_label } : null, excluded: g.exclude.includes(ax), settings })
   }
 
   if (action === 'make_certificate') {
@@ -202,9 +204,15 @@ Deno.serve(async (req) => {
     const ax = digits(b?.axiscare_id); if (!ax) return json({ error: 'Which caregiver?' }, 400)
     const v = checkVerify(b, today()); if (!v.ok) return json({ error: v.why }, 400)
     const doc = S(b.document, 400)
-    if (!/^training\/[\w-]+\/orient-[\w.-]+$/.test(doc)) return json({ error: 'Upload the document through the Hub first.' }, 400)
     const roster = list(await readKey(db, 'caregivers')).find((r: Any) => digits(r?.axiscare_id) === ax)
     if (!roster) return json({ error: 'No Hub caregiver record has that AxisCare number.' }, 404)
+    if (doc.startsWith('training:')) {
+      /* a rehire's earlier Training record: only one the server itself offers for this person's name, with its own date */
+      const t = await readOrientation(fetch, () => false); if (!t.ok) return json({ error: t.why }, 502)
+      const offer = earlierFor([roster.first, roster.last].filter(Boolean).join(' '), t.earlier).find((x: Any) => x.document === doc)
+      if (!offer) return json({ error: 'That earlier record is not one found for this person.' }, 400)
+      if (S(b.date, 10) !== offer.completed_at) return json({ error: 'The date must be the one on the earlier record (' + offer.completed_at + ').' }, 400)
+    } else if (!/^training\/[\w-]+\/orient-[\w.-]+$/.test(doc)) return json({ error: 'Upload the document through the Hub first.' }, 400)
     const ver = { date: S(b.date, 10), document: doc, by: who.name || who.email, by_email: who.email, at: new Date().toISOString(), kind: 'historical', note: S(b.note, 300) || null }
     const saved = await saveAuditFields(db, { ...roster, orient_date: roster.orient_date || ver.date, orient_proof: doc, orient_verified: ver },
       (fresh: Any) => { fresh.orient_verified = ver; fresh.orient_proof = doc; if (!fresh.orient_date) fresh.orient_date = ver.date })

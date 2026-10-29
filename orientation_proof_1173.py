@@ -61,7 +61,7 @@ for root, files in ((ROOT, sorted({k for fn in FNS for k in L.need(FNROOT, fn)} 
 ok("both reviewed builds are what is on GitHub's main (the Hub's server and the Training Platform)")
 if NODE and os.path.exists(PGLITE) and os.path.exists(PDFLIB):
     env = dict(os.environ, PGLITE=PGLITE, PDFLIB=PDFLIB)
-    for t, must, root in (("orientation_proof_test.mjs", "57/57", ROOT), ("caregiver_journey_6_test.mjs", "127/127", ROOT), ("training_texts_test.mjs", "68/68", TROOT)):
+    for t, must, root in (("orientation_proof_test.mjs", "61/61", ROOT), ("caregiver_journey_6_test.mjs", "127/127", ROOT), ("training_texts_test.mjs", "68/68", TROOT)):
         c, o = run([NODE, t], cwd=root, env=env)
         if c != 0 or must not in o: stop(f"the tests failed ({t}): " + " ".join(l.strip() for l in o.splitlines() if "FAIL" in l or "✗" in l)[:240])
     ok("the orientation proof, onboarding checklist and Training message tests pass (fake data and a throwaway Postgres only)")
