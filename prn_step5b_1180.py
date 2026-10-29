@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# 1179 · STAFFING SERVER · PRN STEP 5b: OPEN SHIFTS ON THE PRN TEAM PAGE, WITH "I'M INTERESTED" (2026-10-29, Samantha: "Yes, build
+# 1180 · STAFFING SERVER · PRN STEP 5b: OPEN SHIFTS ON THE PRN TEAM PAGE, WITH "I'M INTERESTED" (2026-10-29, Samantha: "Yes, build
 # part 5b with its switch off")
 #  1. Checks first (nothing changes): the reviewed build is GitHub's main; the tests pass (fake data and a throwaway Postgres
 #     only); the page and the open shifts switches are off; each function's gateway setting is read, so it is kept.
@@ -103,7 +103,7 @@ okC, cc = sql(REF, "select pg_get_constraintdef(oid) d from pg_constraint where 
 (ok if okC and cc and "interested" in cc[0]["d"] and "course_request" in cc[0]["d"] and "office_preview" in cc[0]["d"] else bad)("the page's record allows \"interested\", and every earlier kind still")
 (ok if switches_on() == [] else bad)("the switches are still off")
 say()
-say("  1179: " + ("DONE. Open shifts and I'm Interested are on the server with the switch OFF. Next: Claude merges the Hub pull request, then "
+say("  1180: " + ("DONE. Open shifts and I'm Interested are on the server with the switch OFF. Next: Claude merges the Hub pull request, then "
     "you'll see the switch in Settings, PRN Teams, and what each member would see in What they see."
     if not L.fails else "NOT COMPLETE. See the ✗ lines above. Tell Claude."))
 done(0 if not L.fails else 1)
