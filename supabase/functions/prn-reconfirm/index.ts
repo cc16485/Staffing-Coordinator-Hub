@@ -9,12 +9,17 @@
 // PRACTICE until ops_settings.prn_reconfirm_live === true: it works out who would be texted and says so, and sends
 // and records nothing. ?dry=1 is always practice. Runs on its weekday schedule (the vault secret) or the owner's key.
 // Nothing here touches pay.
+// STEP 5a (2026-10-29): with the PRN Team page open and ops_settings.prn_reconfirm_page_live on, the check-in opens their PRN
+// Team page at My hours instead (wording in _shared/prn-page-texts.ts, editable as prn_reconfirm_page_msg). Saving there
+// confirms their availability the same way. Off, the check-in is exactly as before.
 // =============================================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { contactForOutbound } from '../_shared/outreach.ts'
 import { jobCaller } from '../_shared/job-auth.ts'
 import { makeAvailLink, availExpiry } from '../_shared/prn-links.ts'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
+import { hoursLink, linkSwitches, reconfirmPageText } from '../_shared/prn-page-texts.ts'
+import { makePageLink, pageExpiry } from '../_shared/prn-page-links.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -73,7 +78,8 @@ Deno.serve(async (req) => {
   due.sort((a, b) => a.confirmed - b.confirmed)   // the longest since they confirmed goes first
   const batch = due.slice(0, CAP)
   const tmpl = String(st.prn_reconfirm_msg || '') || DEFAULT_MSG
-  const out = { live, due: due.length, this_run: batch.length, texted: 0, no_phone: 0, refused: 0, failed: 0 }
+  const toPage = linkSwitches(st).reconfirm
+  const out = { live, to_page: toPage, due: due.length, this_run: batch.length, texted: 0, no_phone: 0, refused: 0, failed: 0 }
   const ghl = { token: Deno.env.get('GHL_TOKEN') ?? '', locationId: Deno.env.get('GHL_LOCATION_ID') ?? '' }
   for (const d of batch) {
     const g = roster.find((x) => x?.active !== false && String(x?.axiscare_id ?? '') === d.axid)
@@ -87,8 +93,15 @@ Deno.serve(async (req) => {
     if (!ghl.token || !ghl.locationId || secret.length < 32) { out.failed++; continue }
     const contact = await contactForOutbound(db, ghl, { phone, firstName: first || 'there' }, 'routine_internal', { audience: 'caregiver', channel: 'sms', sender: 'prn-reconfirm' })
     if (!contact) { out.refused++; continue }
-    const link = await makeAvailLink(secret, d.axid, availExpiry())
-    const message = tmpl.replaceAll('{first_name}', first || 'there').replaceAll('{link}', link)
+    let message = ''
+    if (toPage) {
+      const link = await makePageLink(secret, String(d.applicant_id), pageExpiry()).catch(() => '')
+      if (!link) { out.failed++; continue }
+      message = reconfirmPageText(st.prn_reconfirm_page_msg, first, hoursLink(link))
+    } else {
+      const link = await makeAvailLink(secret, d.axid, availExpiry())
+      message = tmpl.replaceAll('{first_name}', first || 'there').replaceAll('{link}', link)
+    }
     /* NO SILENT FAILURES (2026-10-01): a text GoHighLevel refuses raises a card on Needs Attention (it is still not
        recorded as sent, so the next run tries again) */
     const ok = await ghlSendChecked(db, { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
