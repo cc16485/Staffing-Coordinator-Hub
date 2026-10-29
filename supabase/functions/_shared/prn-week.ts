@@ -103,7 +103,7 @@ export function computeWeek(x: { members: Member[]; shifts: Any[]; touches: Any[
   return { items: out.slice(0, CAP), more: Math.max(0, out.length - CAP) }
 }
 
-/* ── ON CALL (PRN CNA Team only, her decision 20; a weekend is Saturday 7am to Sunday 11pm, decision 19) ── */
+/* ── ON CALL (PRN CNA Team only, her decision 20; two shifts a day, daytime 7am to 5pm and overnight 5pm to 7am, decision 19 as changed 2026-10-29) ── */
 export const PATTERNS: Record<string, string> = { every_weekend: 'Every weekend', every_other_weekend: 'Every other weekend', one_weekend_month: 'One weekend a month', weekday: 'A weekday', not_now: 'Not right now' }
 /** The next n weekends (Saturday dates) from today, each with who is confirmed, and the gaps. */
 export function onCallWeekends(oncall: Any[], members: Member[], today: string, n = 8): { weekends: Any[]; offers: Any[] } {

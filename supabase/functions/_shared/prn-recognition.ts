@@ -8,7 +8,8 @@
 //                     and the page must be open.
 //   On call           the PRN CNA Team can say on their page whether they'd like to be on call, and how often (her decision
 //                     20: CNA Team only to start). An offer never puts anyone on call; the office confirms each date, and the
-//                     confirmed dates show on their page. No pay is shown (the stipend amount is still hers to set).
+//                     confirmed dates show on their page. Two shifts (her call 2026-10-29): daytime 7am to 5pm, overnight 5pm to
+//                     7am, both = a whole day; $25 a shift, $50 a whole day, never shown on their page.
 //   Milestones        their own contributions only, never compared: first PRN shift, 5, 10, 25, 50; a year on the team; and
 //                     "kept every shift you said yes to" this season. Shown on their page; the handwritten cards at 10 shifts
 //                     and a year stay on This week (step 2).
@@ -51,7 +52,8 @@ export function readFeedback(b: Any): { ok: true; note: string } | { ok: false; 
 }
 
 /* ── on call (PRN CNA Team) ── */
-export const ONCALL_WORDS = 'On call means you reply within 15 minutes and can start a shift within 1 hour. A weekend runs Saturday 7am to Sunday 11pm; a weekday runs 7am to 11pm. The office confirms each date with you first.'
+/* her shifts (2026-10-29): daytime 7am to 5pm, overnight 5pm to 7am, both = a whole day. Pay is never shown on their page. */
+export const ONCALL_WORDS = 'On call comes in two shifts: daytime, 7am to 5pm, and overnight, 5pm to 7am the next morning. Take one, or both for a whole day. On call means you reply within 15 minutes and can start a shift within 1 hour. The office confirms each date and shift with you first.'
 /** Their latest on-call offer and their confirmed dates from today on. rows: prn_oncall rows for one member. */
 export function onCallFor(rows: Any[], today: string, patterns: Record<string, string>): { pattern: string | null; pattern_word: string | null; offered_at: string | null; confirmed: Any[] } {
   const offer = rows.filter((r) => r?.kind === 'offer').sort((a, b) => S(a.at, 40).localeCompare(S(b.at, 40))).pop()
