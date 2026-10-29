@@ -21,6 +21,11 @@
 //               the first 30 days; switch ops_settings.prn_feedback_live). Once per round; shows on This week.
 //   oncall      {p, e, t, pattern} (step 7, PRN CNA Team only): would they like to be on call, and how often. An offer never
 //               puts anyone on call; the office confirms each date, and confirmed dates show on their page.
+//   mentor_answer {p, e, t, id, answer: yes|no} (step 8a, Gap Mentors only): "I can do it" / "Not this time" on a Gap Mentor
+//               visit, checked again first (skill, break, Do Not Return, AxisCare at that time). Switch prn_mentor_live.
+//   mentor_note {p, e, t, id, ...fields}: their note after a visit assigned to them (from the visit day on). A refresher goes
+//               on the caregiver's record; a care update or supervisory note goes to the client's Care plan reviews, with a
+//               card for the office. Once in, it stays as written.
 //   interested  {p, e, t, case_id, shift_key}: "I'm Interested", a Yes on that shift (coverage-run prn_interest checks it all
 //               again). Nobody is assigned until a coordinator confirms it in AxisCare.
 // Switch ops_settings.prn_page_live (off): members get "This page isn't open yet" and nothing is saved; the office preview works.
@@ -40,6 +45,7 @@ import { openLive } from '../_shared/prn-open.ts'
 import { pageUpdate } from '../_shared/prn-monthly.ts'
 import { feedbackRound, feedbackLive, readFeedback, FEEDBACK_QUESTIONS, onCallFor, ONCALL_WORDS } from '../_shared/prn-recognition.ts'
 import { PATTERNS } from '../_shared/prn-week.ts'
+import { mentorLive, mayOffer, offerView, readReport, landing, fieldsFor, KINDS, SKILLS, MENTOR_RULES } from '../_shared/prn-mentor.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
@@ -115,13 +121,14 @@ Deno.serve(async (req) => {
     for (const o of offered) delete o.ask_id
     /* their familiar clients: first name and how recently (no last names, no addresses) */
     let clients: Any[] = [], clientsWhy: string | null = ax ? null : 'Once you are on the schedule, the clients you care for show here.'
+    const clientNames: string[] = []   /* full names, only to put a Gap Mentor's familiar clients first (never shown) */
     if (ax) {
       const from = new Date(Date.parse(t + 'T12:00:00Z') - FAMILIAR_DAYS * 86_400_000).toISOString().slice(0, 10)
       const v = await visitsOf(ax, from, t)
       if (v.why) clientsWhy = "We couldn't load your clients just now. Check back soon."
       else clients = familiarClients({ name: [app.first_name, app.last_name].filter(Boolean).join(' '), visits: v.rows, dnr: list(await readKey(sb, 'dnr_log')),
         checkins: list(await readKey(sb, 'client_checkins')), answers: (touches.data ?? []).map((x: Any) => ({ ...x, applicant_id: aid })), today: t })
-          .map((c) => ({ first: S(c.client, 80).split(/\s+/)[0], last_visit: c.last, glad: c.glad, star: c.star }))
+          .map((c) => { clientNames.push(S(c.client, 80)); return { first: S(c.client, 80).split(/\s+/)[0], last_visit: c.last, glad: c.glad, star: c.star } })
     }
     const av = list(await readKey(sb, 'caregiver_availability')).find((x: Any) => ax && (S(x?.axiscare_id, 20) === ax || S(x?.id, 20) === ax)) || null
     const requested = new Set((plog.data ?? []).filter((r: Any) => r.kind === 'course_request').map((r: Any) => S(r.note, 40)))
@@ -135,10 +142,34 @@ Deno.serve(async (req) => {
     let oncall: Any = null
     if (team === 'cna') { const oc = await sb.from('prn_oncall').select('kind, pattern, start_date, end_date, cancelled_at, at').eq('applicant_id', aid)
       oncall = { ...onCallFor(oc.error ? [] : (oc.data ?? []), t, PATTERNS), patterns: PATTERNS, words: ONCALL_WORDS } }
+    /* step 8a: Gap Mentor visits offered to them, and their own assigned ones (with the note to fill in) */
+    let mentor: Any = null
+    if (team === 'cna' && prn.gap_mentor?.on === true && (mentorLive(st) || action === 'preview')) {
+      const me = { name: [app.first_name, app.last_name].filter(Boolean).join(' '), team, prn, axiscare_id: ax }
+      const famKeys = new Set(clientNames.map((n) => n.toLowerCase()))
+      const [ov, mv, ma] = await Promise.all([
+        sb.from('prn_mentor_visits').select('*').eq('status', 'open').gte('visit_date', t),
+        sb.from('prn_mentor_visits').select('*').eq('assigned_to', aid).in('status', ['assigned', 'done']),
+        sb.from('prn_mentor_answers').select('visit_id, answer').eq('applicant_id', aid)])
+      const dnr = list(await readKey(sb, 'dnr_log')), byDay: Record<string, Any[] | null> = {}
+      const offers: Any[] = []
+      for (const v of (ov.error ? [] : ov.data ?? []).slice(0, 10)) {
+        const d = S(v.visit_date, 10)
+        if (!(d in byDay)) { const r = ax ? await visitsOf(ax, d, d) : { rows: [], why: 'not on the schedule' }; byDay[d] = r.why ? null : r.rows }
+        if (!mayOffer({ mentor: me, visit: v, dnr, rows: byDay[d] }).ok) continue
+        const a = (ma.data ?? []).find((x: Any) => Number(x.visit_id) === Number(v.id))
+        offers.push(offerView(v, a ? a.answer : null, famKeys.has(S(v.client_name, 80).toLowerCase())))
+      }
+      offers.sort((a, b) => Number(b.familiar) - Number(a.familiar) || `${a.visit_date}${a.visit_time}`.localeCompare(`${b.visit_date}${b.visit_time}`))
+      const mine = (mv.error ? [] : mv.data ?? []).sort((a: Any, b: Any) => S(b.visit_date, 10).localeCompare(S(a.visit_date, 10))).slice(0, 6).map((v: Any) => ({ ...offerView(v, 'yes', false),
+        status: v.status, note_due: v.status === 'assigned' && S(v.visit_date, 10) <= t, fields: fieldsFor(v.kind), done: !!v.report }))
+      mentor = { skills: (prn.gap_mentor.skills || []).map((k: string) => SKILLS[k] || k), offers, mine, waiting: !mentorLive(st), rules: MENTOR_RULES,
+        first_done: (mv.data ?? []).some((v: Any) => v.status === 'done') }
+    }
     const brk = /^\d{4}-\d\d-\d\d$/.test(S(prn.break_until, 10)) && S(prn.break_until, 10) >= t ? S(prn.break_until, 10) : null
     return json({ ok: true, preview: action === 'preview', live, open_live: openLive(st), today: t, first, team, team_label: TEAM[team], since: S(tr.since, 10), on_schedule: !!ax,
-      looking: lookingState(plog.data ?? [], t), update, feedback, oncall, offered, clients, clients_why: clientsWhy,
-      thanks: thanksFor({ touches: touches.data ?? [], kindTells: list(await readKey(sb, 'kind_tells')), ax, covered, since: S(tr.since, 10), today: t, shifts: sh }),
+      looking: lookingState(plog.data ?? [], t), update, feedback, oncall, mentor, offered, clients, clients_why: clientsWhy,
+      thanks: [...(mentor?.first_done ? [{ kind: 'milestone', at: '', text: 'Your first visit as a Gap Mentor. Thank you for helping our caregivers and families.' }] : []), ...thanksFor({ touches: touches.data ?? [], kindTells: list(await readKey(sb, 'kind_tells')), ax, covered, since: S(tr.since, 10), today: t, shifts: sh })],
       hours: { windows: av?.windows ?? null, target_hours: av?.target_hours ?? null, outside_ok: av?.outside_ok === true, updated_at: av?.updated_at ?? null,
         short_notice_ok: typeof prn.short_notice_ok === 'boolean' ? prn.short_notice_ok : null, break_until: brk },
       courses: COURSES.map((c) => ({ ...c, requested: requested.has(c.slug) })), office: officePhone() })
@@ -165,6 +196,48 @@ Deno.serve(async (req) => {
   }
 
   /* STEP 7: the twice-yearly questions, and on call (PRN CNA Team) */
+  /* STEP 8a: a Gap Mentor's answer, and their note after the visit */
+  if (action === 'mentor_answer' || action === 'mentor_note') {
+    if (!mentorLive(st)) return json({ error: "Gap Mentor visits aren't on your page yet." }, 409)
+    if (team !== 'cna' || prn.gap_mentor?.on !== true) return json({ error: 'This is for our Gap Mentors.' }, 403)
+    const id = Number(b.id); if (!Number.isInteger(id) || id <= 0) return json({ error: 'Which visit?' }, 400)
+    const { data: v } = await sb.from('prn_mentor_visits').select('*').eq('id', id).maybeSingle()
+    if (!v) return json({ error: 'That visit is no longer there. Thank you for looking!' }, 404)
+    const me = { name: [app.first_name, app.last_name].filter(Boolean).join(' '), team, prn, axiscare_id: ax }
+    if (action === 'mentor_answer') {
+      if (v.status !== 'open') return json({ error: 'This visit is no longer open. Thank you for looking!' }, 409)
+      const ans = S(b.answer, 5); if (!['yes', 'no'].includes(ans)) return json({ error: 'Yes or not this time?' }, 400)
+      if (ans === 'yes') {
+        const r = ax ? await visitsOf(ax, S(v.visit_date, 10), S(v.visit_date, 10)) : { rows: [], why: 'not on the schedule' }
+        if (r.why) return json({ error: "We can't check the schedule right now, so this wasn't saved. Please try again in a few minutes." }, 503)
+        const ok = mayOffer({ mentor: me, visit: v, dnr: list(await readKey(sb, 'dnr_log')), rows: r.rows })
+        if (!ok.ok) return json({ error: 'This visit is no longer one we can offer you. Thank you for looking!' }, 409)
+      }
+      const { error } = await sb.from('prn_mentor_answers').upsert({ visit_id: id, applicant_id: aid, answer: ans, at: new Date().toISOString() }, { onConflict: 'visit_id,applicant_id' })
+      if (error) return json({ error: 'Could not save, please try again.' }, 500)
+      if (ans === 'yes') await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { id: `ops_gapmentor_${id}`, kind: 'gap_mentor', domain: 'scheduling_coverage', status: 'open', urgency: 'normal',
+        title: `${first} can do the Gap Mentor visit for ${S(v.client_name, 80).split(/\s+/)[0]} (${v.visit_date} ${v.visit_time})`, about: S(v.client_name, 80), client_ax: S(v.client_ax, 20),
+        detail: `${KINDS[v.kind]?.label || 'Gap Mentor visit'}. Open the client's Care tab, Care plan reviews, to pick a Gap Mentor. Put the visit in AxisCare as a non-billable visit, then record who.`,
+        created_at: new Date().toISOString(), due: new Date(Date.now() + 24 * 3600000).toISOString(), owner: '', owner_name: '', created_by: 'prn-page' } })
+      return json({ ok: true, message: ans === 'yes' ? 'Thank you! The office will confirm with you before it is set.' : 'Got it. Saying not this time never counts against you.' })
+    }
+    /* mentor_note */
+    if (v.assigned_to !== aid || v.status !== 'assigned') return json({ error: v.report ? 'Your note is already in. Thank you!' : 'This visit is not assigned to you.' }, 409)
+    if (S(v.visit_date, 10) > t) return json({ error: 'The note opens on the day of the visit.' }, 409)
+    const r = readReport(v.kind, b); if (!r.ok) return json({ error: r.error }, 400)
+    const now = new Date().toISOString()
+    const { error } = await sb.from('prn_mentor_visits').update({ report: r.report, report_at: now, status: 'done' }).eq('id', id).eq('status', 'assigned')
+    if (error) return json({ error: 'Could not save, please try again.' }, 500)
+    const item = landing(v, me.name, r.report, now)
+    const { error: le } = await sb.rpc('upsert_app_data_item', { target_key: 'care_plan_reviews', item })
+    await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { id: `ops_gapnote_${id}`, kind: 'gap_mentor', domain: 'care_coordination', status: 'open', urgency: v.kind === 'refresher' ? 'normal' : 'high',
+      title: `Read ${first}'s note: ${item.title}`, about: S(v.client_name, 80), client_ax: S(v.client_ax, 20),
+      detail: (v.kind === 'refresher' ? `It is on ${S(v.caregiver_name, 80)}'s record.` : "It is in the client's Care plan reviews. The Care Coordinator decides any care plan change and talks with the family.")
+        + (item.reminder ? ' ' + item.reminder : '') + (le ? ' (It could not be added to the Care plan reviews automatically: ' + le.message + '. It is kept on the visit.)' : ''),
+      created_at: now, due: new Date(Date.now() + 24 * 3600000).toISOString(), owner: '', owner_name: '', created_by: 'prn-page' } })
+    return json({ ok: true, message: `Thank you, ${first}! The office has your note.` })
+  }
+
   if (action === 'feedback') {
     const round = feedbackRound(t)
     if (!round || !feedbackLive(st)) return json({ error: "The questions aren't open right now. You can always share an idea under Talk to us." }, 409)
