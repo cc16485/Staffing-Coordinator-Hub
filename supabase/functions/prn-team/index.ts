@@ -1,7 +1,9 @@
 // =============================================================================
 // prn-team — the PRN CNA Team's pay track, its link to AxisCare, and Move to ongoing (PRN2, 2026-09-29)
 // =============================================================================
-// Signed-in office staff only (owner_admin, care_coordinator, staffing_coordinator). Nothing here runs on its own.
+// Signed-in office staff only (owner_admin, care_coordinator, staffing_coordinator), except the daily auto-link (?auto_link=1,
+// the jobs' secret; _shared/prn-autolink.ts, switch prn_autolink_live, Samantha 2026-10-28), which links a PRN hire only when
+// exactly one active AxisCare caregiver has their phone or email, and cards everything else for the office.
 //
 // ONE PAY TRACK AT A TIME (Samantha, 2026-09-29): a CNA is EITHER on the PRN CNA Team ($20/hr) OR an ongoing
 // caregiver ($18/hr), never both. Changing tracks is a deliberate step with a date, a reason and who did it, kept
@@ -35,7 +37,9 @@
 // =============================================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
-import { ownerCaller } from '../_shared/job-auth.ts'
+import { ownerCaller, jobCaller } from '../_shared/job-auth.ts'
+import { planLinks, type Hire, type AxRow } from '../_shared/prn-autolink.ts'
+import { readCensus } from '../_shared/axis-census.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -121,6 +125,159 @@ async function vocab(team: Team = 'cna') {
   return { prn: prn.length === 1 ? prn[0] : null, cna: cna.length === 1 ? cna[0] : null, why }
 }
 
+/** Read and change one caregiver's AxisCare classes: every change read back and recorded (by whom). */
+// deno-lint-ignore no-explicit-any
+function axisClasses(db: any, cgId: string, by: string) {
+  const readClasses = async () => {
+    const g = await ax('GET', `/api/caregivers/${cgId}`)
+    const c = cgOf(g)
+    return ok2(g.status) && c ? { ok: true as const, classes: rows(c.classes) } : { ok: false as const, detail: 'could not read the caregiver in AxisCare: ' + errText(g) }
+  }
+  // deno-lint-ignore no-explicit-any
+  const setClasses = async (kind: string, what: string, next: any[], check: (after: any[]) => boolean, before: any[]) => {
+    const p = await ax('PATCH', `/api/caregivers/${cgId}`, { classes: next.map(slim) })
+    if (!ok2(p.status)) {
+      await recordAxisChange(db, { kind, caregiver: cgId, outcome: 'refused', summary: what, detail: errText(p), by })
+      return { outcome: 'refused', detail: errText(p) }
+    }
+    const back = await readClasses()
+    const after = back.ok ? back.classes : []
+    const keptOk = before.filter((c) => !isPrnClass(c)).every((c) => after.some((x) => lab(x) === lab(c)))   // everything but PRN Team stays, CNA included
+    const good = back.ok && check(after) && keptOk
+    const recorded = await recordAxisChange(db, { kind, caregiver: cgId, outcome: good ? 'sent_confirmed' : 'sent', summary: what,
+      detail: good ? null : 'the read-back did not show it exactly', by })
+    return { outcome: good ? 'updated' : 'updated_check', classes: after.map(lab), kept_ok: keptOk, recorded }
+  }
+  return { readClasses, setClasses }
+}
+
+/** Add the team's PRN class (and CNA for the CNA team) in AxisCare, keep every other class, read it back, record it. */
+// deno-lint-ignore no-explicit-any
+export async function markCore(db: any, id: string, tr: any, by: string): Promise<any> {
+  const cgId = tr?.axiscare_caregiver_id ? String(tr.axiscare_caregiver_id) : ''
+  const { readClasses, setClasses } = axisClasses(db, cgId, by)
+  const team: Team = tr?.team === 'caregiver' ? 'caregiver' : 'cna'
+  if (!cgId) return { outcome: 'not_linked', detail: 'link them to their caregiver record first' }
+  if (tr.track !== 'prn_team') return { outcome: 'not_prn', detail: 'they are an ongoing caregiver now, not on the PRN Team' }
+  const v = await vocab(team)
+  if ('error' in v) return { outcome: 'refused', detail: v.error }
+  if (!v.prn) return { outcome: 'classes_missing', detail: v.why.join('; ') + '. Create it in AxisCare (Settings, Classes) and try again.' }
+  const cur = await readClasses()
+  if (!cur.ok) return { outcome: 'refused', detail: cur.detail }
+  /* The team's PRN class always; the plain CNA class too for the CNA team only (1037: never for the caregiver team), when
+     exactly one exists. Never the same class twice. */
+  const want = [v.prn, ...(team === 'cna' && v.cna ? [v.cna] : [])].filter((t, i, arr) => arr.findIndex((x) => lab(x) === lab(t)) === i)
+  const add = want.filter((t) => !cur.classes.some((c) => lab(c) === lab(t)))
+  if (!add.length) {
+    await db.from('pay_tracks').update({ axiscare_marked_at: new Date().toISOString(), axiscare_marked_by: by }).eq('applicant_id', id)
+    return { outcome: 'already', classes: cur.classes.map(lab), note: team === 'caregiver' || v.cna ? null : v.why.join('; ') }
+  }
+  const r = await setClasses('prn_team_classes', add.map(lab).join(' + ') + ' added', [...cur.classes, ...add],
+    (after) => add.every((t) => after.some((x) => lab(x) === lab(t))), cur.classes)
+  if (r.outcome === 'updated') await db.from('pay_tracks').update({ axiscare_marked_at: new Date().toISOString(), axiscare_marked_by: by }).eq('applicant_id', id)
+  return { ...r, note: team === 'caregiver' || v.cna ? null : v.why.join('; ') }
+}
+
+/** Link one PRN hire to their AxisCare caregiver record (the office's Link them, and the daily automatic link). Refused unless
+    the caregiver's phone or email in AxisCare matches this hire exactly and no other PRN hire matches too. */
+// deno-lint-ignore no-explicit-any
+export async function linkCore(db: any, id: string, a: any, cg: string, by: string): Promise<{ body: any; status: number }> {
+  const g = await ax('GET', `/api/caregivers/${cg}`)
+  const c = cgOf(g)
+  if (!ok2(g.status) || !c) return { body: { error: 'could not read the caregiver in AxisCare: ' + errText(g) }, status: 502 }
+  const cPhone = digits10(c.mobilePhone ?? c.homePhone), cEmail = lowerEmail(c.personalEmail ?? c.email)
+  const matches = (x: { phone?: unknown; email?: unknown }) =>
+    (!!cPhone && digits10(x.phone) === cPhone) || (!!cEmail && lowerEmail(x.email) === cEmail)
+  if (!matches(a)) return { body: { outcome: 'no_match', detail: 'their phone and email in AxisCare do not match this hire, so they are not linked' }, status: 200 }
+  const { data: others } = await db.from('pay_tracks').select('applicant_id').is('axiscare_caregiver_id', null).neq('applicant_id', id)
+  if ((others ?? []).length) {
+    const { data: oa } = await db.from('job_applicants').select('phone, email').in('id', (others ?? []).map((o: { applicant_id: string }) => o.applicant_id))
+    if ((oa ?? []).some(matches)) return { body: { outcome: 'two_match', detail: 'more than one PRN hire matches this caregiver, so nothing is linked; check in AxisCare which one it is' }, status: 200 }
+  }
+  const { error } = await db.from('pay_tracks').update({ axiscare_caregiver_id: cg, linked_at: new Date().toISOString(), linked_by: by, updated_at: new Date().toISOString() })
+    .eq('applicant_id', id).is('axiscare_caregiver_id', null)
+  if (error) return { body: { error: 'could not link: ' + error.message }, status: 500 }
+  /* their starting availability, only when they have none */
+  let availability = 'kept'
+  const { data: avRow } = await db.from('app_data').select('data').eq('key', 'caregiver_availability').maybeSingle()
+  // deno-lint-ignore no-explicit-any
+  const have = (Array.isArray(avRow?.data) ? avRow!.data : []).some((x: any) => String(x?.id) === cg || String(x?.axiscare_id ?? '') === cg)
+  if (!have && a.prn && Array.isArray(a.prn.days) && a.prn.days.length) {
+    const item = { id: cg, name: [a.first_name, a.last_name].filter(Boolean).join(' '), axiscare_id: cg, phone_digits: digits10(a.phone) || null,
+      target_hours: null, windows: windowsFrom(a.prn), updated_at: new Date().toISOString(), source: 'application' }
+    const up = await db.rpc('upsert_app_data_item', { target_key: 'caregiver_availability', item })
+    availability = up.error ? 'failed' : 'from_application'
+  }
+  return { body: { outcome: 'linked', availability }, status: 200 }
+}
+
+/** The daily auto-link (_shared/prn-autolink.ts decides; linkCore and markCore do it, exactly as the office's buttons do). */
+// deno-lint-ignore no-explicit-any
+export async function autoLink(db: any, dry: boolean, census = readCensus): Promise<any> {
+  const BY = 'Linked automatically (same phone or email)'
+  const { data: stRow } = await db.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
+  const live = stRow?.data?.prn_autolink_live === true && !dry
+  const { data: tracks, error: tErr } = await db.from('pay_tracks').select('*').eq('track', 'prn_team')
+  if (tErr) return { ok: false, error: 'could not read the PRN list' }
+  const { data: allT } = await db.from('pay_tracks').select('applicant_id, axiscare_caregiver_id')
+  const linkedIds = new Set<string>((allT ?? []).map((t: { axiscare_caregiver_id: unknown }) => String(t.axiscare_caregiver_id ?? '')).filter(Boolean))
+  // deno-lint-ignore no-explicit-any
+  const unlinked = (tracks ?? []).filter((t: any) => !t.axiscare_caregiver_id)
+  const { data: apps } = unlinked.length ? await db.from('job_applicants').select('id, first_name, last_name, phone, email, position, prn').in('id', unlinked.map((t: { applicant_id: string }) => t.applicant_id)) : { data: [] }
+  // deno-lint-ignore no-explicit-any
+  const hires: Hire[] = unlinked.map((t: any) => { const a = (apps ?? []).find((x: { id: string }) => x.id === t.applicant_id) || {}
+    return { applicant_id: t.applicant_id, first: String(a.first_name || ''), last: String(a.last_name || ''), phone: String(a.phone || ''), email: String(a.email || ''), team: t.team === 'caregiver' ? 'caregiver' : 'cna', since: String(t.since || '') } })
+  const c = await census()
+  if (!c.ok) return { ok: false, live, error: 'AxisCare could not be read, so nobody was linked: ' + c.error }
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })
+  const plan = planLinks(hires, c.rows as AxRow[], linkedIds, today)
+  const out = { ok: true, live, seen: plan.seen, would_link: plan.link.length, linked: 0, tagged: 0, cards: plan.cards.length, carded: 0, waiting: plan.waiting.length, problems: [] as string[] }
+  if (live) {
+    for (const l of plan.link) {
+      // deno-lint-ignore no-explicit-any
+      const a = (apps ?? []).find((x: any) => x.id === l.applicant_id)
+      const r = await linkCore(db, l.applicant_id, a, l.axiscare_id, BY)
+      if (r.body?.outcome !== 'linked') { out.problems.push(`${l.name}: ${r.body?.detail || r.body?.error || r.body?.outcome}`)
+        plan.cards.push({ id: 'prn_link_' + l.applicant_id, who: l.name, title: `${l.name} couldn't be linked automatically`, detail: `${r.body?.detail || r.body?.error || 'The link was refused'}. Open their caregiver page and use Link them.` }); continue }
+      out.linked++
+      await closeCard(db, 'prn_link_' + l.applicant_id, 'Linked automatically')
+      const { data: tr } = await db.from('pay_tracks').select('*').eq('applicant_id', l.applicant_id).maybeSingle()
+      const m = await markCore(db, l.applicant_id, tr, 'Tagged automatically after linking')
+      if (m?.outcome === 'updated' || m?.outcome === 'already') out.tagged++
+      else { out.problems.push(`${l.name}: linked, but the AxisCare tag ${m?.outcome}: ${m?.detail || ''}`)
+        plan.cards.push({ id: 'prn_tag_fail_' + l.applicant_id, who: l.name, title: `${l.name} is linked, but PRN TEAM wasn't added in AxisCare`, detail: `${m?.detail || m?.outcome || 'AxisCare refused'}. Open their caregiver page and use Mark as PRN Team in AxisCare.` }) }
+    }
+    for (const k of plan.cards) if ((await raisePrnCard(db, k)) === 'raised') out.carded++
+  }
+  try { await db.rpc('upsert_app_data_item', { target_key: 'automation_log', item: { id: 'auto_srv_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+    at: new Date().toISOString(), automation: 'prn-team:auto_link', ran_by: 'schedule', ok: !out.problems.length, dry: !live, rows_seen: out.seen, candidates: out.would_link, created: out.linked } }) } catch { /* logging never blocks */ }
+  return out
+}
+// deno-lint-ignore no-explicit-any
+async function opsList(db: any): Promise<any[]> { const { data } = await db.from('app_data').select('data').eq('key', 'ops_items').maybeSingle(); return Array.isArray(data?.data) ? data!.data : [] }
+/** One Needs Attention card per id; a card a person closed stays closed. Never throws. */
+// deno-lint-ignore no-explicit-any
+async function raisePrnCard(db: any, c: { id: string; title: string; detail: string; who: string }): Promise<'raised' | 'open' | 'closed' | 'failed'> {
+  try {
+    const prev = (await opsList(db)).find((x) => x && x.id === c.id)
+    if (prev && prev.status !== 'done' && prev.status !== 'resolved') return 'open'
+    if (prev) return 'closed'
+    const now = new Date().toISOString()
+    const { error } = await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { id: c.id, kind: 'prn_link', domain: 'caregivers', status: 'open', urgency: 'today', title: c.title, detail: c.detail, who: c.who,
+      owner: '', owner_name: '', created_at: now, first_at: now, last_at: now, due: new Date(Date.now() + 24 * 3_600_000).toISOString(), closed_at: null, closed_by: null, close_note: null, resolved_at: null, created_by: 'prn-team', opened_by: 'prn-team' } })
+    return error ? 'failed' : 'raised'
+  } catch { return 'failed' }
+}
+// deno-lint-ignore no-explicit-any
+async function closeCard(db: any, id: string, note: string): Promise<void> {
+  try {
+    const prev = (await opsList(db)).find((x) => x && x.id === id)
+    if (!prev || prev.status === 'done' || prev.status === 'resolved') return
+    const now = new Date().toISOString()
+    await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { ...prev, status: 'done', closed_at: now, closed_by: 'prn-team', close_reason: note, last_activity_at: now } })
+  } catch { /* the card stays open; a person closes it */ }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { status: 200, headers: cors })
   if (req.method !== 'POST') return json({ error: 'POST only' }, 405)
@@ -128,6 +285,13 @@ Deno.serve(async (req) => {
   /* The owner's server key may ask one read-only question, for the install proof: do PRN Team and CNA exist in AxisCare?
      Recognised the way the scheduled jobs recognise it (job-auth's ownerCaller): the key the Management API hands out
      is not always character-for-character the one this function holds, so a plain comparison refused it (Desktop 356). */
+  /* AUTO-LINK (Samantha 2026-10-28): the daily schedule (the jobs' secret) or the owner's key. Switch prn_autolink_live off or
+     ?dry=1: worked out and counted, nothing changed. */
+  if (new URL(req.url).searchParams.get('auto_link') === '1') {
+    const caller = await jobCaller(req)
+    if (!caller) return json({ error: 'not allowed' }, 401)
+    return json(await autoLink(db, new URL(req.url).searchParams.get('dry') === '1'))
+  }
   if (await ownerCaller(req)) {
     const q = await req.clone().json().catch(() => ({})) as Record<string, unknown>
     if (q.action !== 'vocab') return json({ error: 'the server key may only ask vocab' }, 403)
@@ -213,56 +377,12 @@ Deno.serve(async (req) => {
     if (tr.axiscare_caregiver_id) return json({ outcome: tr.axiscare_caregiver_id === cg ? 'already' : 'linked_elsewhere' })
     const { data: taken } = await db.from('pay_tracks').select('applicant_id').eq('axiscare_caregiver_id', cg).maybeSingle()
     if (taken) return json({ outcome: 'caregiver_taken', detail: 'that caregiver is already linked to another hire' })
-    const g = await ax('GET', `/api/caregivers/${cg}`)
-    const c = cgOf(g)
-    if (!ok2(g.status) || !c) return json({ error: 'could not read the caregiver in AxisCare: ' + errText(g) }, 502)
-    const cPhone = digits10(c.mobilePhone ?? c.homePhone), cEmail = lowerEmail(c.personalEmail ?? c.email)
-    const matches = (x: { phone?: unknown; email?: unknown }) =>
-      (!!cPhone && digits10(x.phone) === cPhone) || (!!cEmail && lowerEmail(x.email) === cEmail)
-    if (!matches(a)) return json({ outcome: 'no_match', detail: 'their phone and email in AxisCare do not match this hire, so they are not linked' })
-    const { data: others } = await db.from('pay_tracks').select('applicant_id').is('axiscare_caregiver_id', null).neq('applicant_id', id)
-    if ((others ?? []).length) {
-      const { data: oa } = await db.from('job_applicants').select('phone, email').in('id', (others ?? []).map((o: { applicant_id: string }) => o.applicant_id))
-      if ((oa ?? []).some(matches)) return json({ outcome: 'two_match', detail: 'more than one PRN hire matches this caregiver, so nothing is linked; check in AxisCare which one it is' })
-    }
-    const { error } = await db.from('pay_tracks').update({ axiscare_caregiver_id: cg, linked_at: new Date().toISOString(), linked_by: by, updated_at: new Date().toISOString() })
-      .eq('applicant_id', id).is('axiscare_caregiver_id', null)
-    if (error) return json({ error: 'could not link: ' + error.message }, 500)
-    /* their starting availability, only when they have none */
-    let availability = 'kept'
-    const { data: avRow } = await db.from('app_data').select('data').eq('key', 'caregiver_availability').maybeSingle()
-    // deno-lint-ignore no-explicit-any
-    const have = (Array.isArray(avRow?.data) ? avRow!.data : []).some((x: any) => String(x?.id) === cg || String(x?.axiscare_id ?? '') === cg)
-    if (!have && a.prn && Array.isArray(a.prn.days) && a.prn.days.length) {
-      const item = { id: cg, name: [a.first_name, a.last_name].filter(Boolean).join(' '), axiscare_id: cg, phone_digits: digits10(a.phone) || null,
-        target_hours: null, windows: windowsFrom(a.prn), updated_at: new Date().toISOString(), source: 'application' }
-      const up = await db.rpc('upsert_app_data_item', { target_key: 'caregiver_availability', item })
-      availability = up.error ? 'failed' : 'from_application'
-    }
-    return json({ outcome: 'linked', availability })
+    const lk = await linkCore(db, id, a, cg, by)
+    return json(lk.body, lk.status)
   }
 
   const cgId = tr.axiscare_caregiver_id ? String(tr.axiscare_caregiver_id) : ''
-  const readClasses = async () => {
-    const g = await ax('GET', `/api/caregivers/${cgId}`)
-    const c = cgOf(g)
-    return ok2(g.status) && c ? { ok: true as const, classes: rows(c.classes) } : { ok: false as const, detail: 'could not read the caregiver in AxisCare: ' + errText(g) }
-  }
-  // deno-lint-ignore no-explicit-any
-  const setClasses = async (kind: string, what: string, next: any[], check: (after: any[]) => boolean, before: any[]) => {
-    const p = await ax('PATCH', `/api/caregivers/${cgId}`, { classes: next.map(slim) })
-    if (!ok2(p.status)) {
-      await recordAxisChange(db, { kind, caregiver: cgId, outcome: 'refused', summary: what, detail: errText(p), by })
-      return { outcome: 'refused', detail: errText(p) }
-    }
-    const back = await readClasses()
-    const after = back.ok ? back.classes : []
-    const keptOk = before.filter((c) => !isPrnClass(c)).every((c) => after.some((x) => lab(x) === lab(c)))   // everything but PRN Team stays, CNA included
-    const good = back.ok && check(after) && keptOk
-    const recorded = await recordAxisChange(db, { kind, caregiver: cgId, outcome: good ? 'sent_confirmed' : 'sent', summary: what,
-      detail: good ? null : 'the read-back did not show it exactly', by })
-    return { outcome: good ? 'updated' : 'updated_check', classes: after.map(lab), kept_ok: keptOk, recorded }
-  }
+  const { readClasses, setClasses } = axisClasses(db, cgId, by)
 
   const team = teamOf(tr)
   if (action === 'classes') {
@@ -273,27 +393,7 @@ Deno.serve(async (req) => {
       ready: 'error' in v ? false : !!v.prn, why: 'error' in v ? [v.error] : v.why })
   }
 
-  if (action === 'mark') {
-    if (!cgId) return json({ outcome: 'not_linked', detail: 'link them to their caregiver record first' })
-    if (tr.track !== 'prn_team') return json({ outcome: 'not_prn', detail: 'they are an ongoing caregiver now, not on the PRN Team' })
-    const v = await vocab(team)
-    if ('error' in v) return json({ outcome: 'refused', detail: v.error })
-    if (!v.prn) return json({ outcome: 'classes_missing', detail: v.why.join('; ') + '. Create it in AxisCare (Settings, Classes) and try again.' })
-    const cur = await readClasses()
-    if (!cur.ok) return json({ outcome: 'refused', detail: cur.detail })
-    /* The team's PRN class always; the plain CNA class too for the CNA team only (1037: never for the caregiver team), when
-       exactly one exists. Never the same class twice. */
-    const want = [v.prn, ...(team === 'cna' && v.cna ? [v.cna] : [])].filter((t, i, arr) => arr.findIndex((x) => lab(x) === lab(t)) === i)
-    const add = want.filter((t) => !cur.classes.some((c) => lab(c) === lab(t)))
-    if (!add.length) {
-      await db.from('pay_tracks').update({ axiscare_marked_at: new Date().toISOString(), axiscare_marked_by: by }).eq('applicant_id', id)
-      return json({ outcome: 'already', classes: cur.classes.map(lab), note: team === 'caregiver' || v.cna ? null : v.why.join('; ') })
-    }
-    const r = await setClasses('prn_team_classes', add.map(lab).join(' + ') + ' added', [...cur.classes, ...add],
-      (after) => add.every((t) => after.some((x) => lab(x) === lab(t))), cur.classes)
-    if (r.outcome === 'updated') await db.from('pay_tracks').update({ axiscare_marked_at: new Date().toISOString(), axiscare_marked_by: by }).eq('applicant_id', id)
-    return json({ ...r, note: team === 'caregiver' || v.cna ? null : v.why.join('; ') })
-  }
+  if (action === 'mark') return json(await markCore(db, id, tr, by))
 
   if (action === 'move') {
     const to = b.to === 'ongoing' || b.to === 'prn_team' ? b.to : ''
