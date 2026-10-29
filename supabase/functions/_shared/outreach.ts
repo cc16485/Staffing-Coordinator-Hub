@@ -226,6 +226,10 @@ export const SENDER_REGISTER: Record<string, { class: OutreachClass; why: string
     why: 'PRN step 4 (Samantha 2026-10-29): one welcome text to a new PRN member, her approved wording, once they are linked in '
       + 'AxisCare (only people linked in the last 7 days); weekdays 10 to 5 Central (enforced in the function). Caregivers only. '
       + 'Practice until ops_settings.prn_welcome_live. Cron: prn-welcome, weekdays 16:00 UTC (Desktop 1175).' },
+  'prn-feedback':       { class: 'routine_internal', scheduled: true,
+    why: 'PRN step 7 (Samantha 2026-10-29): in May and November, one text inviting each PRN member to two questions on their PRN Team '
+      + 'page ("What would make PRN better?"), once per member per round, at most 20 a day; weekdays 10 to 5 Central (enforced in '
+      + 'prn-welcome, whose weekday run sends it). Off until ops_settings.prn_feedback_live, and only while the PRN Team page is open.' },
   'prn-monthly':        { class: 'routine_internal', scheduled: false,
     why: 'PRN step 6 (Samantha 2026-10-28 decision 7): the monthly PRN Team update, a short text with their own page link, sent '
       + 'when an office person taps Send in PRN Teams (never 9pm to 8am, enforced in prn-week); each member at most once a month. '
