@@ -28,6 +28,13 @@
 //   monthly       {month?} (step 6): last month's PRN Team update: the facts the Hub drafted, what the office wrote, whether it
 //                 went out and to how many. Reads only.
 //   monthly_save  {month, paragraph, kind_word?, tip?}: the office's own words for it (kept until sent; then it stays as sent).
+//   mentor_set    {applicant_id, on, skills[], evidence} (step 8a): name a PRN CNA a Gap Mentor for the skills the office verified
+//                 (kept on their PRN answers with every change in gap_mentor_history), or take it off.
+//   mentor_ask    {kind, client_ax, client_name, visit_date, visit_time, skill?, caregiver_ax?, caregiver_name?, family_ok, note?,
+//                 guide?, va?}: "Ask a Gap Mentor" from a client's Care tab. Switch ops_settings.prn_mentor_live (and the page open).
+//   mentor_list   {client_ax?}: the asks (for one client, or every open one), with each mentor's answer.
+//   mentor_assign {id, applicant_id}: the coordinator put it in AxisCare for this mentor (recorded here; nothing is sent).
+//   mentor_cancel {id}: an ask that is no longer needed (kept, marked cancelled).
 //   monthly_send  {month}: one tap texts every PRN member a short line with their own page link (the full update is on their
 //                 page). Switch ops_settings.prn_monthly_live, and the page must be open. Never 9pm to 8am. Through the same
 //                 gates as every caregiver text; each member at most once a month; a refused or failed text is listed back and
@@ -51,6 +58,7 @@ import { familiarClients, noBackup, weekLines, GOBACK_DEFAULT, FAMILIAR_DAYS, ty
 import { monthFacts, readDraft, lastMonth, isMonth, monthWord, monthlyText, monthlyRef, monthlyLive, sendHour, MONTHLY_TEXT_DEFAULT, STEADY_LINE } from '../_shared/prn-monthly.ts'
 import { keptMessage } from '../_shared/prn-page-texts.ts'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
+import { readMentor, readAsk, mentorLive, SKILLS, KINDS } from '../_shared/prn-mentor.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
@@ -129,7 +137,9 @@ Deno.serve(async (req) => {
     for (const m of mem) {
       const mine = plog.filter((r) => r.applicant_id === m.applicant_id), seen = mine.filter((r) => r.kind === 'viewed').pop()
       const bu = S((apPrn ?? []).find((x: Any) => x.id === m.applicant_id)?.prn?.break_until, 10)
-      page[m.applicant_id] = { last_looked: seen?.at ?? null, looking: lookingState(mine, t), break_until: /^\d{4}-\d\d-\d\d$/.test(bu) && bu >= t ? bu : null }
+      const gm = (apPrn ?? []).find((x: Any) => x.id === m.applicant_id)?.prn?.gap_mentor
+      page[m.applicant_id] = { last_looked: seen?.at ?? null, looking: lookingState(mine, t), break_until: /^\d{4}-\d\d-\d\d$/.test(bu) && bu >= t ? bu : null,
+        gap_mentor: gm?.on === true ? { skills: gm.skills || [], evidence: gm.evidence || '', by: gm.by || null, at: gm.at || null } : null }
     }
     const wk = computeWeek({ members: mem, shifts: sh.data ?? [], touches: tc.data ?? [], kindTo, wantsMore, cases, today: t, sender: who.name, thanksTmpl: st.prn_thanks_msg, extra })
     const oncall = onCallWeekends(oc.data ?? [], mem, t)
@@ -138,6 +148,7 @@ Deno.serve(async (req) => {
       members: mem.map((m) => ({ applicant_id: m.applicant_id, name: m.name, team: m.team, axiscare_id: m.axiscare_id, familiar: familiar[m.applicant_id] || { clients: [], why: null }, page: page[m.applicant_id] || null })),
       page_live: st.prn_page_live === true,
       familiar_note: anyWhy ? `Familiar clients could not all be read (${anyWhy}), so no client is flagged as having no PRN backup today.` : null,
+      mentor_live: mentorLive(st), mentor_skills: SKILLS,
       goback_live: st.prn_goback_live === true, goback_default: GOBACK_DEFAULT, welcome_live: st.prn_welcome_live === true, welcome_default: WELCOME_DEFAULT,
       oncall: { ...oncall, patterns: PATTERNS, stipend: null } })
   }
@@ -286,6 +297,65 @@ Deno.serve(async (req) => {
     const m = memberOf(row.applicant_id)
     await opEvent(sb, { verb: 'prn_oncall_cancelled', actor_name: who.name, actor_email: who.email, item_id: row.applicant_id, area: 'caregivers', summary: `On call ${row.start_date} to ${row.end_date} taken back for ${m?.name || 'a PRN member'}` })
     return json({ outcome: 'cancelled' })
+  }
+
+  /* STEP 8a · GAP MENTORS */
+  if (action === 'mentor_set') {
+    const m = memberOf(b.applicant_id); if (!m) return json({ error: 'That person is not on a PRN Team.' }, 404)
+    const r = readMentor(b, m.team); if (!r.ok) return json({ error: r.error }, 400)
+    const { data: app, error: ae } = await sb.from('job_applicants').select('prn').eq('id', m.applicant_id).maybeSingle()
+    if (ae || !app) return json({ error: 'Could not read their PRN answers.' }, 500)
+    const prn = (app.prn && typeof app.prn === 'object') ? app.prn : {}
+    const rec = { ...r.rec, by: who.name || who.email, at: new Date().toISOString() }
+    const next = { ...prn, gap_mentor: rec, gap_mentor_history: [...(Array.isArray(prn.gap_mentor_history) ? prn.gap_mentor_history : []), rec].slice(-20) }
+    const { error } = await sb.from('job_applicants').update({ prn: next }).eq('id', m.applicant_id)
+    if (error) return json({ error: 'Could not save it: ' + error.message }, 500)
+    await opEvent(sb, { verb: rec.on ? 'prn_mentor_named' : 'prn_mentor_removed', actor_name: who.name, actor_email: who.email, item_id: m.applicant_id, area: 'caregivers',
+      summary: rec.on ? `${who.name} named ${m.name} a Gap Mentor (${rec.skills.map((k: string) => SKILLS[k]).join(', ')})` : `${who.name}: ${m.name} is no longer a Gap Mentor` })
+    return json({ outcome: 'saved', gap_mentor: rec })
+  }
+  if (action === 'mentor_ask') {
+    if (!mentorLive(st)) return json({ outcome: 'off', error: st.prn_page_live !== true ? "The PRN Team page isn't open yet, so Gap Mentors can't see the ask. Nothing was saved."
+      : 'Gap Mentor asks are switched off (Settings, PRN Teams). Nothing was saved.' }, 409)
+    const r = readAsk(b, today()); if (!r.ok) return json({ error: r.error }, 400)
+    const { data, error } = await sb.from('prn_mentor_visits').insert({ ...r.ask, asked_by: who.name || who.email }).select('id').maybeSingle()
+    if (error) return json({ error: 'Could not save it: ' + error.message }, 500)
+    await opEvent(sb, { verb: 'prn_mentor_asked', actor_name: who.name, actor_email: who.email, item_id: String(data?.id ?? ''), area: 'caregivers',
+      summary: `${who.name} asked for a Gap Mentor: ${KINDS[r.ask.kind].label} for ${r.ask.client_name}, ${r.ask.visit_date} ${r.ask.visit_time}` })
+    return json({ outcome: 'asked', id: data?.id ?? null })
+  }
+  if (action === 'mentor_list') {
+    const ax = S(b.client_ax, 20).replace(/\D/g, '')
+    const base = sb.from('prn_mentor_visits').select('*')
+    const { data: vs, error } = await (ax ? base.eq('client_ax', ax) : base.eq('status', 'open')).order('visit_date', { ascending: false }).limit(40)
+    if (error) return json({ error: 'Gap Mentor visits are not set up yet (prn_mentor.sql).' }, 500)
+    const ids = (vs ?? []).map((v: Any) => v.id)
+    const { data: ans } = ids.length ? await sb.from('prn_mentor_answers').select('visit_id, applicant_id, answer, at').in('visit_id', ids) : { data: [] }
+    const nameOf = (aid: string) => memberOf(aid)?.name || 'A PRN member'
+    return json({ ok: true, live: mentorLive(st), switch_on: st.prn_mentor_live === true, page_live: st.prn_page_live === true, skills: SKILLS, kinds: Object.fromEntries(Object.entries(KINDS).map(([k, v]) => [k, v.label])),
+      visits: (vs ?? []).map((v: Any) => ({ ...v, assigned_name: v.assigned_to ? nameOf(v.assigned_to) : null,
+        answers: (ans ?? []).filter((a: Any) => a.visit_id === v.id).map((a: Any) => ({ applicant_id: a.applicant_id, name: nameOf(a.applicant_id), answer: a.answer, at: a.at })) })) })
+  }
+  if (action === 'mentor_assign' || action === 'mentor_cancel') {
+    const id = Number(b.id); if (!Number.isInteger(id) || id <= 0) return json({ error: 'Which visit?' }, 400)
+    const { data: v } = await sb.from('prn_mentor_visits').select('*').eq('id', id).maybeSingle()
+    if (!v) return json({ error: 'No such visit.' }, 404)
+    if (action === 'mentor_cancel') {
+      if (v.status === 'done') return json({ error: 'This visit already happened.' }, 409)
+      const { error } = await sb.from('prn_mentor_visits').update({ status: 'cancelled', cancelled_by: who.name || who.email, cancelled_at: new Date().toISOString() }).eq('id', id)
+      if (error) return json({ error: 'Could not cancel it: ' + error.message }, 500)
+      await opEvent(sb, { verb: 'prn_mentor_cancelled', actor_name: who.name, actor_email: who.email, item_id: String(id), area: 'caregivers', summary: `${who.name} cancelled the Gap Mentor ask for ${v.client_name}` })
+      return json({ outcome: 'cancelled' })
+    }
+    if (v.status !== 'open') return json({ error: v.status === 'assigned' ? 'It is already assigned.' : 'This ask is no longer open.' }, 409)
+    const m = memberOf(b.applicant_id); if (!m) return json({ error: 'That person is not on a PRN Team.' }, 404)
+    const { data: ap } = await sb.from('job_applicants').select('prn').eq('id', m.applicant_id).maybeSingle()
+    if (ap?.prn?.gap_mentor?.on !== true) return json({ error: `${m.name} is not a Gap Mentor.` }, 409)
+    const { error } = await sb.from('prn_mentor_visits').update({ status: 'assigned', assigned_to: m.applicant_id, assigned_by: who.name || who.email, assigned_at: new Date().toISOString() }).eq('id', id).eq('status', 'open')
+    if (error) return json({ error: 'Could not record it: ' + error.message }, 500)
+    await opEvent(sb, { verb: 'prn_mentor_assigned', actor_name: who.name, actor_email: who.email, item_id: String(id), area: 'caregivers',
+      summary: `${who.name} assigned ${m.name} the Gap Mentor visit for ${v.client_name} (${v.visit_date} ${v.visit_time}); it goes in AxisCare as a non-billable visit` })
+    return json({ outcome: 'assigned' })
   }
 
   /* STEP 6 · THE MONTHLY PRN TEAM UPDATE */
