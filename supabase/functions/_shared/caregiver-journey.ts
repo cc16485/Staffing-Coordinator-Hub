@@ -12,6 +12,7 @@
 //                          ever an identity number)
 //   caregiverGate          the server refusal: may this action happen for this person? (allow when no caregiver journey
 //                          exists: the old path is untouched; fails CLOSED when the records cannot be read, 2026-10-13)
+import { gateVerdict } from './orientation-proof.ts'
 import { needsCountersign } from './step1-documents.ts'
 import { offerSigned, offerSignedAt, letterOnly, isLicensedNurse } from './positions.ts'   /* LPN HIRING 2026-10-14 */
 import '../_shared/journey-rules.js'
@@ -53,6 +54,7 @@ export async function facts(db: Any, j: Any, trn: { get(id: string): Promise<Any
   f.licensed_nurse = f.offer ? isLicensedNurse(f.offer.position_key) : undefined
   if (f.licensed_nurse === undefined && s1) { try { const { data: nf, error: ne } = await db.from('step1_forms').select('nurse_form').eq('offer_id', j.offer_id).maybeSingle(); if (!ne && nf) f.licensed_nurse = nf.nurse_form === true } catch { /* stays unknown */ } }
   f.drives_clients = a.transport_willing === 'yes' ? true : a.transport_willing === 'no' ? false : typeof a.driver_ack === 'string' ? /request approval to transport/i.test(a.driver_ack) : undefined
+  try { const { data: os } = await db.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle(); f.orientation_gate = os?.data?.orientation_gate_live === true } catch { f.orientation_gate = false }
   const lists: Record<string, Any[]> = {}
   for (const key of ['candidates', 'caregivers']) { const { data } = await db.from('app_data').select('data').eq('key', key).maybeSingle(); lists[key] = Array.isArray(data?.data) ? data.data : [] }
   f.candidate = lists.candidates.find((c: Any) => String(c?.offer_id ?? '') === String(j.offer_id)) || null
@@ -158,7 +160,13 @@ export function verifyRows(f: Facts, now = new Date().toISOString()): Verdict[] 
   else if (rp.blocked) out.push({ key: 'cg.refs.cleared', state: 'blocked', at: now, evidence: { refs: [c.r1s, c.r2s, c.r3s, c.r4s].map((x) => x || '') }, reason: rp.why })
   if (f.welcome_call_done_at) out.push({ key: 'cg.welcome.call', state: 'complete', at: iso(f.welcome_call_done_at) || now, evidence: { done_at: f.welcome_call_done_at } })
   const r = f.roster || {}
-  if (r.orient_date) out.push({ key: 'cg.training.orientation', state: 'complete', at: iso(r.orient_date) || now, evidence: { date: r.orient_date, document: r.orient_proof || null, note: 'employment start date (decision 7)' } })
+  /* ORIENTATION PROOF (Samantha 2026-10-28, switch orientation_gate_live): with the switch on, a date alone no longer counts:
+     the certificate or an office-verified record must be behind it, else the row waits, saying what would fix it */
+  if (r.orient_date) {
+    const g = f.orientation_gate === true ? gateVerdict(r) : { ok: true, why: '' }
+    if (g.ok) out.push({ key: 'cg.training.orientation', state: 'complete', at: iso(r.orient_date) || now, evidence: { date: r.orient_date, document: r.orient_proof || null, verified: r.orient_verified || null, note: 'employment start date (decision 7)' } })
+    else out.push({ key: 'cg.training.orientation', state: 'blocked', at: now, evidence: { date: r.orient_date, document: r.orient_proof || null }, reason: g.why })
+  }
   if (r.alz_date) out.push({ key: 'cg.training.dementia', state: 'complete', at: iso(r.alz_date) || now, evidence: { date: r.alz_date, document: r.alz_proof || null } })
   if (r.ojt_date && r.ojt_signed === 'yes' && r.ojt_online) out.push({ key: 'cg.training.ojt', state: 'complete', at: iso(r.ojt_date) || now, evidence: { date: r.ojt_date, online: r.ojt_online, signed: true, document: r.ojt_proof || null } })
   if (r.annual_date) out.push({ key: 'cg.training.annual', state: 'complete', at: iso(r.annual_date) || now, evidence: { date: r.annual_date, hours: r.annual_hrs ?? null } })

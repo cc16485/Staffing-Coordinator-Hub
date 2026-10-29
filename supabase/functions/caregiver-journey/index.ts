@@ -801,9 +801,13 @@ Deno.serve(async (req) => {
       const got = await load(db, { offer_id: roster.offer_id }); if (!got || got.j.status !== 'open') return json({ ok: true, journey: false, why: got ? 'their readiness card is closed' : 'no readiness card for that offer' })
       const now = new Date().toISOString(), applied: string[] = [], held: string[] = []
       const state: Record<string, string> = Object.fromEntries(got.steps.map((s: Any) => [s.step_key, s.state]))
+      /* ORIENTATION PROOF (Samantha 2026-10-28, switch orientation_gate_live): orientation is no longer ticked straight from this
+         report; the sweep ticks it once the certificate (or an office-verified record) is on the caregiver's record */
+      let gateOn = false; try { gateOn = (await settings(db))?.orientation_gate_live === true } catch { gateOn = false }
       for (const c of courses) {
         const key = TRAINING_ROWS[S(c?.slug, 60)]; if (!key) continue
         if (!['complete', 'waived'].includes(S(c?.status, 20))) continue
+        if (gateOn && key === 'cg.training.orientation') { if (!held.includes(key)) { held.push(key); await event(db, got.j.journey_id, key, { email: 'training-platform', name: 'The Training Platform' }, 'verify_held', { course: S(c?.slug, 60), waiting_for: ['certificate or verified record'] }) } continue }
         const st = got.steps.find((s: Any) => s.step_key === key); if (st && DONE.includes(st.state)) continue
         /* GO-LIVE GATE (2026-10-13): never done before the rows in front of it (orientation after the Orientation Video Call,
            dementia after orientation). Held, with an event; the nightly Training sync and the sweep verify it once they are done. */
