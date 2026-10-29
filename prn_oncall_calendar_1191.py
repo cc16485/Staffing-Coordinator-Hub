@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# 1190 · STAFFING SERVER · PRN ON-CALL CALENDAR (2026-10-29, Samantha: "Yes, build the on-call redo as recommended (decisions 22
+# 1191 · STAFFING SERVER · PRN ON-CALL CALENDAR (2026-10-29, Samantha: "Yes, build the on-call redo as recommended (decisions 22
 # to 27) and the expectations wording as drafted.")
 #  1. Checks first (nothing changes): the reviewed build is GitHub's main; the tests pass (fake data and a throwaway Postgres
 #     only); both new switches are off; each function's gateway setting is read, so it is kept.
@@ -94,7 +94,7 @@ okC, cc = sql(REF, "select (select count(*) from information_schema.tables where
   "the calendar records are in, kept as written, one person per shift" + ("" if okC and cc else " (couldn't read them)"))
 (ok if switches_on() == [] else bad)("both switches are still off")
 say()
-say("  1190: " + ("DONE. The on-call calendar is on the server with both switches OFF. Next: Claude merges the Hub pull request, then you'll "
+say("  1191: " + ("DONE. The on-call calendar is on the server with both switches OFF. Next: Claude merges the Hub pull request, then you'll "
     "see the calendar in PRN Teams, On call."
     if not L.fails else "NOT COMPLETE. See the ✗ lines above. Tell Claude."))
 done(0 if not L.fails else 1)
