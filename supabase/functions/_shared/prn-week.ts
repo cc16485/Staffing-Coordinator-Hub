@@ -11,6 +11,7 @@
 //   checkin     on the team 30+ days and nobody has been in touch personally in 30 days (a thank-you, a card, a call or
 //               kind words count; asking them to cover a shift does not): worth a call. Never shown as a mark against them.
 // "Not this one" takes a line off for good (thanks, milestone) or for this week (hours, check-in).
+//   looking / course / idea (step 5a) from their PRN Team page: looking for hours, a course they'd like, an idea (_shared/prn-page.ts)
 //   welcome     (step 4) a new member's welcome call, first 2 weeks after they're linked in AxisCare (_shared/prn-welcome.ts)
 // Later steps add their own lines here: looking for hours and interest to review (the PRN Team page, step 5), and a client
 // with no PRN backup who knows them (familiar clients, step 3).
@@ -24,7 +25,7 @@ export const CAP = 8
 export const THANKS_DAYS = 21, HOURS_IDLE_DAYS = 14, QUIET_DAYS = 30, MILESTONE_SHIFTS = 10
 
 export type Member = { applicant_id: string; name: string; first: string; team: 'cna' | 'caregiver'; since: string; axiscare_id: string | null; linked_at?: string | null }
-export type Item = { id: string; kind: 'welcome' | 'thanks' | 'milestone' | 'hours' | 'checkin' | 'goback' | 'nobackup'; applicant_id: string; name: string; team: string; ref: string;
+export type Item = { id: string; kind: 'looking' | 'welcome' | 'course' | 'idea' | 'thanks' | 'milestone' | 'hours' | 'checkin' | 'goback' | 'nobackup'; applicant_id: string; name: string; team: string; ref: string;
   title: string; detail: string; draft?: string; case_id?: string; shift_date?: string | null; client?: string; client_ax?: string | null; answer?: string; team_key?: string }
 
 /** Monday of the week (Central date string in, 'YYYY-MM-DD' out): the "this week" a weekly line belongs to. */
@@ -97,7 +98,7 @@ export function computeWeek(x: { members: Member[]; shifts: Any[]; touches: Any[
     }
   }
   out.push(...(x.extra || []))   // step 3: go-back answers and clients with no PRN backup (_shared/prn-familiar.ts); step 4: welcome calls (_shared/prn-welcome.ts)
-  const order: Record<string, number> = { welcome: -1, thanks: 0, goback: 1, nobackup: 2, milestone: 3, hours: 4, checkin: 5 }
+  const order: Record<string, number> = { looking: -2, welcome: -1, thanks: 0, course: 2.4, idea: 2.6, goback: 1, nobackup: 2, milestone: 3, hours: 4, checkin: 5 }
   out.sort((a, b) => (order[a.kind] - order[b.kind]) || S(b.shift_date).localeCompare(S(a.shift_date)) || a.name.localeCompare(b.name))
   return { items: out.slice(0, CAP), more: Math.max(0, out.length - CAP) }
 }

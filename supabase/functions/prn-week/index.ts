@@ -23,6 +23,8 @@
 //                 office_interest?, note?} (step 4): what a new member said on their welcome call. Kept on their PRN answers
 //                 (job_applicants.prn.welcome, every call in welcome_history), short notice as the PRN card's own record, on
 //                 call as an offer (PRN CNA Team only), and the line is done (prn_touches welcome_call).
+//   page_link     {applicant_id} (step 5a): their PRN Team page link (30 days), for a person to send by hand.
+//   mark kind 'handled' (step 5a): a course assigned or an idea read, from their page.
 // STEP 3 (2026-10-28): week also returns each linked member's familiar clients (AxisCare visits in the last 6 months, minus
 // Do Not Return, a concern either way, or a NO to the go-back question) and adds the go-back and no-backup lines.
 // The list itself shows to everyone in the office once ops_settings.prn_week_live is on; before that the Hub shows it to
@@ -34,7 +36,10 @@ import { contactForOutbound, maySendTo, normalisePhone } from '../_shared/outrea
 import { opEvent } from '../_shared/events.ts'
 import { MO_FROM } from '../_shared/office-from.ts'   // every text goes out from (417) 234-8494
 import { computeWeek, onCallWeekends, THANKS_DEFAULT, PATTERNS, type Member } from '../_shared/prn-week.ts'
+import { pageLines, lookingState } from '../_shared/prn-page.ts'
+import { makePageLink, pageExpiry } from '../_shared/prn-page-links.ts'
 import { welcomeLines, readCall, callSummary, WELCOME_DEFAULT } from '../_shared/prn-welcome.ts'
+import { visitsOf } from '../_shared/axis-visits.ts'
 import { familiarClients, noBackup, weekLines, GOBACK_DEFAULT, FAMILIAR_DAYS, type Familiar } from '../_shared/prn-familiar.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
@@ -50,27 +55,6 @@ const UUID = /^[0-9a-f-]{36}$/i
 // deno-lint-ignore no-explicit-any
 async function readKey(sb: any, key: string): Promise<Any> { const { data } = await sb.from('app_data').select('data').eq('key', key).maybeSingle(); return data?.data ?? null }
 const list = (v: Any): Any[] => Array.isArray(v) ? v : (v && typeof v === 'object' ? Object.values(v) : [])
-
-// deno-lint-ignore no-explicit-any
-const AC_VERSION = Deno.env.get('AXISCARE_API_VERSION') || '2023-10-01'
-/** One member's AxisCare visits for the last 6 months. Never throws: no visits and why. */
-async function visitsOf(ax: string, from: string, to: string): Promise<{ rows: Any[]; why: string | null }> {
-  const token = Deno.env.get('AXISCARE_VISITS_TOKEN') || Deno.env.get('AXISCARE_API_KEY') || Deno.env.get('AXISCARE_TOKEN') || ''
-  const site = Deno.env.get('AXISCARE_SITE') || Deno.env.get('AXISCARE_SITE_NUMBER') || ''
-  if (!token || !/^\d+$/.test(site)) return { rows: [], why: 'AxisCare is not connected on this project' }
-  const rows: Any[] = []
-  try {
-    let url: string | null = `https://${site}.axiscare.com/api/visits?startDate=${from}&endDate=${to}&caregiverIds=${encodeURIComponent(ax)}`
-    for (let page = 0; url && page < 10; page++) {
-      const r: Response = await fetch(url, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'X-AxisCare-Api-Version': AC_VERSION } })
-      if (!r.ok) return { rows, why: `AxisCare answered ${r.status}` }
-      const j: Any = await r.json().catch(() => ({}))
-      for (const v of list(j?.results?.visits ?? j?.visits)) if (!v?.removed && String(v?.caregiver?.id ?? '') === ax) rows.push(v)
-      url = j?.results?.nextPage ?? j?.nextPage ?? null
-    }
-    return { rows, why: null }
-  } catch (e) { return { rows, why: 'could not reach AxisCare: ' + String((e as Error)?.message ?? e).slice(0, 100) } }
-}
 
 // deno-lint-ignore no-explicit-any
 async function members(sb: any): Promise<Member[]> {
@@ -126,11 +110,23 @@ Deno.serve(async (req) => {
     const nb = anyWhy || !mem.some((m) => m.axiscare_id) ? [] : noBackup(allCases, Object.values(familiar).map((f) => f.clients), t)
     const extra = weekLines({ members: mem.map((m) => ({ ...m, team: m.team === 'caregiver' ? 'PRN Caregiver Team' : 'PRN CNA Team' })), touches: tc.data ?? [], nobackup: nb, clientMarks, today: t })
     extra.push(...welcomeLines({ members: mem, touches: tc.data ?? [], today: t }))   // step 4
+    /* step 5a: what members did on their PRN Team page (missing table = the page isn't set up yet: no lines, nothing breaks) */
+    const pl = ids.length ? await sb.from('prn_page_log').select('id, applicant_id, kind, note, at').in('applicant_id', ids).order('at') : { data: [], error: null }
+    const plog: Any[] = pl.error ? [] : (pl.data ?? [])
+    extra.push(...pageLines({ members: mem, log: plog, touches: tc.data ?? [], today: t }))
+    const { data: apPrn } = ids.length ? await sb.from('job_applicants').select('id, prn').in('id', ids) : { data: [] }
+    const page: Record<string, Any> = {}
+    for (const m of mem) {
+      const mine = plog.filter((r) => r.applicant_id === m.applicant_id), seen = mine.filter((r) => r.kind === 'viewed').pop()
+      const bu = S((apPrn ?? []).find((x: Any) => x.id === m.applicant_id)?.prn?.break_until, 10)
+      page[m.applicant_id] = { last_looked: seen?.at ?? null, looking: lookingState(mine, t), break_until: /^\d{4}-\d\d-\d\d$/.test(bu) && bu >= t ? bu : null }
+    }
     const wk = computeWeek({ members: mem, shifts: sh.data ?? [], touches: tc.data ?? [], kindTo, wantsMore, cases, today: t, sender: who.name, thanksTmpl: st.prn_thanks_msg, extra })
     const oncall = onCallWeekends(oc.data ?? [], mem, t)
     return json({ ok: true, today: t, live: st.prn_week_live === true, thanks_live: st.prn_thanks_live === true, owner: S(st.prn_week_owner, 80) || 'Krystal',
       thanks_default: THANKS_DEFAULT, items: wk.items, more: wk.more,
-      members: mem.map((m) => ({ applicant_id: m.applicant_id, name: m.name, team: m.team, axiscare_id: m.axiscare_id, familiar: familiar[m.applicant_id] || { clients: [], why: null } })),
+      members: mem.map((m) => ({ applicant_id: m.applicant_id, name: m.name, team: m.team, axiscare_id: m.axiscare_id, familiar: familiar[m.applicant_id] || { clients: [], why: null }, page: page[m.applicant_id] || null })),
+      page_live: st.prn_page_live === true,
       familiar_note: anyWhy ? `Familiar clients could not all be read (${anyWhy}), so no client is flagged as having no PRN backup today.` : null,
       goback_live: st.prn_goback_live === true, goback_default: GOBACK_DEFAULT, welcome_live: st.prn_welcome_live === true, welcome_default: WELCOME_DEFAULT,
       oncall: { ...oncall, patterns: PATTERNS, stipend: null } })
@@ -138,7 +134,7 @@ Deno.serve(async (req) => {
 
   if (action === 'mark') {
     const m = memberOf(b.applicant_id); if (!m) return json({ error: 'That person is not on a PRN Team.' }, 404)
-    const kind = ['card_mailed', 'called', 'thanks_sent', 'not_this_one'].includes(S(b.kind, 20)) ? S(b.kind, 20) : ''
+    const kind = ['card_mailed', 'called', 'thanks_sent', 'not_this_one', 'handled'].includes(S(b.kind, 20)) ? S(b.kind, 20) : ''
     const ref = S(b.ref, 120)
     if (!kind || !ref) return json({ error: 'What was done, and for which line?' }, 400)
     const { error } = await sb.from('prn_touches').insert({ applicant_id: m.applicant_id, kind, ref, note: S(b.note, 600) || null, by_email: who.email, by_name: who.name })
@@ -173,6 +169,16 @@ Deno.serve(async (req) => {
     if (error && !/duplicate|unique/i.test(error.message)) return json({ error: 'Their answers were saved, but the call could not be marked done: ' + error.message }, 500)
     await opEvent(sb, { verb: 'prn_welcome_call', actor_name: who.name, actor_email: who.email, item_id: m.applicant_id, area: 'caregivers', summary: `${who.name}: welcome call with ${m.name}`, data: { answers: a } })
     return json({ outcome: error ? 'already' : 'recorded', oncall })
+  }
+
+  /* step 5a: their PRN Team page link, for a person to send them by hand (nothing is sent from here) */
+  if (action === 'page_link') {
+    const m = memberOf(b.applicant_id); if (!m) return json({ error: 'That person is not on a PRN Team.' }, 404)
+    const secret = Deno.env.get('HUB_JOB_SECRET') ?? ''
+    if (secret.length < 32) return json({ error: 'Page links are not set up on this project.' }, 500)
+    const link = await makePageLink(secret, m.applicant_id, pageExpiry())
+    await opEvent(sb, { verb: 'prn_page_link', actor_name: who.name, actor_email: who.email, item_id: m.applicant_id, area: 'caregivers', summary: `${who.name} copied ${m.name}'s PRN Team page link` })
+    return json({ link, live: st.prn_page_live === true, days: 30 })
   }
 
   if (action === 'goback_mark') {

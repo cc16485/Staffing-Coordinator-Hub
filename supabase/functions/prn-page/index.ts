@@ -1,0 +1,165 @@
+// =============================================================================
+// prn-page — PRN step 5a: a PRN member's own PRN Team page (Samantha 2026-10-29; rules in _shared/prn-page.ts)
+// =============================================================================
+// Public (no login; deploy with --no-verify-jwt): the member opens it from their own sealed link (_shared/prn-page-links.ts).
+// Anything forged or expired is refused. Office staff open it read-only with their Hub sign-in ("See what Grace sees").
+//   view        {p, e, t}: their page. Records that they looked (the PRN table's "Last looked at their page").
+//   preview     {applicant_id} + a Hub sign-in: the same page, read-only. Recorded (who looked, when) BEFORE anything is shown;
+//               if it can't be recorded, nothing is shown.
+//   hours       {p, e, t, windows, target_hours, outside_ok}: My hours, saved where the My Hours page saves them
+//               (app_data caregiver_availability), so every shift rule reads the same answer.
+//   short_notice {p, e, t, ok}: kept on their PRN answers exactly like the office's record, "told us on their page".
+//   break       {p, e, t, until}: "I'm taking a break until ___" (empty ends it). No shift text asks them until the date has
+//               passed (_shared/prn-break.ts).
+//   looking     {p, e, t, on, note}: "I'm looking for hours", on for 7 days; shows on This week.
+//   course      {p, e, t, slug}: "I'd like to take this"; shows on This week. The office assigns it on the Training Platform.
+//   idea        {p, e, t, text}: "Share an idea"; shows on This week.
+// Switch ops_settings.prn_page_live (off): members get "This page isn't open yet" and nothing is saved; the office preview works.
+// Never shown: pay, ratings, other people, addresses, last names. Nothing here texts anyone.
+// =============================================================================
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
+import { checkPageLink } from '../_shared/prn-page-links.ts'
+import { makeShiftLink, shiftDayEnd } from '../_shared/shift-links.ts'
+import { visitsOf } from '../_shared/axis-visits.ts'
+import { familiarClients, FAMILIAR_DAYS } from '../_shared/prn-familiar.ts'
+import { lookingState, readHours, readBreak, offeredTo, thanksFor, COURSES, TEAM } from '../_shared/prn-page.ts'
+import { MO_FROM } from '../_shared/office-from.ts'
+
+const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
+const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
+// deno-lint-ignore no-explicit-any
+type Any = any
+const S = (v: unknown, n = 200) => String(v ?? '').trim().slice(0, n)
+const today = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })
+const list = (v: Any): Any[] => Array.isArray(v) ? v : (v && typeof v === 'object' ? Object.values(v) : [])
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const digits10 = (p: unknown) => { const d = String(p ?? '').replace(/\D/g, ''); return d.length >= 10 ? d.slice(-10) : '' }
+// deno-lint-ignore no-explicit-any
+async function readKey(sb: any, key: string): Promise<Any> { const { data } = await sb.from('app_data').select('data').eq('key', key).maybeSingle(); return data?.data ?? null }
+const officePhone = () => { const d = digits10(MO_FROM); return d ? `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}` : '(417) 234-8494' }
+
+Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
+  if (req.method !== 'POST') return json({ error: 'POST only' }, 405)
+  const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+  let b: Any = {}
+  try { b = await req.json() } catch { b = {} }
+  const action = S(b?.action, 20)
+  const secret = Deno.env.get('HUB_JOB_SECRET') ?? ''
+  const st = (await readKey(sb, 'ops_settings')) || {}
+  const live = st.prn_page_live === true
+
+  /* who: the member from their link, or the office previewing one member */
+  let aid = '', who: Any = null
+  if (action === 'preview') {
+    who = await requireStaff(sb, req, OFFICE_ROLES)
+    if (!who.ok) return json({ error: who.error }, who.status)
+    aid = S(b.applicant_id, 40).toLowerCase()
+    if (!UUID.test(aid)) return json({ error: 'Which PRN member?' }, 400)
+  } else {
+    if (!(await checkPageLink(secret, b))) return json({ expired: true, message: 'This link has expired or is not valid. Text us and we will send you a fresh one.', office: officePhone() }, 401)
+    aid = S(b.p, 40).toLowerCase()
+    if (!live) return json({ closed: true, message: "Your PRN Team page isn't open yet. We'll text you when it is.", office: officePhone() })
+  }
+  const { data: tr } = await sb.from('pay_tracks').select('applicant_id, track, team, since, axiscare_caregiver_id, linked_at').eq('applicant_id', aid).maybeSingle()
+  if (!tr || tr.track !== 'prn_team') return json({ gone: true, message: "This page is for our PRN Teams. If you think that's a mistake, text us.", office: officePhone() }, 404)
+  const { data: app } = await sb.from('job_applicants').select('id, first_name, last_name, prn').eq('id', aid).maybeSingle()
+  if (!app) return json({ gone: true, message: 'We could not find you. Text us and we will sort it out.', office: officePhone() }, 404)
+  const prn = (app.prn && typeof app.prn === 'object') ? app.prn : {}
+  const team = tr.team === 'caregiver' ? 'caregiver' : 'cna', ax = tr.axiscare_caregiver_id ? String(tr.axiscare_caregiver_id) : null
+  const first = S(app.first_name, 40).split(/\s+/)[0] || 'there', t = today()
+  const log = async (kind: string, note: string | null = null) => {
+    const { error } = await sb.from('prn_page_log').insert({ applicant_id: aid, kind, note: note ? S(note, 600) : null, by_name: who?.name ?? null, by_email: who?.email ?? null })
+    return error
+  }
+
+  if (action === 'view' || action === 'preview') {
+    if (action === 'preview') {
+      const e = await log('office_preview')
+      if (e) return json({ error: 'Opening their page could not be recorded, so nothing is shown: ' + e.message }, 500)
+    } else await log('viewed')
+    const [plog, touches, shifts] = await Promise.all([
+      sb.from('prn_page_log').select('kind, note, at').eq('applicant_id', aid).order('at'),
+      sb.from('prn_touches').select('kind, ref, message, by_name, at').eq('applicant_id', aid),
+      ax ? sb.from('prn_shift_log').select('case_id, kind').eq('axiscare_caregiver_id', ax) : Promise.resolve({ data: [] })])
+    const sh: Any[] = shifts.data ?? []
+    const covered = sh.filter((x) => x.kind === 'confirmed' && !sh.some((o) => o.kind === 'backed_out' && o.case_id === x.case_id)).length
+    /* Offered to You: answering opens the shift page they already know, with its own link (none in the office preview) */
+    const offered = offeredTo(list(await readKey(sb, 'coverage_cases')), ax, t)
+    if (action === 'view' && secret.length >= 32) for (const o of offered) { try { o.link = await makeShiftLink(secret, o.case_id, o.ask_id, shiftDayEnd(o.shift_date)) } catch { o.link = null } }
+    for (const o of offered) delete o.ask_id
+    /* their familiar clients: first name and how recently (no last names, no addresses) */
+    let clients: Any[] = [], clientsWhy: string | null = ax ? null : 'Once you are on the schedule, the clients you care for show here.'
+    if (ax) {
+      const from = new Date(Date.parse(t + 'T12:00:00Z') - FAMILIAR_DAYS * 86_400_000).toISOString().slice(0, 10)
+      const v = await visitsOf(ax, from, t)
+      if (v.why) clientsWhy = "We couldn't load your clients just now. Check back soon."
+      else clients = familiarClients({ name: [app.first_name, app.last_name].filter(Boolean).join(' '), visits: v.rows, dnr: list(await readKey(sb, 'dnr_log')),
+        checkins: list(await readKey(sb, 'client_checkins')), answers: (touches.data ?? []).map((x: Any) => ({ ...x, applicant_id: aid })), today: t })
+          .map((c) => ({ first: S(c.client, 80).split(/\s+/)[0], last_visit: c.last, glad: c.glad, star: c.star }))
+    }
+    const av = list(await readKey(sb, 'caregiver_availability')).find((x: Any) => ax && (S(x?.axiscare_id, 20) === ax || S(x?.id, 20) === ax)) || null
+    const requested = new Set((plog.data ?? []).filter((r: Any) => r.kind === 'course_request').map((r: Any) => S(r.note, 40)))
+    const brk = /^\d{4}-\d\d-\d\d$/.test(S(prn.break_until, 10)) && S(prn.break_until, 10) >= t ? S(prn.break_until, 10) : null
+    return json({ ok: true, preview: action === 'preview', live, today: t, first, team, team_label: TEAM[team], since: S(tr.since, 10), on_schedule: !!ax,
+      looking: lookingState(plog.data ?? [], t), offered, clients, clients_why: clientsWhy,
+      thanks: thanksFor({ touches: touches.data ?? [], kindTells: list(await readKey(sb, 'kind_tells')), ax, covered, since: S(tr.since, 10), today: t }),
+      hours: { windows: av?.windows ?? null, target_hours: av?.target_hours ?? null, outside_ok: av?.outside_ok === true, updated_at: av?.updated_at ?? null,
+        short_notice_ok: typeof prn.short_notice_ok === 'boolean' ? prn.short_notice_ok : null, break_until: brk },
+      courses: COURSES.map((c) => ({ ...c, requested: requested.has(c.slug) })), office: officePhone() })
+  }
+
+  /* everything below changes something: the member only, never the office preview */
+  if (!['hours', 'short_notice', 'break', 'looking', 'course', 'idea'].includes(action)) return json({ error: 'unknown action' }, 400)
+
+  if (action === 'hours') {
+    if (!ax) return json({ error: 'Your hours can be saved once you are on the schedule. Text us in the meantime.' }, 409)
+    const h = readHours(b); if (!h.ok) return json({ error: h.error }, 400)
+    const all = list(await readKey(sb, 'caregiver_availability'))
+    const existing = all.find((x: Any) => S(x?.axiscare_id, 20) === ax || S(x?.id, 20) === ax) || null
+    const item = { ...(existing || {}), id: existing?.id ?? ax, name: [app.first_name, app.last_name].filter(Boolean).join(' '), axiscare_id: ax,
+      target_hours: h.target_hours, windows: h.windows, outside_ok: h.outside_ok, updated_at: new Date().toISOString(), source: 'self' }
+    const { error } = await sb.rpc('upsert_app_data_item', { target_key: 'caregiver_availability', item })
+    if (error) return json({ error: 'Could not save, please try again.' }, 500)
+    try { await sb.from('prn_checkins').update({ answered_at: new Date().toISOString(), how: 'prn_page' }).eq('axiscare_caregiver_id', ax).is('answered_at', null) } catch { /* the save stands */ }
+    await log('hours_saved')
+    return json({ ok: true, message: `Saved, ${first}! The office sees this right away.` })
+  }
+
+  if (action === 'short_notice' || action === 'break') {
+    let next: Any = { ...prn }, note = ''
+    if (action === 'short_notice') {
+      if (typeof b.ok !== 'boolean') return json({ error: 'Yes or no?' }, 400)
+      const rec = { ok: b.ok, by: 'Themselves', at: new Date().toISOString(), how: 'page', note: 'Told us on their PRN Team page', notice: prn.notice ?? null }
+      next = { ...next, short_notice_ok: b.ok, short_notice: rec, short_notice_history: [...(Array.isArray(prn.short_notice_history) ? prn.short_notice_history : []), rec].slice(-50) }
+      note = b.ok ? 'yes' : 'no'
+    } else {
+      const r = readBreak(b.until, t); if (!r.ok) return json({ error: r.error }, 400)
+      const rec = { until: r.until, at: new Date().toISOString(), how: 'page' }
+      next = { ...next, break_until: r.until, break_history: [...(Array.isArray(prn.break_history) ? prn.break_history : []), rec].slice(-50) }
+      note = r.until || ''
+    }
+    const { error } = await sb.from('job_applicants').update({ prn: next }).eq('id', aid)
+    if (error) return json({ error: 'Could not save, please try again.' }, 500)
+    await log(action === 'break' ? 'break_set' : 'short_notice', note || null)
+    return json({ ok: true, message: action === 'short_notice' ? 'Saved. Thank you for letting us know.'
+      : note ? "Enjoy your break. We won't text you about shifts until it ends." : "Welcome back! You'll hear about shifts again." })
+  }
+
+  if (action === 'looking') {
+    const on = b.on === true, note = S(b.note, 200)
+    await log(on ? 'looking_on' : 'looking_off', on ? note || null : null)
+    return json({ ok: true, message: on ? 'Thank you! The office will see this today.' : 'Got it.' })
+  }
+  if (action === 'course') {
+    const c = COURSES.find((k) => k.slug === S(b.slug, 40)); if (!c) return json({ error: 'Which course?' }, 400)
+    await log('course_request', c.slug)
+    return json({ ok: true, message: 'Thank you! The office will set it up and send you the link.' })
+  }
+  /* idea */
+  const text = S(b.text, 500)
+  if (text.length < 3) return json({ error: 'What would you like to share?' }, 400)
+  await log('idea', text)
+  return json({ ok: true, message: 'Thank you for sharing. The office reads every idea.' })
+})
