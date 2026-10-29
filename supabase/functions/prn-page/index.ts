@@ -33,6 +33,7 @@ import { familiarClients, FAMILIAR_DAYS } from '../_shared/prn-familiar.ts'
 import { lookingState, readHours, readBreak, offeredTo, thanksFor, COURSES, TEAM } from '../_shared/prn-page.ts'
 import { MO_FROM } from '../_shared/office-from.ts'
 import { openLive } from '../_shared/prn-open.ts'
+import { pageUpdate } from '../_shared/prn-monthly.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
@@ -118,9 +119,12 @@ Deno.serve(async (req) => {
     }
     const av = list(await readKey(sb, 'caregiver_availability')).find((x: Any) => ax && (S(x?.axiscare_id, 20) === ax || S(x?.id, 20) === ax)) || null
     const requested = new Set((plog.data ?? []).filter((r: Any) => r.kind === 'course_request').map((r: Any) => S(r.note, 40)))
+    /* step 6: the month's PRN Team update at the top (the last one sent, for 40 days; none set up yet = none) */
+    const um = await sb.from('prn_monthly').select('month, body, sent_by, sent_at').not('sent_at', 'is', null).order('month', { ascending: false }).limit(1)
+    const update = um.error ? null : pageUpdate((um.data ?? [])[0], t)
     const brk = /^\d{4}-\d\d-\d\d$/.test(S(prn.break_until, 10)) && S(prn.break_until, 10) >= t ? S(prn.break_until, 10) : null
     return json({ ok: true, preview: action === 'preview', live, open_live: openLive(st), today: t, first, team, team_label: TEAM[team], since: S(tr.since, 10), on_schedule: !!ax,
-      looking: lookingState(plog.data ?? [], t), offered, clients, clients_why: clientsWhy,
+      looking: lookingState(plog.data ?? [], t), update, offered, clients, clients_why: clientsWhy,
       thanks: thanksFor({ touches: touches.data ?? [], kindTells: list(await readKey(sb, 'kind_tells')), ax, covered, since: S(tr.since, 10), today: t }),
       hours: { windows: av?.windows ?? null, target_hours: av?.target_hours ?? null, outside_ok: av?.outside_ok === true, updated_at: av?.updated_at ?? null,
         short_notice_ok: typeof prn.short_notice_ok === 'boolean' ? prn.short_notice_ok : null, break_until: brk },
