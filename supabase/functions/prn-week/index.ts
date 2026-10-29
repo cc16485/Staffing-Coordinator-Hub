@@ -19,6 +19,10 @@
 //   goback_mark   {applicant_id, ref, answer: yes | no}: the office read an answer to "Would you be glad to go back?" (step 3).
 //   client_mark   {ref, kind: intro_planned | not_this_one}: a "no PRN backup who knows them" line, planned or set aside for
 //                 the month. Planning only records it: a person gets the family's OK and schedules it in AxisCare.
+//   welcome_call  {applicant_id, towns_times, short_notice: yes|no|not_asked, more_hours: yes|no|maybe, enjoys?, oncall?,
+//                 office_interest?, note?} (step 4): what a new member said on their welcome call. Kept on their PRN answers
+//                 (job_applicants.prn.welcome, every call in welcome_history), short notice as the PRN card's own record, on
+//                 call as an offer (PRN CNA Team only), and the line is done (prn_touches welcome_call).
 // STEP 3 (2026-10-28): week also returns each linked member's familiar clients (AxisCare visits in the last 6 months, minus
 // Do Not Return, a concern either way, or a NO to the go-back question) and adds the go-back and no-backup lines.
 // The list itself shows to everyone in the office once ops_settings.prn_week_live is on; before that the Hub shows it to
@@ -30,6 +34,7 @@ import { contactForOutbound, maySendTo, normalisePhone } from '../_shared/outrea
 import { opEvent } from '../_shared/events.ts'
 import { MO_FROM } from '../_shared/office-from.ts'   // every text goes out from (417) 234-8494
 import { computeWeek, onCallWeekends, THANKS_DEFAULT, PATTERNS, type Member } from '../_shared/prn-week.ts'
+import { welcomeLines, readCall, callSummary, WELCOME_DEFAULT } from '../_shared/prn-welcome.ts'
 import { familiarClients, noBackup, weekLines, GOBACK_DEFAULT, FAMILIAR_DAYS, type Familiar } from '../_shared/prn-familiar.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
@@ -69,13 +74,13 @@ async function visitsOf(ax: string, from: string, to: string): Promise<{ rows: A
 
 // deno-lint-ignore no-explicit-any
 async function members(sb: any): Promise<Member[]> {
-  const { data: tr } = await sb.from('pay_tracks').select('applicant_id, track, team, since, axiscare_caregiver_id').eq('track', 'prn_team')
+  const { data: tr } = await sb.from('pay_tracks').select('applicant_id, track, team, since, axiscare_caregiver_id, linked_at').eq('track', 'prn_team')
   if (!tr?.length) return []
   const { data: apps } = await sb.from('job_applicants').select('id, first_name, last_name').in('id', tr.map((t: Any) => t.applicant_id))
   return tr.map((t: Any) => { const a = (apps ?? []).find((x: Any) => x.id === t.applicant_id) || {}
     const name = [a.first_name, a.last_name].map((x: unknown) => S(x)).filter(Boolean).join(' ') || 'A PRN member'
     return { applicant_id: t.applicant_id, name, first: firstOf(a.first_name) || firstOf(name), team: t.team === 'caregiver' ? 'caregiver' : 'cna', since: S(t.since, 10),
-      axiscare_id: t.axiscare_caregiver_id ? String(t.axiscare_caregiver_id) : null } })
+      axiscare_id: t.axiscare_caregiver_id ? String(t.axiscare_caregiver_id) : null, linked_at: t.linked_at || null } })
 }
 
 Deno.serve(async (req) => {
@@ -120,13 +125,14 @@ Deno.serve(async (req) => {
     /* a client with no PRN backup is only claimed when every linked member's visits were read */
     const nb = anyWhy || !mem.some((m) => m.axiscare_id) ? [] : noBackup(allCases, Object.values(familiar).map((f) => f.clients), t)
     const extra = weekLines({ members: mem.map((m) => ({ ...m, team: m.team === 'caregiver' ? 'PRN Caregiver Team' : 'PRN CNA Team' })), touches: tc.data ?? [], nobackup: nb, clientMarks, today: t })
+    extra.push(...welcomeLines({ members: mem, touches: tc.data ?? [], today: t }))   // step 4
     const wk = computeWeek({ members: mem, shifts: sh.data ?? [], touches: tc.data ?? [], kindTo, wantsMore, cases, today: t, sender: who.name, thanksTmpl: st.prn_thanks_msg, extra })
     const oncall = onCallWeekends(oc.data ?? [], mem, t)
     return json({ ok: true, today: t, live: st.prn_week_live === true, thanks_live: st.prn_thanks_live === true, owner: S(st.prn_week_owner, 80) || 'Krystal',
       thanks_default: THANKS_DEFAULT, items: wk.items, more: wk.more,
       members: mem.map((m) => ({ applicant_id: m.applicant_id, name: m.name, team: m.team, axiscare_id: m.axiscare_id, familiar: familiar[m.applicant_id] || { clients: [], why: null } })),
       familiar_note: anyWhy ? `Familiar clients could not all be read (${anyWhy}), so no client is flagged as having no PRN backup today.` : null,
-      goback_live: st.prn_goback_live === true, goback_default: GOBACK_DEFAULT,
+      goback_live: st.prn_goback_live === true, goback_default: GOBACK_DEFAULT, welcome_live: st.prn_welcome_live === true, welcome_default: WELCOME_DEFAULT,
       oncall: { ...oncall, patterns: PATTERNS, stipend: null } })
   }
 
@@ -139,6 +145,34 @@ Deno.serve(async (req) => {
     if (error && !/duplicate|unique/i.test(error.message)) return json({ error: 'Could not record it: ' + error.message }, 500)
     await opEvent(sb, { verb: 'prn_week_' + kind, actor_name: who.name, actor_email: who.email, item_id: m.applicant_id, area: 'caregivers', summary: `${who.name}: ${kind.replace(/_/g, ' ')} for ${m.name} (${ref})` })
     return json({ outcome: error ? 'already' : 'recorded' })
+  }
+
+  if (action === 'welcome_call') {
+    const m = memberOf(b.applicant_id); if (!m) return json({ error: 'That person is not on a PRN Team.' }, 404)
+    const r = readCall(b, m.team); if (!r.ok) return json({ error: r.error }, 400)
+    const a = r.answers, at = new Date().toISOString()
+    const { data: app, error: ae } = await sb.from('job_applicants').select('prn').eq('id', m.applicant_id).maybeSingle()
+    if (ae || !app) return json({ error: 'Could not read their PRN answers: ' + (ae?.message || 'not found') }, 500)
+    const prn = (app.prn && typeof app.prn === 'object') ? app.prn : {}
+    const rec = { ...a, by: who.name || who.email, at }
+    const next: Any = { ...prn, welcome: rec, welcome_history: [...(Array.isArray(prn.welcome_history) ? prn.welcome_history : []), rec].slice(-20) }
+    if (a.office_interest) next.office_interest = { yes: true, by: who.name || who.email, at }
+    /* short notice: the same record the PRN card's Short notice answer keeps (prn-team short_notice), told on a call */
+    if (a.short_notice === 'yes' || a.short_notice === 'no') {
+      const sn = { ok: a.short_notice === 'yes', by: who.name || who.email, at, how: 'call', note: 'Welcome call', notice: prn.notice ?? null }
+      Object.assign(next, { short_notice_ok: sn.ok, short_notice: sn, short_notice_history: [...(Array.isArray(prn.short_notice_history) ? prn.short_notice_history : []), sn].slice(-50) })
+    }
+    const { error: ue } = await sb.from('job_applicants').update({ prn: next }).eq('id', m.applicant_id)
+    if (ue) return json({ error: 'Could not save their answers: ' + ue.message }, 500)
+    let oncall = 'none'
+    if (a.oncall) {
+      const { error: oe } = await sb.from('prn_oncall').insert({ applicant_id: m.applicant_id, kind: 'offer', pattern: a.oncall, note: 'Welcome call', by_email: who.email, by_name: who.name })
+      oncall = oe ? 'failed: ' + oe.message : 'recorded'
+    }
+    const { error } = await sb.from('prn_touches').insert({ applicant_id: m.applicant_id, kind: 'welcome_call', ref: 'welcome', note: callSummary(a), by_email: who.email, by_name: who.name })
+    if (error && !/duplicate|unique/i.test(error.message)) return json({ error: 'Their answers were saved, but the call could not be marked done: ' + error.message }, 500)
+    await opEvent(sb, { verb: 'prn_welcome_call', actor_name: who.name, actor_email: who.email, item_id: m.applicant_id, area: 'caregivers', summary: `${who.name}: welcome call with ${m.name}`, data: { answers: a } })
+    return json({ outcome: error ? 'already' : 'recorded', oncall })
   }
 
   if (action === 'goback_mark') {

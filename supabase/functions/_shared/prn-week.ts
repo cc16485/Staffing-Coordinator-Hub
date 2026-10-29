@@ -11,6 +11,7 @@
 //   checkin     on the team 30+ days and nobody has been in touch personally in 30 days (a thank-you, a card, a call or
 //               kind words count; asking them to cover a shift does not): worth a call. Never shown as a mark against them.
 // "Not this one" takes a line off for good (thanks, milestone) or for this week (hours, check-in).
+//   welcome     (step 4) a new member's welcome call, first 2 weeks after they're linked in AxisCare (_shared/prn-welcome.ts)
 // Later steps add their own lines here: looking for hours and interest to review (the PRN Team page, step 5), and a client
 // with no PRN backup who knows them (familiar clients, step 3).
 // Only decisions here (no reads or writes), so every rule is tested.
@@ -22,9 +23,9 @@ const DAY = 86_400_000
 export const CAP = 8
 export const THANKS_DAYS = 21, HOURS_IDLE_DAYS = 14, QUIET_DAYS = 30, MILESTONE_SHIFTS = 10
 
-export type Member = { applicant_id: string; name: string; first: string; team: 'cna' | 'caregiver'; since: string; axiscare_id: string | null }
-export type Item = { id: string; kind: 'thanks' | 'milestone' | 'hours' | 'checkin' | 'goback' | 'nobackup'; applicant_id: string; name: string; team: string; ref: string;
-  title: string; detail: string; draft?: string; case_id?: string; shift_date?: string | null; client?: string; client_ax?: string | null; answer?: string }
+export type Member = { applicant_id: string; name: string; first: string; team: 'cna' | 'caregiver'; since: string; axiscare_id: string | null; linked_at?: string | null }
+export type Item = { id: string; kind: 'welcome' | 'thanks' | 'milestone' | 'hours' | 'checkin' | 'goback' | 'nobackup'; applicant_id: string; name: string; team: string; ref: string;
+  title: string; detail: string; draft?: string; case_id?: string; shift_date?: string | null; client?: string; client_ax?: string | null; answer?: string; team_key?: string }
 
 /** Monday of the week (Central date string in, 'YYYY-MM-DD' out): the "this week" a weekly line belongs to. */
 export function weekOf(today: string): string {
@@ -87,7 +88,7 @@ export function computeWeek(x: { members: Member[]; shifts: Any[]; touches: Any[
         title: `${m.first || m.name} would like more hours`, detail: `About ${want} a week` + (lastShift ? `; last PRN shift ${dayWord(lastShift, x.today).replace(/^on /, '')}.` : '; no PRN shift yet.') })
     /* quiet: nobody in touch personally in 30 days */
     if (days(m.since, x.today) >= QUIET_DAYS) {
-      const personal = x.touches.filter((t) => t.applicant_id === m.applicant_id && t.kind !== 'not_this_one' && !String(t.kind).startsWith('goback_')).map((t) => S(t.at, 10))
+      const personal = x.touches.filter((t) => t.applicant_id === m.applicant_id && t.kind !== 'not_this_one' && t.kind !== 'welcome_sent' && !String(t.kind).startsWith('goback_')).map((t) => S(t.at, 10))
       if (m.axiscare_id && x.kindTo[m.axiscare_id]) personal.push(S(x.kindTo[m.axiscare_id], 10))
       const last = personal.sort().pop() || null
       if (days(last, x.today) > QUIET_DAYS && !touched(m.applicant_id, ['called', 'not_this_one'], 'checkin:' + wk))
@@ -95,8 +96,8 @@ export function computeWeek(x: { members: Member[]; shifts: Any[]; touches: Any[
           title: `Check in with ${m.first || m.name}`, detail: (last ? `Last personal contact ${dayWord(last, x.today).replace(/^on /, '')}` : 'No personal contact recorded yet') + '. Worth a call.' })
     }
   }
-  out.push(...(x.extra || []))   // step 3: go-back answers to mark and clients with no PRN backup (_shared/prn-familiar.ts)
-  const order: Record<string, number> = { thanks: 0, goback: 1, nobackup: 2, milestone: 3, hours: 4, checkin: 5 }
+  out.push(...(x.extra || []))   // step 3: go-back answers and clients with no PRN backup (_shared/prn-familiar.ts); step 4: welcome calls (_shared/prn-welcome.ts)
+  const order: Record<string, number> = { welcome: -1, thanks: 0, goback: 1, nobackup: 2, milestone: 3, hours: 4, checkin: 5 }
   out.sort((a, b) => (order[a.kind] - order[b.kind]) || S(b.shift_date).localeCompare(S(a.shift_date)) || a.name.localeCompare(b.name))
   return { items: out.slice(0, CAP), more: Math.max(0, out.length - CAP) }
 }
