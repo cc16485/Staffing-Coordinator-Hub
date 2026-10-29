@@ -5,7 +5,8 @@
 // One phone page per PRN member, from their own sealed link (no login). Part 5a shows: their team, "I'm looking for hours",
 // Offered to You (shifts we texted them about; answering opens the shift page they already know), their familiar clients,
 // thank-yous and kind words the office already sent them, My hours (days and times, hours a week, outside-hours texts, short
-// notice, a break), optional courses ("I'd like to take this"), and Talk to us. Part 5b adds open shifts with I'm Interested.
+// notice, a break), optional courses ("I'd like to take this"), and Talk to us. Part 5b adds open shifts with I'm Interested
+// (_shared/prn-open.ts); a shift they said they were interested in then shows in Offered to You, marked from_page.
 // The office sees it read-only from the Hub ("See what Grace sees"), and each look is recorded.
 // Only decisions here (no reads or writes), so every rule is tested.
 // =============================================================================
@@ -61,7 +62,8 @@ export function offeredTo(cases: Any[], ax: string | null, today: string): Any[]
     const ask = (Array.isArray(c.asked) ? c.asked : []).find((a: Any) => S(a?.axiscare_id, 20) === ax && a?.id)
     if (!ask || ['closed_notified', 'closed_silent'].includes(S(ask.state, 30))) continue
     out.push({ case_id: S(c.id, 100), ask_id: S(ask.id, 100), client_first: S(c.client, 80).split(/\s+/)[0] || 'A client', town: S(c.client_city, 60) || null,
-      shift_date: d, shift_time: S(c.shift_time, 11) || null, answered: ['yes', 'no', 'inquiry'].includes(S(ask.state, 20)) ? S(ask.state, 20) : null })
+      shift_date: d, shift_time: S(c.shift_time, 11) || null, answered: ['yes', 'no', 'inquiry'].includes(S(ask.state, 20)) ? S(ask.state, 20) : null,
+      from_page: ask.from_prn_page === true })
   }
   return out.sort((a, b) => a.shift_date.localeCompare(b.shift_date) || S(a.shift_time).localeCompare(S(b.shift_time)))
 }

@@ -54,7 +54,8 @@ const nk = (n: unknown) => S(n, 80).toLowerCase().replace(/[^a-z ]/g, '').replac
 export function contactOf(kase: Any, p: { name?: string; axiscare_id?: string | null }): Any {
   const a = (Array.isArray(kase?.asked) ? kase.asked : []).filter((x: Any) => x && ((p.axiscare_id && S(x.axiscare_id) === S(p.axiscare_id)) || nk(x.name) === nk(p.name))).at(-1)
   if (!a) return null
-  return { at: a.at ?? null, state: a.state ?? 'waiting', how: a.cara_wave ? `Cara wave ${a.cara_wave}` : a.picked_by_coordinator ? 'the office' : 'by phone', by_text: a.auto === true || a.picked_by_coordinator === true }
+  return { at: a.at ?? null, state: a.state ?? 'waiting', how: a.from_prn_page ? 'their PRN Team page' : a.cara_wave ? `Cara wave ${a.cara_wave}` : a.picked_by_coordinator ? 'the office' : 'by phone',
+    by_text: a.auto === true || a.picked_by_coordinator === true, ...(a.from_prn_page ? { interested_on_page: true } : {}) }   // PRN step 5b: "Interested (from their PRN page)"
 }
 export function approvalOf(kase: Any, p: { axiscare_id?: string | null; name?: string }): Any {
   const key = `${S(kase?.shift_date, 10)}|${S(kase?.shift_time, 20)}`

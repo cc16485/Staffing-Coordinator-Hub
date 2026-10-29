@@ -68,6 +68,8 @@ import { judgeForWaves, pickWaveV2, bandsOfTimes, caseBands, sameTimeOfDay } fro
 import { skillCode, threeGroups, checkApproval } from '../_shared/ask-list.ts'
 import { conflictsFor, readRange, wallMin, workingNow, withWorkingNow } from '../_shared/overlap.ts'   // already working then (her top priority, 2026-10-25)   // the three-group ask list (2026-10-24), switch ask_list_live   // her wave rules (2026-10-24), switch cara_wave_rules_live
 import { onBreak } from '../_shared/prn-break.ts'
+import { openCandidates, eligibleOn, openView, interestAsk, interestCardLine, interestOfficeText, isOngoing as prnOngoingCase } from '../_shared/prn-open.ts'   // PRN step 5b
+import { visitMatches } from '../_shared/shift-offer.ts'
 
 /* Straight-line miles between two zips' Census centroids — an honest
    estimate for "who lives closest", never a route. Null when either zip
@@ -1745,6 +1747,27 @@ Deno.serve(async (req) => {
       }
       return jr({ read_only: true, window: probeCase, read_range: range, visits_read: r.rows.length, working, cases })
     }
+    /* PRN STEP 5b (2026-10-29): the open shifts one PRN member's page may show (owner's server key only: prn-page calls it).
+       Each shift is judged by its own ask list, exactly as the office sees it (_shared/prn-open.ts eligibleOn). AxisCare
+       unreadable for any of them = none shown. Read only; texts nobody. */
+    if (body.action === 'prn_open') {
+      if (!ownerCall) return jr({ error: 'owner key only' }, 403)
+      const ax = String(body.axiscare_id || '').replace(/\D/g, '')
+      if (!ax) return jr({ shifts: [], held: null })
+      const { data: setO } = await sb.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
+      const { data: ccO } = await sb.from('app_data').select('data').eq('key', 'coverage_cases').maybeSingle()
+      const nowN = chiNowNaive(), todayO = nowN.slice(0, 10)
+      const shifts = []
+      for (const k of openCandidates(Array.isArray(ccO?.data) ? ccO!.data : [], ax, todayO, nowN)) {
+        const lists = await askListFor(k, setO?.data ?? {})
+        if (lists.meta?.schedule?.held || lists.meta?.schedule?.checked === false) return jr({ shifts: [], held: 'We can\'t check the schedule right now, so open shifts aren\'t shown. Check back soon.' })
+        const e = eligibleOn(lists.groups, ax); if (!e) continue
+        shifts.push(openView(k, e, k.client_city || (lists.meta?.client_city as string) || null))
+      }
+      // deno-lint-ignore no-explicit-any
+      shifts.sort((a: any, b: any) => (a.familiar === b.familiar ? 0 : a.familiar ? -1 : 1) || `${a.shift_date}${a.shift_time}`.localeCompare(`${b.shift_date}${b.shift_time}`))
+      return jr({ shifts, held: null })
+    }
     const kase = await readCaseFresh(String(body.case_id || ''))
     if (!kase) return jr({ error: 'no such coverage case' }, 404)
     /* CARA PHASE 2 PART A: the run on this case, its history and what still needs the office. Read only; also for a closed case. */
@@ -1765,6 +1788,64 @@ Deno.serve(async (req) => {
     /* J1: only a shift that is still open (the Hub only shows the picker for open cases). */
     if (kase.status !== 'open') return jr({ error: 'this coverage case is no longer open, so nobody can be asked from it' }, 409)
 
+    /* PRN STEP 5b: I'M INTERESTED from a PRN member's page (owner's server key only: prn-page calls it after checking their
+       link and the switches). Her pick 2026-10-29: the same as a Yes on the shift page. Checked again now: a one-time shift,
+       the hours they saw, not started, AxisCare's visit unchanged, and still on the ask list in a way their page may show.
+       Then a Yes goes on the case under its lock, the office gets the Yes card and the first-yes text. Nobody is assigned. */
+    if (body.action === 'prn_interest') {
+      if (!ownerCall) return jr({ error: 'owner key only' }, 403)
+      const ax = String(body.axiscare_id || '').replace(/\D/g, ''), key = `${String(kase.shift_date || '')}|${String(kase.shift_time || '')}`
+      if (!ax) return jr({ error: 'Once you are on the schedule you can say you are interested. Text us in the meantime.' }, 409)
+      if (prnOngoingCase(kase)) return jr({ error: 'This shift is no longer open. Thank you for looking!' }, 409)
+      if (String(body.shift_key || '') !== key) return jr({ error: 'This shift changed while you were looking. Please look at the new details.', changed: true }, 409)
+      if (`${key.slice(0, 10)}T${key.slice(11, 16)}` <= chiNowNaive()) return jr({ error: 'This shift has started. Thank you for looking!' }, 409)
+      // deno-lint-ignore no-explicit-any
+      if ((kase.asked || []).some((a: any) => String(a?.axiscare_id || '') === ax)) return jr({ error: 'You are already on this shift. See Offered to You.', already: true }, 409)
+      if (kase.axiscare_visit_id) {
+        const { token, site } = axisCreds()
+        let vn = 'unchecked'
+        if (token && site) try {
+          const r = await fetch(`https://${site}.axiscare.com/api/visits/${encodeURIComponent(String(kase.axiscare_visit_id))}`, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'X-AxisCare-Api-Version': Deno.env.get('AXISCARE_API_VERSION') || '2023-10-01' } })
+          // deno-lint-ignore no-explicit-any
+          vn = r.status === 404 ? 'closed' : !r.ok ? 'unchecked' : visitMatches(kase, ((j: any) => j?.results?.visit ?? j?.results ?? null)(await r.json().catch(() => ({}))))
+        } catch { vn = 'unchecked' }
+        if (vn === 'closed') return jr({ error: 'This shift is no longer open. Thank you for looking!' }, 409)
+        if (vn === 'changed') return jr({ error: 'This shift changed. Please look at the new details.', changed: true }, 409)
+        if (vn === 'unchecked') return jr({ error: 'We can\'t check the schedule right now, so this wasn\'t saved. Please try again in a few minutes, or text us.' }, 503)
+      }
+      const { data: setI } = await sb.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
+      const stI = setI?.data ?? {}
+      const lists = await askListFor(kase, stI)
+      if (lists.meta?.schedule?.held || lists.meta?.schedule?.checked === false) return jr({ error: 'We can\'t check the schedule right now, so this wasn\'t saved. Please try again in a few minutes, or text us.' }, 503)
+      if (!eligibleOn(lists.groups, ax)) return jr({ error: 'This shift is no longer one we can offer you. Thank you for looking!' }, 409)
+      // deno-lint-ignore no-explicit-any
+      const row = [...(lists.groups.ready || []), ...(lists.groups.review || [])].find((r: any) => String(r?.axiscare_id || '') === ax)
+      const name = String(row?.name || body.name || 'A PRN member').slice(0, 80), phone = normalisePhone(String(body.phone || '')) || null
+      const ghlI = { token: Deno.env.get('GHL_TOKEN') ?? '', locationId: Deno.env.get('GHL_LOCATION_ID') ?? '' }
+      /* their GoHighLevel contact, through the do-not-text door, so the "covered this time" text can reach them later
+         (nothing is sent now; refused or opted out = no contact, and the Yes still stands) */
+      let contactId: string | null = null
+      if (phone && ghlI.token) { try { const ct = await contactForOutbound(sb, ghlI, { phone, firstName: name.split(' ')[0] }, 'urgent_internal', { audience: 'caregiver', channel: 'sms', sender: 'coverage-run' }); contactId = ct?.contactId ?? null } catch { contactId = null } }
+      // deno-lint-ignore no-explicit-any
+      const hadYes = (kase.asked || []).some((x: any) => x?.state === 'yes')
+      const ask = interestAsk({ id: uid(), name, phone, ax, contactId, key, now: nowIso() })
+      const { data: held, error: holdErr } = await sb.rpc('coverage_case_add_ask', { p_id: String(kase.id), p_ask: ask })
+      if (holdErr || held !== 'added') return jr(held === 'already_asked' ? { error: 'You are already on this shift. See Offered to You.', already: true } : { error: held === 'not_open' ? 'This shift is no longer open. Thank you for looking!' : 'Not saved. Please try again in a minute.' }, held === 'already_asked' || held === 'not_open' ? 409 : 500)
+      const clientFirst = String(kase.client || '').split(' ')[0]
+      await opEvent(sb, { job: 'coverage-run', verb: 'yes_received', item_id: String(kase.id), area: 'coverage', actor_name: name,
+        summary: interestCardLine(name, String(kase.client || ''), String(kase.shift_date || ''), String(kase.shift_time || '')) })
+      const fresh = await readCaseFresh(String(kase.id))
+      // deno-lint-ignore no-explicit-any
+      const yeses = ((fresh?.asked || []) as any[]).filter((x) => x?.state === 'yes')
+      await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { id: `ops_covfill_${kase.id}`, kind: 'coverage', coverage_case_id: String(kase.id),
+        title: `${yeses.length} answered yes for ${kase.client || 'the shift'}. Pick on the board`, about: kase.client || '',
+        detail: 'Said yes so far: ' + yeses.map((x) => `${x.name}${x.reply ? ` ("${String(x.reply).slice(0, 70)}")` : ''}`).join('; ') + '. A yes is interest only; nobody is assigned until the office confirms.',
+        domain: 'scheduling_coverage', status: 'open', urgency: 'high', created_at: nowIso(), due: new Date(Date.now() + 3600000).toISOString(), owner: '', owner_name: '', created_by: 'prn-page', opened_by: 'callout' } })
+      if (!hadYes && ghlI.token && ghlI.locationId) {
+        try { await textCaseAdmins(sb, ghlI, stI, kase, (link) => withLink(interestOfficeText(name.split(' ')[0], clientFirst, String(kase.shift_date || ''), String(kase.shift_time || '')), link), { onlyAlerted: true, allIfNoneRecorded: true }) } catch { /* the card is there */ }
+      }
+      return jr({ ok: true, added: true })
+    }
     if (body.action === 'candidates') {
       const out = await buildCandidatesForCase(kase)
       return jr(out)
@@ -3364,7 +3445,7 @@ Deno.serve(async (req) => {
           } catch { /* family notify must never block closure */ }
         }
 
-        const eligibleAsk = (a: any) => (a.auto === true || a.picked_by_coordinator === true) && a.ghl_contact_id
+        const eligibleAsk = (a: any) => (a.auto === true || a.picked_by_coordinator === true || a.from_prn_page === true) && a.ghl_contact_id   // PRN step 5b: a Yes from their page hears how it ended
         const waiting = askedList.filter((a: any) => eligibleAsk(a) && a.state === 'waiting')
         /* COLLECT-ALL-YESES (her rule, 2026-09-19: "we want to pick the best
            option out of all the yeses"): everyone who said yes was promised

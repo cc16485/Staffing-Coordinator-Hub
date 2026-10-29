@@ -14,7 +14,14 @@
 //   looking     {p, e, t, on, note}: "I'm looking for hours", on for 7 days; shows on This week.
 //   course      {p, e, t, slug}: "I'd like to take this"; shows on This week. The office assigns it on the Training Platform.
 //   idea        {p, e, t, text}: "Share an idea"; shows on This week.
+//   open        {p, e, t} (or open_preview {applicant_id} + a Hub sign-in): PRN step 5b, the open shifts their page may show,
+//               judged by each shift's own ask list (coverage-run prn_open; rules in _shared/prn-open.ts). Loaded after the
+//               page so it opens fast.
+//   interested  {p, e, t, case_id, shift_key}: "I'm Interested", a Yes on that shift (coverage-run prn_interest checks it all
+//               again). Nobody is assigned until a coordinator confirms it in AxisCare.
 // Switch ops_settings.prn_page_live (off): members get "This page isn't open yet" and nothing is saved; the office preview works.
+// Open shifts also need ops_settings.prn_open_shifts_live (off: no open shifts and no I'm Interested; the office preview shows
+// what they would see, marked as waiting).
 // Never shown: pay, ratings, other people, addresses, last names. Nothing here texts anyone.
 // =============================================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
@@ -25,6 +32,7 @@ import { visitsOf } from '../_shared/axis-visits.ts'
 import { familiarClients, FAMILIAR_DAYS } from '../_shared/prn-familiar.ts'
 import { lookingState, readHours, readBreak, offeredTo, thanksFor, COURSES, TEAM } from '../_shared/prn-page.ts'
 import { MO_FROM } from '../_shared/office-from.ts'
+import { openLive } from '../_shared/prn-open.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
@@ -52,7 +60,7 @@ Deno.serve(async (req) => {
 
   /* who: the member from their link, or the office previewing one member */
   let aid = '', who: Any = null
-  if (action === 'preview') {
+  if (action === 'preview' || action === 'open_preview') {
     who = await requireStaff(sb, req, OFFICE_ROLES)
     if (!who.ok) return json({ error: who.error }, who.status)
     aid = S(b.applicant_id, 40).toLowerCase()
@@ -69,6 +77,15 @@ Deno.serve(async (req) => {
   const prn = (app.prn && typeof app.prn === 'object') ? app.prn : {}
   const team = tr.team === 'caregiver' ? 'caregiver' : 'cna', ax = tr.axiscare_caregiver_id ? String(tr.axiscare_caregiver_id) : null
   const first = S(app.first_name, 40).split(/\s+/)[0] || 'there', t = today()
+  /* the board's own engine, server to server (its ask list, its safety checks; nothing copied here) */
+  const engine = async (body: Record<string, unknown>) => {
+    const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
+    try {
+      const r = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/coverage-run`, { method: 'POST',
+        headers: { Authorization: 'Bearer ' + key, apikey: key, 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      return { ok: r.ok, status: r.status, j: await r.json().catch(() => ({})) }
+    } catch { return { ok: false, status: 0, j: {} } }
+  }
   const log = async (kind: string, note: string | null = null) => {
     const { error } = await sb.from('prn_page_log').insert({ applicant_id: aid, kind, note: note ? S(note, 600) : null, by_name: who?.name ?? null, by_email: who?.email ?? null })
     return error
@@ -102,12 +119,32 @@ Deno.serve(async (req) => {
     const av = list(await readKey(sb, 'caregiver_availability')).find((x: Any) => ax && (S(x?.axiscare_id, 20) === ax || S(x?.id, 20) === ax)) || null
     const requested = new Set((plog.data ?? []).filter((r: Any) => r.kind === 'course_request').map((r: Any) => S(r.note, 40)))
     const brk = /^\d{4}-\d\d-\d\d$/.test(S(prn.break_until, 10)) && S(prn.break_until, 10) >= t ? S(prn.break_until, 10) : null
-    return json({ ok: true, preview: action === 'preview', live, today: t, first, team, team_label: TEAM[team], since: S(tr.since, 10), on_schedule: !!ax,
+    return json({ ok: true, preview: action === 'preview', live, open_live: openLive(st), today: t, first, team, team_label: TEAM[team], since: S(tr.since, 10), on_schedule: !!ax,
       looking: lookingState(plog.data ?? [], t), offered, clients, clients_why: clientsWhy,
       thanks: thanksFor({ touches: touches.data ?? [], kindTells: list(await readKey(sb, 'kind_tells')), ax, covered, since: S(tr.since, 10), today: t }),
       hours: { windows: av?.windows ?? null, target_hours: av?.target_hours ?? null, outside_ok: av?.outside_ok === true, updated_at: av?.updated_at ?? null,
         short_notice_ok: typeof prn.short_notice_ok === 'boolean' ? prn.short_notice_ok : null, break_until: brk },
       courses: COURSES.map((c) => ({ ...c, requested: requested.has(c.slug) })), office: officePhone() })
+  }
+
+  /* OPEN SHIFTS (step 5b): read only. The office preview shows them whatever the switch, so the office sees what would show. */
+  if (action === 'open' || action === 'open_preview') {
+    if (action === 'open' && !openLive(st)) return json({ ok: true, shifts: [], open_live: false })
+    if (!ax) return json({ ok: true, shifts: [], open_live: openLive(st), why: 'Once you are on the schedule, open shifts that fit you show here.' })
+    const r = await engine({ action: 'prn_open', axiscare_id: ax })
+    if (!r.ok) return json({ ok: true, shifts: [], open_live: openLive(st), why: "We couldn't load open shifts just now. Check back soon." })
+    return json({ ok: true, shifts: Array.isArray(r.j?.shifts) ? r.j.shifts : [], open_live: openLive(st), why: r.j?.held || null })
+  }
+  if (action === 'interested') {
+    if (!openLive(st)) return json({ error: "Open shifts aren't on your page yet. Text us if you'd like more hours." }, 409)
+    if (!ax) return json({ error: 'Once you are on the schedule you can say you are interested. Text us in the meantime.' }, 409)
+    const caseId = S(b.case_id, 100), key = S(b.shift_key, 40)
+    if (!caseId || !key) return json({ error: 'Which shift?' }, 400)
+    const { data: ap } = await sb.from('job_applicants').select('phone').eq('id', aid).maybeSingle()
+    const r = await engine({ action: 'prn_interest', case_id: caseId, axiscare_id: ax, shift_key: key, phone: ap?.phone ?? null, name: [app.first_name, app.last_name].filter(Boolean).join(' ') })
+    if (!r.ok) return json({ error: S(r.j?.error, 200) || 'Not saved. Please try again in a minute.', changed: r.j?.changed === true, already: r.j?.already === true }, r.status === 503 ? 503 : 409)
+    await log('interested', caseId)
+    return json({ ok: true, message: `Thank you, ${first}! The office will look at it and let you know. Nothing is set until they confirm it with you.` })
   }
 
   /* everything below changes something: the member only, never the office preview */
