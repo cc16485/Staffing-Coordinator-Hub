@@ -8,12 +8,17 @@
 //
 // PRACTICE until ops_settings.prn_welcome_live === true: it works out who would be welcomed and says so, and sends and
 // records nothing. ?dry=1 is always practice. Runs on its weekday schedule (the vault secret) or the owner's key.
+// STEP 5a (2026-10-29): with the PRN Team page open, the welcome can carry their page link (prn_welcome_link_live), and the
+// same run sends "your PRN Team page is ready" once to members who joined before (prn_page_ready_live). Rules in
+// _shared/prn-page-texts.ts. Each is practice until its switch is on, the same way.
 // =============================================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { contactForOutbound, normalisePhone } from '../_shared/outreach.ts'
 import { jobCaller } from '../_shared/job-auth.ts'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
 import { dueWelcomes, welcomeText } from '../_shared/prn-welcome.ts'
+import { dueReady, keptMessage, linkSwitches, pageReadyText, welcomeWithLink } from '../_shared/prn-page-texts.ts'
+import { makePageLink, pageExpiry } from '../_shared/prn-page-links.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -49,18 +54,21 @@ Deno.serve(async (req) => {
   // deno-lint-ignore no-explicit-any
   const st: any = stRow?.data ?? {}
   const dry = q.get('dry') === '1', live = st.prn_welcome_live === true && !dry
+  const sw = linkSwitches(st), secret = Deno.env.get('HUB_JOB_SECRET') ?? ''
+  const pageLink = async (aid: string) => secret.length >= 32 ? await makePageLink(secret, aid, pageExpiry()).catch(() => '') : ''
   if (!dry && !inWindow()) return json({ ok: true, held: 'outside weekdays 10am to 5pm Central', live })
 
   const { data: tracks, error: te } = await db.from('pay_tracks').select('applicant_id, track, team, linked_at, axiscare_caregiver_id').eq('track', 'prn_team')
   if (te) return json({ error: 'could not read the PRN Teams: ' + te.message }, 500)
   const ids = (tracks ?? []).map((t: { applicant_id: string }) => t.applicant_id)
-  const { data: touches, error: ce } = ids.length ? await db.from('prn_touches').select('applicant_id, kind, ref').in('applicant_id', ids) : { data: [], error: null }
+  const { data: touches, error: ce } = ids.length ? await db.from('prn_touches').select('applicant_id, kind, ref, message').in('applicant_id', ids) : { data: [], error: null }
   if (ce) return json({ error: 'The PRN records are not set up yet (prn_week.sql).' }, 500)
   const due = dueWelcomes(tracks ?? [], touches ?? [], today())
   const { data: rosterRow } = await db.from('app_data').select('data').eq('key', 'caregivers').maybeSingle()
   // deno-lint-ignore no-explicit-any
   const roster: any[] = Array.isArray(rosterRow?.data) ? rosterRow!.data : []
-  const out = { live, due: due.length, texted: 0, no_phone: 0, refused: 0, failed: 0, would_welcome: [] as string[] }
+  const out = { live, due: due.length, texted: 0, no_phone: 0, refused: 0, failed: 0, would_welcome: [] as string[], with_page_link: sw.welcome,
+    ready_live: sw.ready && !dry, ready_due: 0, ready_texted: 0, ready_no_phone: 0, ready_refused: 0, ready_failed: 0, would_ready: [] as string[] }
   const ghl = { token: Deno.env.get('GHL_TOKEN') || Deno.env.get('GHL_API_KEY') || '', locationId: Deno.env.get('GHL_LOCATION_ID') ?? '' }
   for (const d of due) {
     const g = roster.find((x) => x?.active !== false && String(x?.axiscare_id ?? '') === String(d.axiscare_caregiver_id))
@@ -68,7 +76,9 @@ Deno.serve(async (req) => {
     const first = S(g?.first, 40).split(/\s+/)[0] || S(ap?.first_name, 40).split(/\s+/)[0]
     const phone = normalisePhone(g?.phone) || normalisePhone(ap?.phone)
     if (!phone) { out.no_phone++; continue }
-    const message = welcomeText(st.prn_welcome_msg, first, d.team === 'caregiver' ? 'caregiver' : 'cna')
+    let message = welcomeText(st.prn_welcome_msg, first, d.team === 'caregiver' ? 'caregiver' : 'cna'), link = ''
+    if (sw.welcome && live) { link = await pageLink(d.applicant_id); if (!link) { out.failed++; continue } message = welcomeWithLink(message, link) }
+    else message = message.replaceAll('{link}', '').replace(/\s{2,}/g, ' ').trim()
     if (!live) { out.would_welcome.push([first, S(ap?.last_name, 1)].filter(Boolean).join(' ') + (d.team === 'caregiver' ? ' (PRN Caregiver Team)' : ' (PRN CNA Team)')); continue }
     if (!ghl.token || !ghl.locationId) { out.failed++; continue }
     const contact = await contactForOutbound(db, ghl, { phone, firstName: first || 'there', lastName: S(ap?.last_name, 40) || undefined }, 'routine_internal',
@@ -77,9 +87,33 @@ Deno.serve(async (req) => {
     const ok = await ghlSendChecked(db, { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
       'prn-welcome', { channel: 'sms', contactId: contact.contactId, address: phone, who: first }, { message })
     if (!ok) { out.failed++; continue }
-    await db.from('prn_touches').insert({ applicant_id: d.applicant_id, kind: 'welcome_sent', ref: 'welcome', message, by_email: 'automatic', by_name: 'Caring Companions (automatic)' })
+    await db.from('prn_touches').insert({ applicant_id: d.applicant_id, kind: 'welcome_sent', ref: 'welcome', message: keptMessage(message, link), by_email: 'automatic', by_name: 'Caring Companions (automatic)' })
     out.texted++
   }
-  if (!dry) await beat(db, out.failed === 0, JSON.stringify({ ...out, would_welcome: out.would_welcome.length }))
+
+  /* "your PRN Team page is ready": once, to members who joined before the welcome could carry the link */
+  const ready = dueReady(tracks ?? [], touches ?? [], today())
+  out.ready_due = ready.length
+  for (const d of ready) {
+    const g = roster.find((x) => x?.active !== false && String(x?.axiscare_id ?? '') === String(d.axiscare_caregiver_id))
+    const { data: ap } = await db.from('job_applicants').select('first_name, last_name, phone').eq('id', d.applicant_id).maybeSingle()
+    const first = S(g?.first, 40).split(/\s+/)[0] || S(ap?.first_name, 40).split(/\s+/)[0]
+    const phone = normalisePhone(g?.phone) || normalisePhone(ap?.phone)
+    if (!phone) { out.ready_no_phone++; continue }
+    if (!out.ready_live) { out.would_ready.push([first, S(ap?.last_name, 1)].filter(Boolean).join(' ') + (d.team === 'caregiver' ? ' (PRN Caregiver Team)' : ' (PRN CNA Team)')); continue }
+    const link = await pageLink(d.applicant_id)
+    if (!ghl.token || !ghl.locationId || !link) { out.ready_failed++; continue }
+    const contact = await contactForOutbound(db, ghl, { phone, firstName: first || 'there', lastName: S(ap?.last_name, 40) || undefined }, 'routine_internal',
+      { audience: 'caregiver', channel: 'sms', sender: 'prn-welcome' })
+    if (!contact) { out.ready_refused++; continue }
+    const message = pageReadyText(st.prn_page_ready_msg, first, link)
+    const ok = await ghlSendChecked(db, { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
+      'prn-welcome', { channel: 'sms', contactId: contact.contactId, address: phone, who: first }, { message })
+    if (!ok) { out.ready_failed++; continue }
+    await db.from('prn_touches').insert({ applicant_id: d.applicant_id, kind: 'page_ready_sent', ref: 'page_ready', message: keptMessage(message, link),
+      by_email: 'automatic', by_name: 'Caring Companions (automatic)' })
+    out.ready_texted++
+  }
+  if (!dry) await beat(db, out.failed === 0 && out.ready_failed === 0, JSON.stringify({ ...out, would_welcome: out.would_welcome.length, would_ready: out.would_ready.length }))
   return json({ ok: true, ...out })
 })
