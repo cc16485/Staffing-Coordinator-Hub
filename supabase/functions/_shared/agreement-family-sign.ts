@@ -28,7 +28,7 @@ export async function familySign(db: Any, r: Any, b: Any, meta: { ip: string; ag
   if (!signatureOk(b.signature)) problems.push({ field: 'signature', error: 'Please sign with your finger in the box.' })
   if (problems.length) return [422, { error: 'A few things are still needed before signing.', problems }]
   const at = new Date().toISOString()
-  const path = `sig/${r.axiscare_client_id}/${r.id}-client-${stampOf(at)}.png`
+  const path = `sig/${r.axiscare_client_id || 'lead-' + r.lead_id}/${r.id}-client-${stampOf(at)}.png`   // 2026-10-30: a lead has no AxisCare number yet
   const up = await db.storage.from(BUCKET).upload(path, pngBytes(b.signature), { contentType: 'image/png', upsert: false })
   if (up.error) throw up.error
   const taps = Object.fromEntries(Object.entries(b.initials || {}).filter(([k]) => k in INITIALS || k === 'poa').map(([k, v]) => [k, S(v, 40)]))

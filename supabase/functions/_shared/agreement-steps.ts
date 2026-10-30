@@ -10,6 +10,7 @@
 // "Uploaded to AxisCare" (SOC p3, journey ax.docs) stays a person's tick: AxisCare's API cannot take documents.
 // A step already done is never touched. Paper agreements (her answer "Keep paper as a backup") are ticked by hand as before.
 // Best effort: never throws, never blocks the countersign; returns what it did for the countersign screen.
+// 2026-10-30: an agreement signed while the client is still a lead (no AxisCare number) finds its lead and journey by lead_id.
 // =============================================================================
 // deno-lint-ignore no-explicit-any
 type Any = any
@@ -31,12 +32,12 @@ export function tickSoc(lead: Any, p: { at: string; by: string; how: string; whe
   return changed ? { ...lead, soc: { ...soc, steps } } : null
 }
 
-async function socPart(db: Any, ax: string, p: { at: string; by: string; how: string; when: string }): Promise<StepsResult['soc']> {
+async function socPart(db: Any, ax: string, leadId: string, p: { at: string; by: string; how: string; when: string }): Promise<StepsResult['soc']> {
   for (let attempt = 0; attempt < 2; attempt++) {
     const { data: row, error } = await db.from('app_data').select('data').eq('key', 'leads').maybeSingle()
     if (error) return 'error'
     const leads: Any[] = Array.isArray(row?.data) ? row.data : []
-    const mine = leads.filter((l) => String(l?.axiscare_client_id ?? '') === ax && l?.soc && l.soc.pathway === 'PP' && !l.soc.abandoned)
+    const mine = leads.filter((l) => ((ax && String(l?.axiscare_client_id ?? '') === ax) || (leadId && String(l?.id ?? '') === leadId)) && l?.soc && l.soc.pathway === 'PP' && !l.soc.abandoned)
     if (!mine.length) return 'no_soc'
     let any = false, conflict = false
     for (const lead of mine) {
@@ -52,9 +53,14 @@ async function socPart(db: Any, ax: string, p: { at: string; by: string; how: st
 }
 
 async function journeyPart(db: Any, r: Any, p: { at: string; by: string; how: string }): Promise<StepsResult['journey']> {
-  const { data: js, error } = await db.from('client_journey').select('journey_id, status, is_test, created_at').eq('subject', 'client').eq('axiscare_client_id', String(r.axiscare_client_id))
-  if (error) return 'error'
-  const list = (js ?? []).filter((j: Any) => j && j.status !== 'closed')
+  const js: Any[] = []
+  for (const [col, v] of [['axiscare_client_id', r.axiscare_client_id], ['lead_id', r.lead_id]]) {
+    if (!v) continue
+    const { data, error } = await db.from('client_journey').select('journey_id, status, is_test, created_at').eq('subject', 'client').eq(col, String(v))
+    if (error) return 'error'
+    for (const x of data ?? []) if (!js.some((y) => y.journey_id === x.journey_id)) js.push(x)
+  }
+  const list = js.filter((j: Any) => j && j.status !== 'closed')
   const j = list.find((x: Any) => x.status === 'open') ?? [...list].sort((a: Any, b: Any) => String(b.created_at).localeCompare(String(a.created_at)))[0]
   if (!j) return 'no_journey'
   const { data: cur } = await db.from('client_journey_step').select('*').eq('journey_id', j.journey_id).eq('step_key', JOURNEY_KEY).maybeSingle()
@@ -72,7 +78,7 @@ async function journeyPart(db: Any, r: Any, p: { at: string; by: string; how: st
 export async function tickAgreementSteps(db: Any, r: Any, p: { at: string; by: string; fromHome: boolean; when: string }): Promise<StepsResult> {
   const how = p.fromHome ? 'from home' : 'on the tablet'
   let soc: StepsResult['soc'] = 'error', journey: StepsResult['journey'] = 'error'
-  try { soc = await socPart(db, String(r.axiscare_client_id), { at: p.at, by: p.by, how, when: p.when }) } catch { soc = 'error' }
+  try { soc = await socPart(db, r.axiscare_client_id ? String(r.axiscare_client_id) : '', r.lead_id ? String(r.lead_id) : '', { at: p.at, by: p.by, how, when: p.when }) } catch { soc = 'error' }
   try { journey = await journeyPart(db, r, { at: p.at, by: p.by, how }) } catch { journey = 'error' }
   return { soc, journey }
 }

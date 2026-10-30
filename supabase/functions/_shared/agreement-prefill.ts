@@ -114,7 +114,7 @@ export function officeFromVisit(visit: Any): Record<string, string | boolean> {
 
 /** The latest home visit for this client: linked by AxisCare number, or through its lead. */
 export function latestVisit(all: Any[], ax: string, leadId: string | null): Any | null {
-  const mine = listOf(all).filter((a) => a && (t(a.axiscare_client_id) === ax || (leadId && t(a.lead_id) === leadId)))
+  const mine = listOf(all).filter((a) => a && ((ax && t(a.axiscare_client_id) === ax) || (leadId && t(a.lead_id) === leadId)))
   mine.sort((a, b) => t(b.updated_at || b.created_at || b.date).localeCompare(t(a.updated_at || a.created_at || a.date)))
   return mine[0] ?? null
 }

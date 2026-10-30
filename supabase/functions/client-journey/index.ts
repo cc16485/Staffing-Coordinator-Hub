@@ -56,6 +56,21 @@ const PAYERS = ['private', 'medicaid', 'va', 'ltc', 'guide', 'other']
 const lc = (s: unknown) => String(s ?? '').trim().toLowerCase()
 const today = () => R.ymd(Date.now())
 
+/** 2026-10-30: the journey's Client Care Agreements (newest first, not set aside), by AxisCare number or, still a lead, by lead id. */
+export async function journeyAgreements(j: Any, db: Any): Promise<Any[]> {
+  const out: Any[] = []
+  for (const [col, v] of [['axiscare_client_id', j?.axiscare_client_id], ['lead_id', j?.lead_id]]) {
+    if (!v) continue
+    const { data } = await db.from('client_agreements').select('id, status, countersigned_at, signed_at, created_at').eq(col, String(v)).neq('status', 'void').order('created_at', { ascending: false }).limit(5)
+    for (const x of data ?? []) if (!out.some((y) => y.id === x.id)) out.push(x)
+  }
+  return out.sort((a, b) => String(b.created_at ?? '').localeCompare(String(a.created_at ?? '')))
+}
+/** Signed by the family (countersigned or not), or marked signed on paper on the lead (lead.agreement_paper). */
+export async function familySigned(j: Any, lead: Any, db: Any): Promise<boolean> {
+  if (lead && lead.agreement_paper && lead.agreement_paper.at) return true
+  return (await journeyAgreements(j, db)).some((a: Any) => a.status === 'signed' || a.status === 'countersigned')
+}
 export function refOf(j: Any): string { return j.axiscare_client_id ? 'A' + j.axiscare_client_id : j.lead_id ? 'L' + j.lead_id : 'J' + j.journey_id }
 /** the lead's payer word, as the Hub stores it (funding_source) -> a journey payer. CDS is not a journey. */
 export function payerFrom(fs: unknown): string | 'cds' | null {
@@ -344,9 +359,10 @@ export const VERIFY: Record<string, (x: Any) => Promise<Any | null>> = {
     const at = lead.assessment_at || lead.assessment_date
     return at || /assessment scheduled/i.test(String(lead.status || '')) ? { detail: 'Assessment booked' + (at ? ' for ' + String(at).slice(0, 16) : '') } : null
   },
-  axiscare_client: async ({ j, lead, ax }) => {
+  axiscare_client: async ({ j, lead, ax, db }) => {
     const id = j.axiscare_client_id || (lead && String(lead.axiscare_client_id || '').trim()) || ''
-    if (!/^\d+$/.test(id)) return null
+    /* 2026-10-30 (Samantha): the AxisCare client is made only after the family signs the agreement (client-convert waits too) */
+    if (!/^\d+$/.test(id)) return j.lead_id && !(await familySigned(j, lead, db)) ? { why: 'Waiting on the signed Client Care Agreement' } as Any : null
     const r = await ax(`/api/clients/${id}`)
     return r && r.status === 200 ? { detail: 'AxisCare client #' + id + ' read back', axiscare_client_id: id } : null
   },
@@ -384,8 +400,7 @@ export const VERIFY: Record<string, (x: Any) => Promise<Any | null>> = {
     return done ? { detail: 'Assessment ' + String(done.visit_date || done.created_at || '').slice(0, 10) + ': ' + done.status } : mine.length ? { why: 'Booked, not saved as done yet' } as Any : null
   },
   agreement_signed: async ({ j, db }) => {
-    if (!j.axiscare_client_id) return { why: 'Agreement Pending (the tablet agreement starts once the AxisCare client exists)' } as Any
-    const { data } = await db.from('client_agreements').select('id, status, countersigned_at, signed_at').eq('axiscare_client_id', String(j.axiscare_client_id)).neq('status', 'void').order('created_at', { ascending: false }).limit(5)
+    const data = await journeyAgreements(j, db)
     const c = (data ?? []).find((a: Any) => a.status === 'countersigned')
     if (c) return { detail: 'Countersigned ' + String(c.countersigned_at || '').slice(0, 10) }
     const sg = (data ?? []).find((a: Any) => a.status === 'signed')
@@ -675,7 +690,7 @@ async function settle(db: Any, j: Any, steps: Any[], dfs: Any[], pp: Any, st: An
         }
         continue
       }
-      if (ok) {
+      if (ok && !ok.why) {   /* a "why" says what it is still waiting on (2026-10-30: the signed agreement), never done */
         await putStep(db, j.journey_id, r.key, { ...stripRow(r.st), state: 'complete', evidence: { ...(r.st.evidence || {}), verified: { at: now, detail: ok.detail }, ...(ok.facts && ok.facts.actual_first_visit ? { actual_first_visit: ok.facts.actual_first_visit, confirmed_first_visit: ok.facts.confirmed } : ok.facts ? { shifts: { ...ok.facts, checked_at: now } } : {}) },
           completed_by: 'hub', completed_by_name: 'The Hub (verified)', completed_at: now })
         if (ok.axiscare_client_id && !j.axiscare_client_id) { await db.from('client_journey').update({ axiscare_client_id: ok.axiscare_client_id, updated_at: now }).eq('journey_id', j.journey_id); j.axiscare_client_id = ok.axiscare_client_id }
@@ -1145,8 +1160,7 @@ Deno.serve(async (req) => {
     if (!got) return json({ journey: null, defs: dfs })
     const { data: ev } = await db.from('client_journey_event').select('*').eq('journey_id', got.j.journey_id).order('at', { ascending: false }).limit(300)
     /* STAGE B: the header's Agreement Pending / Signed comes from the tablet agreement */
-    let agreement: Any = null
-    if (got.j.axiscare_client_id) { const { data: ag } = await db.from('client_agreements').select('id, status, signed_at, countersigned_at').eq('axiscare_client_id', String(got.j.axiscare_client_id)).neq('status', 'void').order('created_at', { ascending: false }).limit(1); agreement = ag?.[0] ?? null }
+    const agreement: Any = (await journeyAgreements(got.j, db))[0] ?? null
     return json({ journey: got.j, steps: got.steps, events: ev ?? [], defs: dfs, ref: refOf(got.j), names: pp.names, is_owner: isOwner, agreement, nine_live: nineLive(st),
       ctx: ctxFor(pp, st), office: [...pp.office].map((e) => ({ email: e, name: pp.names[e] || e, roles: [pp.owners.includes(e) && 'owner_admin', pp.cc.includes(e) && 'care_coordinator', pp.staffing.includes(e) && 'staffing_coordinator'].filter(Boolean) })) })
   }

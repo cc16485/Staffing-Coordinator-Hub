@@ -107,7 +107,7 @@ if (typeof Deno !== 'undefined' && Deno.serve) Deno.serve(async (req: Request) =
         code_via: link.verified_via, code_to: link.verified_via === 'email' ? maskEmail(link.verified_to) : maskPhone(link.verified_to), verified_at: link.verified_at } } })
       if (code === 200) {
         await upd({ signed_at: body.at, session_hash: null })
-        await raiseCountersignCard(db, { agreementId: r.id, clientName: String(r.answers?.['client.client_s_name'] ?? b.answers?.['client.client_s_name'] ?? ''), signer: body.signer, ax: r.axiscare_client_id })
+        await raiseCountersignCard(db, { agreementId: r.id, clientName: String(r.answers?.['client.client_s_name'] ?? b.answers?.['client.client_s_name'] ?? ''), signer: body.signer, ax: r.axiscare_client_id ?? '', leadId: r.lead_id ?? null })
       }
       return json(body, code)
     }

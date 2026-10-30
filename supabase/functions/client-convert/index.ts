@@ -177,6 +177,7 @@ async function findByExternalId(ext: string): Promise<{ ids: string[]; error: st
 const idOf = (j: any) => j?.results?.id ?? j?.results?.client?.id ?? j?.id ?? null
 const ok2 = (s: number) => s >= 200 && s < 300
 
+export const AGREEMENT_FIRST = "The Client Care Agreement isn't signed yet. Sign it first (the home visit, or Start of Care), or mark it signed on paper."
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { status: 200, headers: cors })
   if (req.method !== 'POST') return json({ error: 'POST only' }, 405)
@@ -218,6 +219,14 @@ Deno.serve(async (req) => {
   const choices = { phone_type: t(b.phone_type) }
   const plan = planConvert(lead, choices, today, refOrg)
   const linked = t(lead.axiscare_client_id)
+  /* 2026-10-30 (Samantha: "we need to have a signed agreement before we would make them active in axiscare"; her answer
+     "Wait for it"): no AxisCare client until the family has signed the Client Care Agreement on the lead (on the iPad or from
+     home), or the office has marked it signed on paper (lead.agreement_paper, written by the Hub). */
+  if (!linked && !(lead.agreement_paper && lead.agreement_paper.at)) {
+    const { data: ags, error: ae } = await sb.from('client_agreements').select('id, status').eq('lead_id', leadId).in('status', ['signed', 'countersigned']).limit(1)
+    if (ae) return json({ error: 'could not check the Client Care Agreement: ' + ae.message }, 500)
+    if (!(ags ?? []).length) { plan.blockers.push(AGREEMENT_FIRST); plan.ok = false }
+  }
 
   if (b.action === 'preview') {
     const found = plan.ok ? await findByExternalId(plan.external_id) : { ids: [], error: null }
