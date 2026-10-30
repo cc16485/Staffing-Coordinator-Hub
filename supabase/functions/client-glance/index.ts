@@ -52,6 +52,33 @@ export function glanceFrom(c: Any, members: Any[], rps: Any[]) {
   }
 }
 
+const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+const mins = (t: unknown) => { const m = S(t).match(/^(\d{1,2}):(\d\d)/); return m ? Number(m[1]) * 60 + Number(m[2]) : null }
+
+/** AxisCare's recurring schedule rows (one per weekday) -> the card's "Usual schedule" lines.
+ *  Rows with the same times, caregiver and repeat fold into one line. Caregiver is first name + last initial only. */
+export function scheduleFrom(rows: Any[], today: string) {
+  const groups = new Map<string, { days: string[]; start: string; end: string; caregiver: string | null; every_weeks: number }>()
+  let weekly = 0
+  for (const r of rows) {
+    const day = DAYS.find((d) => d.toLowerCase() === S(r?.day).toLowerCase())
+    const a = mins(r?.startTime), b = mins(r?.endTime)
+    if (!day || a == null || b == null || r?.removed || r?.deleted) continue
+    const end = dayOf(r?.endDate); if (end && end < today) continue
+    const every = Math.max(1, Number(r?.frequency) || 1)
+    const cg = r?.caregiver?.id == null ? null
+      : [S(r.caregiver.firstName), S(r.caregiver.lastName).slice(0, 1)].filter(Boolean).join(' ') + (S(r.caregiver.lastName) ? '.' : '')
+    const start = S(r.startTime).slice(0, 5), stop = S(r.endTime).slice(0, 5)
+    const k = [start, stop, cg ?? '', every].join('|')
+    if (!groups.has(k)) groups.set(k, { days: [], start, end: stop, caregiver: cg || null, every_weeks: every })
+    const g = groups.get(k)!
+    if (!g.days.includes(day)) { g.days.push(day); weekly += ((b - a + 1440) % 1440 || 1440) / every }
+  }
+  const lines = [...groups.values()].map((g) => ({ ...g, days: g.days.sort((x, y) => DAYS.indexOf(x) - DAYS.indexOf(y)) }))
+    .sort((x, y) => DAYS.indexOf(x.days[0]) - DAYS.indexOf(y.days[0]) || (mins(x.start)! - mins(y.start)!))
+  return { lines, weekly_hours: Math.round(weekly / 6) / 10 }
+}
+
 const cors = { 'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods': 'POST, OPTIONS' }
@@ -81,7 +108,10 @@ if (import.meta.main) Deno.serve(async (req) => {
     } catch (_e) { return { status: 0, json: {} } }
   }
 
-  const [cl, rp] = await Promise.all([get(`/api/clients/${ax}`), get(`/api/clients/${ax}/responsibleParties`)])
+  const today = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
+  const twoWeeks = new Date(Date.now() + 13 * 864e5).toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
+  const [cl, rp, sc] = await Promise.all([get(`/api/clients/${ax}`), get(`/api/clients/${ax}/responsibleParties`),
+    get(`/api/schedules?clientIds=${ax}&startDate=${today}&endDate=${twoWeeks}`)])
   if (cl.status < 200 || cl.status >= 300) return json({ error: cl.status ? `AxisCare answered ${cl.status}` : 'AxisCare could not be reached' }, 502)
   const client = cl.json?.results?.client ?? cl.json?.results ?? null
   const rps = rp.status >= 200 && rp.status < 300 ? listOf(rp.json?.results?.responsibleParties ?? rp.json?.results ?? []) : []
@@ -92,5 +122,9 @@ if (import.meta.main) Deno.serve(async (req) => {
     const { data: m } = await admin.from('circle_contacts').select('name,relationship,phone,is_primary,axiscare_list_number').eq('circle_id', circs![0].id)
     members = m ?? []
   }
-  return json(glanceFrom(client, members, rps))
+  // A schedule failure loses only the schedule line; the card says so instead of "no regular schedule".
+  // AxisCare answers 404 when nothing matches, i.e. no regular schedule.
+  const ok = (sc.status >= 200 && sc.status < 300) || sc.status === 404
+  const rows = ok && sc.status !== 404 ? listOf(sc.json?.results?.schedules ?? sc.json?.results ?? []).filter((r: Any) => S(r?.client?.id ?? ax) === ax) : []
+  return json({ ...glanceFrom(client, members, rps), schedule: ok ? scheduleFrom(rows, today) : null })
 })
