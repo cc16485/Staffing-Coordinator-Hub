@@ -76,7 +76,7 @@ export async function sendFamily(db: Any, ghl: { token: string; locationId: stri
 }
 
 /** Needs Attention: "<name> signed the Client Care Agreement from home: countersign it." Never throws. */
-export async function raiseCountersignCard(db: Any, c: { agreementId: string; clientName: string; signer: string; ax: string }): Promise<void> {
+export async function raiseCountersignCard(db: Any, c: { agreementId: string; clientName: string; signer: string; ax: string; leadId?: string | null }): Promise<void> {
   try {
     const id = 'ops_agreement_countersign_' + c.agreementId.replace(/-/g, '').slice(0, 16)
     const now = new Date().toISOString()
@@ -87,8 +87,9 @@ export async function raiseCountersignCard(db: Any, c: { agreementId: string; cl
     const item = { ...(prev ?? { owner: await ownerFor(db, 'client_care'), owner_name: '', created_at: now, first_at: now }),
       id, kind: 'agreement_countersign', domain: 'client_care', status: 'open', urgency: 'today',
       title: `${c.signer || 'The family'} signed the Client Care Agreement from home`,
-      detail: `Countersign it for ${c.clientName || 'the client'} (AxisCare #${c.ax}): open the client in the Hub, Start of Care, Client Care Agreement, Countersign. Their copy can be emailed when you countersign.`,
-      who: c.clientName || '', agreement_id: c.agreementId, client_ax: c.ax, last_at: now,
+      detail: c.ax ? `Countersign it for ${c.clientName || 'the client'} (AxisCare #${c.ax}): open the client in the Hub, Start of Care, Client Care Agreement, Countersign. Their copy can be emailed when you countersign.`
+        : `Countersign it for ${c.clientName || 'the client'} (not in AxisCare yet): open their lead in the Hub, Client Care Agreement, Countersign. Their copy can be emailed when you countersign.`,
+      who: c.clientName || '', agreement_id: c.agreementId, ...(c.ax ? { client_ax: c.ax } : c.leadId ? { lead_id: c.leadId } : {}), last_at: now,
       due: prev?.due || new Date(Date.now() + 24 * 3_600_000).toISOString(), closed_at: null, closed_by: null, close_note: null, resolved_at: null,
       created_by: 'agreement-sign', opened_by: 'agreement-sign' }
     await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item })

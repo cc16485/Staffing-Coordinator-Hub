@@ -55,7 +55,12 @@ const LEADS = [
   { id: 'L4', first_name: 'Kim', last_name: 'Fox', relationship: 'Son', phone: '417-555-0104', client_name_not_provided: true },
   { id: 'L5', first_name: 'Jo', last_name: 'Ng', relationship: 'Niece', client_first_name: 'Bea', client_last_name: 'Ng', axiscare_client_id: '77' },
 ];
-globalThis.__fakeCreateClient = () => ({ rpc: async (n, a) => { (globalThis.__REC ||= []).push({ n, a }); return { data: { outcome: 'recorded' }, error: null }; }, from: (t) => { const f = []; const p = { select() { return p; }, eq(k, v) { f.push([k, v]); return p; },
+// 2026-10-30: the family signed the Client Care Agreement on these leads (the gate: no AxisCare client before that)
+let AGREEMENTS = [{ id: 'a1', lead_id: 'L1', status: 'countersigned' }, { id: 'a2', lead_id: 'L2', status: 'signed' }, { id: 'a3', lead_id: 'L4', status: 'signed' }], AG_FAIL = false;
+globalThis.__fakeCreateClient = () => ({ rpc: async (n, a) => { (globalThis.__REC ||= []).push({ n, a }); return { data: { outcome: 'recorded' }, error: null }; }, from: (t) => { const f = []; const p = { select() { return p; }, eq(k, v) { f.push([k, v, 'eq']); return p; },
+  in(k, v) { f.push([k, v, 'in']); return p; }, limit() { return p; },
+  then(ok, no) { const rows = t === 'client_agreements' ? AGREEMENTS.filter((r) => f.every(([k, v, how]) => how === 'in' ? v.includes(r[k]) : r[k] === v)) : [];
+    return Promise.resolve(AG_FAIL ? { data: null, error: { message: 'down' } } : { data: rows, error: null }).then(ok, no); },
   maybeSingle() { const key = (f.find(x => x[0] === 'key') || [])[1];
     const data = key === 'leads' ? LEADS : key === 'referral_orgs' ? [{ id: 'O1', name: 'Mercy Hospital' }] : null;
     return Promise.resolve({ data: data ? { data } : null, error: null }); } }; return p; } });
@@ -130,6 +135,25 @@ ck('permission check: writes Test Client 5\'s own priority note back unchanged a
   && writes().length === 1 && writes()[0][1] === '/api/clients/290' && JSON.stringify(writes()[0][2]) === '{"priorityNote":"keep me"}', b);
 reset(); AX.clients[290].firstName = 'Real'; AX.clients[290].lastName = 'Person'; [st, b] = await call(SVC, { action: 'permission_check' });
 ck('permission check: if #290 is not a test client it writes nothing', b.ok === false && writes().length === 0, b);
+// ── 2026-10-30 the gate: the AxisCare client waits for the signed Client Care Agreement ──
+LEADS.push({ id: 'L6', first_name: 'Una', last_name: 'Ray', relationship: 'Daughter', phone: '417-555-0106', client_first_name: 'Vi', client_last_name: 'Ray', client_phone: '417-555-0196' });
+reset(); [st, b] = await call(STAFF, { action: 'preview', lead_id: 'L6' });
+ck('gate: no signed agreement on the lead: the preview is blocked with her words, and reads nothing from AxisCare', st === 200 && b.plan.ok === false && b.plan.blockers.includes(M.AGREEMENT_FIRST) && /isn't signed yet/.test(M.AGREEMENT_FIRST) && calls.length === 0, b);
+reset(); [st, b] = await call(STAFF, { action: 'convert', lead_id: 'L6' });
+ck('gate: convert without a signed agreement is refused (blocked) and AxisCare is never called', b.outcome === 'blocked' && b.blockers.includes(M.AGREEMENT_FIRST) && calls.length === 0, b);
+AGREEMENTS.push({ id: 'a6', lead_id: 'L6', status: 'draft' }, { id: 'a7', lead_id: 'L6', status: 'void' });
+reset(); [st, b] = await call(STAFF, { action: 'convert', lead_id: 'L6' });
+ck('gate: a draft or a set-aside agreement does not count', b.outcome === 'blocked' && calls.length === 0, b);
+AGREEMENTS.push({ id: 'a8', lead_id: 'L6', status: 'signed' });
+reset(); [st, b] = await call(STAFF, { action: 'convert', lead_id: 'L6' });
+ck('gate: signed by the family (not countersigned yet) is enough: the client is created', b.outcome === 'created', b);
+LEADS.push({ id: 'L7', first_name: 'Wes', last_name: 'Ox', relationship: 'Son', phone: '417-555-0107', client_first_name: 'Xen', client_last_name: 'Ox', client_phone: '417-555-0197', agreement_paper: { by: 'kr@mo-care.com', at: '2026-10-30T15:00:00Z' } });
+reset(); [st, b] = await call(STAFF, { action: 'convert', lead_id: 'L7' });
+ck('gate: marked signed on paper (lead.agreement_paper) is enough', b.outcome === 'created', b);
+LEADS.push({ id: 'L8', first_name: 'Yo', last_name: 'Zed', relationship: 'Son', phone: '417-555-0108', client_first_name: 'Zia', client_last_name: 'Zed', client_phone: '417-555-0198' });
+AG_FAIL = true; reset(); [st, b] = await call(STAFF, { action: 'convert', lead_id: 'L8' });
+ck('gate: if the agreements cannot be read, nothing is created (500, AxisCare never called)', st === 500 && calls.length === 0, b); AG_FAIL = false;
+
 let r = await handler(new Request('http://x', { method: 'OPTIONS' }));
 ck('CORS preflight answered from day one', r.status === 200 && r.headers.get('Access-Control-Allow-Origin') === '*');
 

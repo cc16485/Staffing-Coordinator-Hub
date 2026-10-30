@@ -186,7 +186,7 @@
     "business": true
    },
    "howto": [
-    "Create the client in AxisCare from the profile (More, Create in AxisCare). The Hub checks it read back.",
+    "Once the Client Care Agreement is signed, create the client in AxisCare from the profile (More, Create in AxisCare). The Hub checks it read back.",
     "Push the contacts and care tasks from the Hub; the Hub ticks them when AxisCare shows them.",
     "Type the rest into AxisCare: allergies, medications, diagnoses, attributes, pets and directions; then the payer, service and bill rate on the Billing tab. Never type card numbers into the Hub: the family enters payment in AxisCare.",
     "Upload the signed agreement to the client's Documents in AxisCare, then tick it here. AxisCare can't tell the Hub, so your tick is the record."

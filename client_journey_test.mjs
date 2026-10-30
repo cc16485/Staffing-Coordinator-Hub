@@ -584,6 +584,25 @@ try {
     await call({ action: 'sweep' }, null, { 'x-cron-secret': ENV.HUB_JOB_SECRET })
     ck('stage C: after "Still a yes" (a fresh date), the card closes itself', T.app_data.find((x) => x.key === 'ops_items').data.find((x) => x.kind === 'plan_recheck').status === 'done')
   }
+  { // 2026-10-30 (Samantha): the agreement is signed on the lead before the client is made in AxisCare
+    reset(); T.client_agreements = []
+    const jL = { journey_id: 'jL', lead_id: 'L2', axiscare_client_id: null }, noAx = async () => null
+    let v = await MOD.VERIFY.agreement_signed({ j: jL, db: globalThis.__db })
+    ck('lead agreement: nothing signed yet on the lead: Agreement Pending (no more "starts once the AxisCare client exists")', v && v.why === 'Agreement Pending', v)
+    v = await MOD.VERIFY.axiscare_client({ j: jL, lead: { id: 'L2' }, ax: noAx, db: globalThis.__db })
+    ck('lead agreement: Client created in AxisCare says it is waiting on the signed agreement', v && v.why === 'Waiting on the signed Client Care Agreement', v)
+    T.client_agreements.push({ id: 'g1', lead_id: 'L2', axiscare_client_id: null, status: 'signed', created_at: '2026-10-30T10:00:00Z' })
+    v = await MOD.VERIFY.agreement_signed({ j: jL, db: globalThis.__db })
+    ck('lead agreement: signed on the lead, found by the lead id; the office still countersigns', v && /still needs to countersign/.test(v.why), v)
+    v = await MOD.VERIFY.axiscare_client({ j: jL, lead: { id: 'L2' }, ax: noAx, db: globalThis.__db })
+    ck('lead agreement: once the family signed, the AxisCare check no longer waits on it (just not created yet)', v === null, v)
+    T.client_agreements[0].status = 'countersigned'; T.client_agreements[0].countersigned_at = '2026-10-30T11:00:00Z'
+    v = await MOD.VERIFY.agreement_signed({ j: { ...jL, axiscare_client_id: '296' }, db: globalThis.__db })
+    ck('lead agreement: after the client is in AxisCare, the check still finds the agreement signed on the lead', v && !v.why && /Countersigned 2026-10-30/.test(v.detail), v)
+    T.client_agreements = []
+    v = await MOD.VERIFY.axiscare_client({ j: jL, lead: { id: 'L2', agreement_paper: { by: 'kr', at: '2026-10-30T09:00:00Z' } }, ax: noAx, db: globalThis.__db })
+    ck('lead agreement: marked signed on paper: the AxisCare check does not wait', v === null, v)
+  }
 } finally { fs.rmSync(tmp, { recursive: true, force: true }) }
 let pass = 0; for (const [n, ok, note] of res) { console.log((ok ? '  ✓ ' : '  ✗ ') + n + (ok ? '' : '\n      ' + note)); if (ok) pass++ }
 // the page and the server must run the SAME rules file

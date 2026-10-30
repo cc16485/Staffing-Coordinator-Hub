@@ -23,6 +23,10 @@
 // 2026-10-29 (Samantha: "the more they only have to tap the better"): start fills the typing boxes from AxisCare, the
 // Family Circle, the lead and the home visit (_shared/agreement-prefill.ts); prefill shows the office what will be filled and
 // the home visit's level and rate; fill_blanks fills only the empty boxes of a draft. Facts only, never a Yes / No choice.
+// 2026-10-30 (Samantha: "we need to have a signed agreement before we would make them active in axiscare"): list, start and
+// prefill take a lead_id instead of an AxisCare number, so the family signs at the home visit while they are still a lead.
+// The row keeps the lead_id and moves to the client by itself once the lead gets its AxisCare number (claim()). Approving the
+// contacts into AxisCare waits for that number. client-convert won't create the AxisCare client until the agreement is signed.
 // =============================================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
@@ -50,6 +54,9 @@ const ipOf = (req: Request) => S(req.headers.get('cf-connecting-ip') || (req.hea
 const agentOf = (req: Request) => S(req.headers.get('user-agent'), 200)
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const AX = /^[0-9]{1,12}$/
+const LEAD = /^[A-Za-z0-9_.:-]{1,80}$/
+/** Where the files of an agreement live: the AxisCare number, or the lead's id while it has none (2026-10-30). */
+const keyOf = (r: Any) => r.axiscare_client_id ? String(r.axiscare_client_id) : 'lead-' + String(r.lead_id)
 const ADDENDA = ['va', 'guide']
 const pngBytes = (dataUrl: string) => Uint8Array.from(atob(dataUrl.slice(dataUrl.indexOf(',') + 1)), (c) => c.charCodeAt(0))
 const stampOf = (iso: string) => iso.replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z')
@@ -95,7 +102,7 @@ function recordOf(r: Any): string[][] {
   const cs = r.client_sign, os = r.office_sign
   const tapLine = Object.entries(cs.initials_taps || {}).map(([k, v]) => `${k === 'poa' ? 'POA' : k + ' of 6'}: ${centralDate(String(v)).long}`).join('\n')
   return [
-    ['Agreement', `Client Care Agreement, ${VERSION}`], ['Agreement id', r.id], ['AxisCare client', r.axiscare_client_id],
+    ['Agreement', `Client Care Agreement, ${VERSION}`], ['Agreement id', r.id], ['AxisCare client', r.axiscare_client_id || `Not in AxisCare yet when signed (lead ${r.lead_id})`],
     ['Master document SHA-256', r.pdf_sha256],
     ['Signed by', `${cs.typed_name}${cs.role === 'representative' ? ` (on behalf of the client${cs.relationship ? ', ' + cs.relationship : ''})` : ' (the client)'}`],
     ['Signed at', `${centralDate(cs.at).long} (${cs.at} UTC)`], ['Signer device', `${cs.ip || 'not recorded'} · ${cs.agent || 'not recorded'}`],
@@ -138,7 +145,7 @@ async function sendCopy(db: Any, r: Any, to: string, by: string): Promise<Any> {
     { to, toName: nameFor(a, to) || defaultCopyTo(a).name, clientName: String(a['client.client_s_name'] ?? ''), pdf, filename: 'Client Care Agreement (signed copy).pdf' })
   let path: string | null = null
   if (res.outcome === 'sent') {
-    path = `signed/${r.axiscare_client_id}/${r.id}-email-copy-${stampOf(now)}.pdf`
+    path = `signed/${keyOf(r)}/${r.id}-email-copy-${stampOf(now)}.pdf`
     const up = await db.storage.from(BUCKET).upload(path, pdf, { contentType: 'application/pdf', upsert: false }); if (up.error) path = null
   }
   const copies = { ...(r.copies || {}), emails: [...(r.copies?.emails ?? []), { to, at: now, by, outcome: res.outcome, detail: res.detail, path }] }
@@ -156,15 +163,18 @@ export const FORM_INFO = {
 
 /** The row as the Hub may see it: no signature images, no file paths beyond whether a PDF exists. */
 /* ---------- 2026-10-29: what the Hub already knows about this client, for the agreement's blanks ---------- */
-async function gather(db: Any, ax: string): Promise<{ prefill: Prefill; office: Record<string, string | boolean>; visit_found: boolean }> {
+async function gather(db: Any, ax: string, leadId: string | null = null): Promise<{ prefill: Prefill; office: Record<string, string | boolean>; visit_found: boolean }> {
   const notes: string[] = []
-  const [cl, rp] = await Promise.all([axis('GET', `/api/clients/${ax}`), axis('GET', `/api/clients/${ax}/responsibleParties`)])
-  const client = okS(cl.status) ? (cl.json?.results?.client ?? cl.json?.results ?? null) : null
-  if (!client) notes.push("AxisCare could not be read (" + axErr(cl) + "), so the client's details come from the lead where it has them.")
-  const rps = okS(rp.status) ? listOf(rp.json?.results?.responsibleParties ?? rp.json?.results ?? []).filter((p: Any) => tt(p?.name)) : []
-  if (!okS(rp.status) && rp.status !== 404) notes.push("AxisCare's responsible parties could not be read (" + axErr(rp) + ').')
+  let client: Any = null, rps: Any[] = []
+  if (ax) {   /* 2026-10-30: a lead with no AxisCare number yet has nothing in AxisCare or a Family Circle to read */
+    const [cl, rp] = await Promise.all([axis('GET', `/api/clients/${ax}`), axis('GET', `/api/clients/${ax}/responsibleParties`)])
+    client = okS(cl.status) ? (cl.json?.results?.client ?? cl.json?.results ?? null) : null
+    if (!client) notes.push("AxisCare could not be read (" + axErr(cl) + "), so the client's details come from the lead where it has them.")
+    rps = okS(rp.status) ? listOf(rp.json?.results?.responsibleParties ?? rp.json?.results ?? []).filter((p: Any) => tt(p?.name)) : []
+    if (!okS(rp.status) && rp.status !== 404) notes.push("AxisCare's responsible parties could not be read (" + axErr(rp) + ').')
+  }
   let members: Any[] = []
-  const { data: circs, error: ce } = await db.from('care_circles').select('id').eq('active', true).eq('axiscare_client_id', ax)
+  const { data: circs, error: ce } = ax ? await db.from('care_circles').select('id').eq('active', true).eq('axiscare_client_id', ax) : { data: [], error: null }
   if (ce) notes.push('The Family Circle could not be read.')
   else if ((circs ?? []).length === 1) {
     const { data: m, error: me } = await db.from('circle_contacts').select('*').eq('circle_id', circs![0].id)
@@ -174,7 +184,7 @@ async function gather(db: Any, ax: string): Promise<{ prefill: Prefill; office: 
   const [{ data: lr, error: le }, { data: vr, error: ve }] = await Promise.all([
     db.from('app_data').select('data').eq('key', 'leads').maybeSingle(), db.from('app_data').select('data').eq('key', 'care_assessments').maybeSingle()])
   if (le) notes.push('The lead could not be read.')
-  else lead = (Array.isArray(lr?.data) ? lr.data : []).find((l: Any) => l && tt(l.axiscare_client_id) === ax) ?? null
+  else lead = (Array.isArray(lr?.data) ? lr.data : []).find((l: Any) => l && ((leadId && tt(l.id) === leadId) || (ax && tt(l.axiscare_client_id) === ax))) ?? null
   if (ve) notes.push('The home visit could not be read.')
   else visit = latestVisit(Array.isArray(vr?.data) ? vr.data : [], ax, lead ? tt(lead.id) : null)
   const prefill = prefillFrom({ client, rps, members, lead, visit, fields: FIELDS })
@@ -184,7 +194,7 @@ async function gather(db: Any, ax: string): Promise<{ prefill: Prefill; office: 
 
 function view(r: Any) {
   return {
-    id: r.id, client_ax: r.axiscare_client_id, status: r.status, version: r.version, pdf_sha256: r.pdf_sha256, office: r.office, answers: r.answers,
+    id: r.id, client_ax: r.axiscare_client_id ?? null, lead_id: r.lead_id ?? null, status: r.status, version: r.version, pdf_sha256: r.pdf_sha256, office: r.office, answers: r.answers,
     signer: r.client_sign ? { name: r.client_sign.typed_name, role: r.client_sign.role, at: r.client_sign.at } : null,
     office_signer: r.office_sign ? { name: r.office_sign.typed_name, at: r.office_sign.at } : null,
     has_pdf: !!r.signed_pdf_path, contacts_review: r.contacts_review ?? null,
@@ -205,20 +215,51 @@ if (typeof Deno !== 'undefined' && Deno.serve) Deno.serve(async (req: Request) =
   try {
     const who = await requireStaff(db, req, OFFICE_ROLES)
     if (!who.ok) return json({ error: who.error }, who.status)
+    /* 2026-10-30: the client is an AxisCare number, or a lead (which may already have one) */
+    const leadsNow = async (): Promise<Any[]> => { const { data, error } = await db.from('app_data').select('data').eq('key', 'leads').maybeSingle(); if (error) throw error; return Array.isArray(data?.data) ? data.data : [] }
+    const subject = async (): Promise<{ ax: string; lead: string | null } | null> => {
+      const ax = S(b.client_ax, 12)
+      if (AX.test(ax)) { const l = (await leadsNow()).find((x: Any) => x && tt(x.axiscare_client_id) === ax); return { ax, lead: l ? tt(l.id) : null } }
+      const lid = S(b.lead_id, 80).trim()
+      if (!LEAD.test(lid)) return null
+      const l = (await leadsNow()).find((x: Any) => x && tt(x.id) === lid)
+      if (!l) return null
+      const lax = tt(l.axiscare_client_id)
+      return { ax: AX.test(lax) ? lax : '', lead: lid }
+    }
+    /** An agreement started on the lead moves to the client once the lead has its AxisCare number. Best effort. */
+    const claim = async (r: Any, leads?: Any[]) => {
+      if (!r || r.axiscare_client_id || !r.lead_id) return r
+      try {
+        const l = (leads ?? await leadsNow()).find((x: Any) => x && tt(x.id) === String(r.lead_id)), lax = l ? tt(l.axiscare_client_id) : ''
+        if (!AX.test(lax)) return r
+        const { data } = await db.from('client_agreements').update({ axiscare_client_id: lax, updated_at: new Date().toISOString() }).eq('id', r.id).is('axiscare_client_id', null).select('id')
+        if (data?.length) r.axiscare_client_id = lax
+      } catch { /* the next read tries again */ }
+      return r
+    }
     const row = async (id: unknown) => {
       if (!UUID.test(String(id || ''))) return null
       const { data, error } = await db.from('client_agreements').select('*').eq('id', String(id)).limit(1)
       if (error) throw error
-      return data?.[0] || null
+      return await claim(data?.[0] || null)
     }
 
     if (action === 'form') return json({ ok: true, form: FORM_INFO })
 
     if (action === 'list') {
-      const ax = S(b.client_ax, 12)
-      if (!AX.test(ax)) return json({ error: 'Which client?' }, 400)
-      const { data, error } = await db.from('client_agreements').select('*').eq('axiscare_client_id', ax).order('created_at', { ascending: false }).limit(20)
-      if (error) throw error
+      const who_ = await subject()
+      if (!who_) return json({ error: 'Which client?' }, 400)
+      const got: Any[] = []
+      for (const [col, v] of [['axiscare_client_id', who_.ax], ['lead_id', who_.lead]] as [string, string | null][]) {
+        if (!v) continue
+        const { data: part, error } = await db.from('client_agreements').select('*').eq(col, v).order('created_at', { ascending: false }).limit(20)
+        if (error) throw error
+        for (const x of part ?? []) if (!got.some((g) => g.id === x.id)) got.push(x)
+      }
+      const leads = who_.ax && who_.lead ? await leadsNow() : undefined
+      for (const x of got) await claim(x, leads)
+      const data = got.sort((a, c) => String(c.created_at).localeCompare(String(a.created_at))).slice(0, 20)
       const ids = (data ?? []).map((x: Any) => x.id)
       const { data: links } = ids.length ? await db.from('client_agreement_links').select('*').in('agreement_id', ids).order('created_at', { ascending: false }) : { data: [] }
       for (const x of data ?? []) x.__link = pickLink((links ?? []).filter((l: Any) => l.agreement_id === x.id))
@@ -226,15 +267,15 @@ if (typeof Deno !== 'undefined' && Deno.serve) Deno.serve(async (req: Request) =
     }
 
     if (action === 'start') {
-      const ax = S(b.client_ax, 12)
-      if (!AX.test(ax)) return json({ error: 'Which client?' }, 400)
+      const who_ = await subject()
+      if (!who_) return json({ error: 'Which client?' }, 400)
       const { answers, problems } = cleanAnswers(b.office || {}, 'office')
       if (problems.length) return json({ error: 'Some office answers are not right.', problems }, 422)
       const addenda = (Array.isArray(b.addenda) ? b.addenda : []).map(String).filter((x: string) => ADDENDA.includes(x))
       const start_date = /^\d{4}-\d{2}-\d{2}$/.test(String(b.start_date || '')) ? String(b.start_date) : null
-      const { prefill } = await gather(db, ax)
+      const { prefill } = await gather(db, who_.ax, who_.lead)
       const { data, error } = await db.from('client_agreements').insert({
-        axiscare_client_id: ax, doc: DOC, version: VERSION, pdf_sha256: PDF_SHA256, status: 'draft',
+        axiscare_client_id: who_.ax || null, lead_id: who_.lead, doc: DOC, version: VERSION, pdf_sha256: PDF_SHA256, status: 'draft',
         office: { answers, addenda, start_date, by: who.name, prefill: prefill.from, prefill_values: prefill.answers, prefill_notes: prefill.notes }, answers: prefill.answers, created_by: who.email,
       }).select('*')
       if (error) throw error
@@ -243,9 +284,9 @@ if (typeof Deno !== 'undefined' && Deno.serve) Deno.serve(async (req: Request) =
 
     /* 2026-10-29: the set-up screen shows what will be filled in, and picks the home visit's level and rate */
     if (action === 'prefill') {
-      const ax = S(b.client_ax, 12)
-      if (!AX.test(ax)) return json({ error: 'Which client?' }, 400)
-      const g = await gather(db, ax)
+      const who_ = await subject()
+      if (!who_) return json({ error: 'Which client?' }, 400)
+      const g = await gather(db, who_.ax, who_.lead)
       return json({ ok: true, count: Object.keys(g.prefill.answers).length, sources: [...new Set(Object.values(g.prefill.from))], notes: g.prefill.notes, office: g.office, visit_found: g.visit_found })
     }
 
@@ -254,7 +295,7 @@ if (typeof Deno !== 'undefined' && Deno.serve) Deno.serve(async (req: Request) =
       const r = await row(b.id)
       if (!r) return json({ error: 'Agreement not found.' }, 404)
       if (r.status !== 'draft') return json({ error: 'This agreement is already signed.', outcome: 'stale' }, 409)
-      const add = fillBlanks(r.answers ?? {}, (await gather(db, String(r.axiscare_client_id))).prefill)
+      const add = fillBlanks(r.answers ?? {}, (await gather(db, r.axiscare_client_id ? String(r.axiscare_client_id) : '', r.lead_id ? String(r.lead_id) : null)).prefill)
       const answers = { ...(r.answers ?? {}), ...add.answers }
       const office = { ...r.office, prefill: { ...(r.office?.prefill ?? {}), ...add.from }, prefill_values: { ...(r.office?.prefill_values ?? {}), ...add.answers }, prefill_notes: add.notes }
       const { data, error } = await db.from('client_agreements').update({ answers, office, updated_at: new Date().toISOString() }).eq('id', r.id).eq('status', 'draft').select('*')
@@ -339,7 +380,7 @@ if (typeof Deno !== 'undefined' && Deno.serve) Deno.serve(async (req: Request) =
       const copyTo = b.email_copy && typeof b.email_copy === 'object' ? String(b.email_copy.to ?? '').trim() : ''
       if (copyTo && !EMAIL_OK.test(copyTo)) return json({ error: 'That email address does not look right.', field: 'email_copy' }, 400)
       const at = new Date().toISOString()
-      const sigPath = `sig/${r.axiscare_client_id}/${r.id}-office-${stampOf(at)}.png`
+      const sigPath = `sig/${keyOf(r)}/${r.id}-office-${stampOf(at)}.png`
       const up = await db.storage.from(BUCKET).upload(sigPath, pngBytes(b.signature), { contentType: 'image/png', upsert: false })
       if (up.error) throw up.error
       const office_sign = { typed_name: who.name, email: who.email, person_id: who.person_id, at, ip: ipOf(req), agent: agentOf(req), signature_path: sigPath }
@@ -350,7 +391,7 @@ if (typeof Deno !== 'undefined' && Deno.serve) Deno.serve(async (req: Request) =
         console.error('client-agreement pdf', e)
         return json({ error: 'The signed PDF could not be made. Nothing was lost: try Countersign again, and tell Samantha if it keeps happening.' }, 500)
       }
-      const pdfPath = `signed/${r.axiscare_client_id}/${r.id}-${stampOf(at)}.pdf`
+      const pdfPath = `signed/${keyOf(r)}/${r.id}-${stampOf(at)}.pdf`
       const upd = await db.storage.from(BUCKET).upload(pdfPath, bytes, { contentType: 'application/pdf', upsert: false })
       if (upd.error) throw upd.error
       const { data: did, error } = await db.from('client_agreements').update({ office_sign, signed_pdf_path: pdfPath, status: 'countersigned', countersigned_at: at, updated_at: at })
@@ -365,7 +406,7 @@ if (typeof Deno !== 'undefined' && Deno.serve) Deno.serve(async (req: Request) =
     if (action === 'open') {
       const r = await row(b.id)
       if (!r?.signed_pdf_path) return json({ error: 'No signed PDF yet.' }, 404)
-      const logged = await logOpen(db, { subject: clientSubject(r.axiscare_client_id, null), doc: 'client_agreement', path: r.signed_pdf_path, who, ip: ipOf(req) })
+      const logged = await logOpen(db, { subject: clientSubject(r.axiscare_client_id, r.lead_id), doc: 'client_agreement', path: r.signed_pdf_path, who, ip: ipOf(req) })
       if (!logged) return json({ error: 'Could not record who opened it, so it was not opened. Try again.' }, 500)
       const { data, error } = await db.storage.from(BUCKET).createSignedUrl(r.signed_pdf_path, 300)
       if (error || !data?.signedUrl) throw error || new Error('no url')
@@ -399,12 +440,12 @@ if (typeof Deno !== 'undefined' && Deno.serve) Deno.serve(async (req: Request) =
         const orig = await db.storage.from(BUCKET).download(r.signed_pdf_path)
         if (orig.error) throw orig.error
         const copy = await familyCopyOf(new Uint8Array(await orig.data.arrayBuffer()))
-        path = `signed/${r.axiscare_client_id}/${r.id}-family-copy.pdf`
+        path = `signed/${keyOf(r)}/${r.id}-family-copy.pdf`
         const up = await db.storage.from(BUCKET).upload(path, copy, { contentType: 'application/pdf', upsert: false })
         if (up.error && !/exist/i.test(String(up.error.message || ''))) throw up.error
         await db.from('client_agreements').update({ copies: { ...(r.copies || {}), print_path: path } }).eq('id', r.id)
       }
-      const logged = await logOpen(db, { subject: clientSubject(r.axiscare_client_id, null), doc: 'client_agreement_family_copy', path, who, ip: ipOf(req) })
+      const logged = await logOpen(db, { subject: clientSubject(r.axiscare_client_id, r.lead_id), doc: 'client_agreement_family_copy', path, who, ip: ipOf(req) })
       if (!logged) return json({ error: 'Could not record who opened it, so it was not opened. Try again.' }, 500)
       const { data, error } = await db.storage.from(BUCKET).createSignedUrl(path, 300)
       if (error || !data?.signedUrl) throw error || new Error('no url')
@@ -418,8 +459,9 @@ if (typeof Deno !== 'undefined' && Deno.serve) Deno.serve(async (req: Request) =
       if (r.status !== 'countersigned') return json({ error: 'The contacts can be reviewed once the agreement is signed and countersigned.' }, 409)
       const review: Any = r.contacts_review && typeof r.contacts_review === 'object' ? r.contacts_review : {}
       review.people = review.people ?? {}; review.todo = review.todo ?? {}
-      const contacts = contactsFrom(r.answers), ax = String(r.axiscare_client_id), now = new Date().toISOString()
+      const contacts = contactsFrom(r.answers), ax = String(r.axiscare_client_id ?? ''), now = new Date().toISOString()
       const keep = async () => { const { error } = await db.from('client_agreements').update({ contacts_review: review, updated_at: now }).eq('id', r.id); if (error) throw error }
+      if (action !== 'contacts_todo' && !AX.test(ax)) return json({ error: 'Approve the contacts once the client is set up in AxisCare (Start of Care step 4). The agreement moves to the client by itself.', outcome: 'needs_axiscare' }, 409)
 
       if (action === 'contacts_todo') {
         const key = S(b.key, 40), valid = new Set(contacts.flatMap((c) => todoFor(c).map((x) => x.key)))
