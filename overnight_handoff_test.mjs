@@ -119,6 +119,7 @@ try {
   r = await run(true, '', { 'x-cron-secret': JOBSEC })
   const k = MAIL.find((m) => m.to === 'krystal@mo-care.com') || {}, s = MAIL.find((m) => m.to === 'samantha@mo-care.com') || {}
   ck('switch on: both briefs go', r.s === 200 && MAIL.length === 2, r)
+  if (process.env.DUMP) fs.writeFileSync(process.env.DUMP, k.html)   // DUMP=<file> saves Krystal's email to look at
   ck('switch on: Krystal\'s brief opens with the Overnight Handoff', k.html.indexOf('Overnight Handoff') > -1 && k.html.indexOf('Overnight Handoff') < (k.html.indexOf('Leads to call') >>> 0))
   ck('the note is first, word for word', /NOTE FROM SAMANTHA/.test(k.html) && /Please call the Harper family first thing\./.test(k.html) && k.html.indexOf('NOTE FROM') < k.html.indexOf('Needs you this morning'))
   ck('the three lists are in the email', /Needs you this morning · 5/.test(k.html) && /Handled overnight · 2/.test(k.html) && /Came in overnight · 4/.test(k.html), k.html.match(/(Needs|Handled|Came in)[^<]{0,40}/g))
@@ -126,7 +127,8 @@ try {
   ck('the subject leads with the note', /^Your morning, Krystal: a note from Samantha, 5 from overnight to act on/.test(k.subject), k.subject)
   ck('While you were out is replaced', !/While you were out/.test(k.html) && !/While you were out/.test(s.html))
   ck('Samantha gets the same handoff', /Overnight Handoff/.test(s.html) && /Needs you this morning · 5/.test(s.html))
-  ck('says the hours and how to mark it read', /Overnight is 8:00pm Wed to 7:00am/.test(k.html) && /Mark it read on My Work/.test(k.html))
+  ck('says the hours and how to close it out', /Last night · 8:00pm Wed to 7:00am/.test(k.html) && /Close out the overnight on My Work/.test(k.html))
+  ck('the night sky look, with a solid color where the gradient is dropped', /bgcolor="#121C4A"/.test(k.html) && /linear-gradient\(180deg,#070D2B/.test(k.html) && /🌙/.test(k.html) && /☀️/.test(k.html))
   const saved = WRITES.find(([, a]) => a?.target_key === 'overnight_handoff')?.[1]?.item
   ck('the 8am run saves the same handoff for My Work', saved && saved.id === 'report_2026-10-29' && saved.kind === 'report' && saved.needs.length === 5 && saved.note?.text && saved.sent === 2, saved)
   ck('the reply carries counts only', r.j.overnight_handoff?.needs === 5 && r.j.overnight_handoff?.note === true && !JSON.stringify(r.j).includes('Harper'))
@@ -138,7 +140,7 @@ try {
   pinAt('2026-10-29T13:05:00Z'); reset(true); D.app_data = D.app_data.map((row) => ['ops_items', 'leads', 'coverage_cases', 'overnight_handoff'].includes(row.key) ? { ...row, data: [] } : row); D.job_applicants = []
   const rq = await handler(new Request('https://x/functions/v1/lead-digest', { headers: { 'x-cron-secret': JOBSEC } })); globalThis.Date = RealDate
   const kq = MAIL.find((m) => m.to === 'krystal@mo-care.com') || {}
-  ck('a quiet night says so, and still asks to mark it read', rq.status === 200 && /Nothing happened overnight that needs you\./.test(kq.html) && /Mark it read on My Work/.test(kq.html), kq.subject)
+  ck('a quiet night says so, and still asks to mark it read', rq.status === 200 && /Nothing happened overnight that needs you\./.test(kq.html) && /Close out the overnight on My Work/.test(kq.html), kq.subject)
 } finally { fs.rmSync(tmp, { recursive: true, force: true }) }
 let pass = 0; for (const [n, ok, note] of res) { console.log((ok ? '  ✓ ' : '  ✗ ') + n + (ok ? '' : '\n      ' + note)); if (ok) pass++ }
 console.log(`\n${pass}/${res.length} passed`); process.exit(pass === res.length ? 0 : 1)

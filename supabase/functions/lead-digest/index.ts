@@ -419,28 +419,34 @@ Deno.serve(async (req) => {
   const badge = (txt: string, bg: string, fg: string) =>
     ` <span style="background:${bg};color:${fg};font-size:10.5px;font-weight:700;padding:1px 7px;border-radius:99px;white-space:nowrap;">${esc(txt)}</span>`
 
-  /* 🌅 The Overnight Handoff block: the same for everyone, so it is drawn once */
+  /* 🌙 → ☀️ The Overnight Handoff block (Samantha 2026-10-29: "even more dramatic like moon to sun and very attention
+     grabbing"): a night sky that warms to sunrise at the bottom. Solid colors carry it where an email reader drops the
+     gradient. The same for everyone, so it is drawn once. */
   let handHtml = ''
   if (hand) {
     const h = hand
-    const lines = (arr: OH.Line[], color: string) => arr.slice(0, 10).map((x) =>
-      `<table role="presentation" width="100%" style="border-collapse:collapse;"><tr><td valign="top" style="padding:5px 10px 5px 0;width:72px;font-family:Arial,sans-serif;font-size:12px;color:${GRAY};white-space:nowrap;">${esc(OH.when(x.at, today))}</td>` +
-      `<td style="padding:5px 0;font-family:Arial,sans-serif;font-size:14px;color:${color};line-height:1.45;">${esc(x.text)}</td></tr></table>`).join('') +
-      (arr.length > 10 ? `<div style="font-family:Arial,sans-serif;font-size:12px;color:${GRAY};padding-top:4px;">plus ${arr.length - 10} more in the Hub</div>` : '')
-    const head = (t: string, n: number, color: string) => `<div style="font-family:Arial,sans-serif;font-size:11.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:${color};margin:12px 0 4px;">${esc(t)} · ${n}</div>`
-    let inner = ''
-    if (h.note) inner += `<div style="background:#FFF4DE;border-radius:9px;padding:12px 14px;margin-top:4px;">` +
-      `<div style="font-family:Arial,sans-serif;font-size:11.5px;font-weight:800;letter-spacing:.06em;color:${AMBER};">NOTE FROM ${esc(String(h.note.by_name).split(/\s+/)[0].toUpperCase())}${h.note.at ? ' · ' + esc(OH.when(OH.chi(h.note.at), today)) : ''}</div>` +
-      `<div style="font-family:Arial,sans-serif;font-size:15px;color:#1f2a36;line-height:1.5;margin-top:4px;white-space:pre-wrap;">${esc(h.note.text)}</div>` +
-      `<div style="font-family:Arial,sans-serif;font-size:12px;color:${GRAY};margin-top:6px;">Press Got it, then Done, on My Work.</div></div>`
-    if (h.needs.length) inner += head('Needs you this morning', h.needs.length, RED) + lines(h.needs, '#1f2a36')
-    if (h.handled.length) inner += head('Handled overnight', h.handled.length, '#1F6D45') + lines(h.handled, '#1f2a36')
-    if (h.came_in.length) inner += head('Came in overnight', h.came_in.length, NAVY) + lines(h.came_in, '#1f2a36')
-    if (OH.quiet(h)) inner += `<div style="font-family:Arial,sans-serif;font-size:14px;color:#1f2a36;padding:4px 0;">Nothing happened overnight that needs you.</div>`
-    if (h.errors.length) inner += `<div style="font-family:Arial,sans-serif;font-size:13px;color:${RED};padding-top:8px;">Could not read ${esc(h.errors.join(', '))}. Check the Hub before relying on this list.</div>`
-    inner += `<div style="padding-top:12px;"><a href="${HUB}/#mywork" style="display:inline-block;background:${NAVY};color:#ffffff;font-family:Arial,sans-serif;text-decoration:none;font-weight:700;font-size:13px;padding:8px 16px;border-radius:8px;">Mark it read on My Work →</a></div>`
+    const INK = '#F3F1FA', DIM = '#B9B3DC', CORAL = '#FF9F8A', MINT = '#8FE0C9', SKY = '#AFC6FF'
+    const lines = (arr: OH.Line[]) => arr.slice(0, 10).map((x) =>
+      `<table role="presentation" width="100%" style="border-collapse:collapse;table-layout:fixed;border-top:1px solid #2A2F5E;"><tr><td valign="top" width="92" style="padding:7px 8px 7px 0;width:92px;font-family:Arial,sans-serif;font-size:12px;color:${DIM};">${esc(OH.when(x.at, today))}</td>` +
+      `<td style="padding:6px 0;font-family:Arial,sans-serif;font-size:14px;color:${INK};line-height:1.45;">${esc(x.text)}</td></tr></table>`).join('') +
+      (arr.length > 10 ? `<div style="font-family:Arial,sans-serif;font-size:12px;color:${DIM};padding-top:4px;">plus ${arr.length - 10} more in the Hub</div>` : '')
+    const head = (t: string, n: number, color: string) => `<div style="font-family:Arial,sans-serif;font-size:11.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:${color};margin:14px 0 4px;">${esc(t)} · ${n}</div>`
     const fromT = OH.when(h.from, today), toT = OH.when(h.to, today)
-    handHtml = card('🌅', 'Overnight Handoff', HONEY, inner, esc(`Overnight is ${fromT} to ${toT}.`))
+    let inner = `<div style="font-family:Arial,sans-serif;font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#C9C3F0;">🌙&nbsp; Last night · ${esc(fromT)} to ${esc(toT)}</div>` +
+      `<div style="font-family:Arial,sans-serif;font-size:26px;font-weight:800;color:#ffffff;margin-top:4px;">Overnight Handoff</div>` +
+      `<div style="font-family:Arial,sans-serif;font-size:14px;color:#D6D2EE;margin-top:4px;">${OH.quiet(h) && !h.errors.length ? 'A quiet night. Nothing happened overnight that needs you.' : 'Read it, move what is yours to your desk, then close out the overnight.'}</div>`
+    if (h.note) inner += `<div style="background:#FFF4DE;border-radius:10px;padding:12px 14px;margin-top:14px;">` +
+      `<div style="font-family:Arial,sans-serif;font-size:11.5px;font-weight:800;letter-spacing:.06em;color:${AMBER};">NOTE FROM ${esc(String(h.note.by_name).split(/\s+/)[0].toUpperCase())}${h.note.at ? ' · ' + esc(OH.when(OH.chi(h.note.at), today)) : ''}</div>` +
+      `<div style="font-family:Arial,sans-serif;font-size:16px;color:#2A2140;line-height:1.5;margin-top:4px;white-space:pre-wrap;">${esc(h.note.text)}</div>` +
+      `<div style="font-family:Arial,sans-serif;font-size:12px;color:${GRAY};margin-top:6px;">Press Got it, then Done, on My Work.</div></div>`
+    if (h.needs.length) inner += head('Needs you this morning', h.needs.length, CORAL) + lines(h.needs)
+    if (h.handled.length) inner += head('Handled overnight', h.handled.length, MINT) + lines(h.handled)
+    if (h.came_in.length) inner += head('Came in overnight', h.came_in.length, SKY) + lines(h.came_in)
+    if (h.errors.length) inner += `<div style="font-family:Arial,sans-serif;font-size:13px;color:#FFB4A6;padding-top:10px;">Could not read ${esc(h.errors.join(', '))}. Check the Hub before relying on this list.</div>`
+    inner += `<div style="padding-top:16px;"><a href="${HUB}/#mywork" style="display:inline-block;background:#F0A63A;color:#1B1640;font-family:Arial,sans-serif;text-decoration:none;font-weight:800;font-size:14px;padding:11px 20px;border-radius:99px;">☀️&nbsp; Close out the overnight on My Work</a></div>`
+    handHtml = `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:separate;margin-top:12px;"><tr>` +
+      `<td bgcolor="#121C4A" style="background-color:#121C4A;background-image:linear-gradient(180deg,#070D2B 0%,#121C4A 45%,#3A2E66 75%,#9A5163 92%,#E39A4C 100%);border-radius:14px;padding:20px 20px 22px;">` +
+      inner + `</td></tr></table>`
   }
 
   let sent = 0
