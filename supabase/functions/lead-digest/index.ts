@@ -16,6 +16,10 @@
 // yesterday's missed clock-ins and clock-outs (the call-to-confirm cards) · today's AxisCare schedule with open shifts ·
 // families who waited over 30 minutes for a first call since the last workday's brief (Speed to lead, 2026-10-22: with
 // one text per family on, this line replaces the 30-minute text; lead.rungs.manager_at, time off and covering marked).
+// Overnight Handoff (Samantha 2026-10-29, only while ops_settings.overnight_handoff_live): every brief opens with the owner's
+// note for this morning, then what happened overnight that needs the office, what was handled and what came in
+// (_shared/overnight-handoff.ts). It replaces While you were out. The scheduled run saves it as report_<date> in app_data
+// overnight_handoff so My Work shows the same thing.
 //
 // Missing-note detection waits on AxisCare exposing notes at all (the hourly
 // sweep still reports NONE FOUND); when that door opens both note sections
@@ -43,6 +47,7 @@ import { ghlStaffContact } from '../_shared/staff-contact.ts'
 import { loadNotClients, isNotClient } from '../_shared/client-quiet.ts'   // Office Staff and other not-clients (2026-10-12)
 import { takenOffNotCalledIn } from '../_shared/not-a-callin.ts'
 import * as BR from '../_shared/bonus-rules.ts'   // the new-clients line (bonus v2, 2026-10-22)
+import * as OH from '../_shared/overnight-handoff.ts'   // Overnight Handoff at the top (2026-10-29)
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -217,6 +222,20 @@ Deno.serve(async (req) => {
   {
     const { data } = await sb.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
     if (data?.data && !Array.isArray(data.data)) opsSettings = data.data
+  }
+
+  // ── Overnight Handoff (2026-10-29): one for the whole office, built once. A list that cannot be read is SAID. ──
+  let hand: OH.Handoff | null = null
+  if (OH.liveOn(opsSettings)) {
+    const w = OH.windowFor(today, opsSettings)
+    let apps: unknown[] | null = null, appsErr = ''
+    try { apps = await OH.applicantsIn(sb, w) } catch (e) { appsErr = String((e as Error)?.message || e).slice(0, 120) }
+    try {
+      hand = OH.build({ today, settings: opsSettings, ops, leads, covCases, notes: await grab(OH.KEY),
+        applicants: apps as any[] | null, applicantsErr: appsErr, isCallIn: (c) => !takenOffNotCalledIn(c) })
+    } catch (e) {
+      hand = { date: today, from: w.from, to: w.to, note: null, needs: [], handled: [], came_in: [], errors: ['the overnight report (' + String((e as Error)?.message || e).slice(0, 120) + ')'] }
+    }
   }
 
   // ── Booked today: interviews and assessments (everyone's brief). A load that fails is SAID in the email. ──
@@ -400,6 +419,30 @@ Deno.serve(async (req) => {
   const badge = (txt: string, bg: string, fg: string) =>
     ` <span style="background:${bg};color:${fg};font-size:10.5px;font-weight:700;padding:1px 7px;border-radius:99px;white-space:nowrap;">${esc(txt)}</span>`
 
+  /* 🌅 The Overnight Handoff block: the same for everyone, so it is drawn once */
+  let handHtml = ''
+  if (hand) {
+    const h = hand
+    const lines = (arr: OH.Line[], color: string) => arr.slice(0, 10).map((x) =>
+      `<table role="presentation" width="100%" style="border-collapse:collapse;"><tr><td valign="top" style="padding:5px 10px 5px 0;width:72px;font-family:Arial,sans-serif;font-size:12px;color:${GRAY};white-space:nowrap;">${esc(OH.when(x.at, today))}</td>` +
+      `<td style="padding:5px 0;font-family:Arial,sans-serif;font-size:14px;color:${color};line-height:1.45;">${esc(x.text)}</td></tr></table>`).join('') +
+      (arr.length > 10 ? `<div style="font-family:Arial,sans-serif;font-size:12px;color:${GRAY};padding-top:4px;">plus ${arr.length - 10} more in the Hub</div>` : '')
+    const head = (t: string, n: number, color: string) => `<div style="font-family:Arial,sans-serif;font-size:11.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:${color};margin:12px 0 4px;">${esc(t)} · ${n}</div>`
+    let inner = ''
+    if (h.note) inner += `<div style="background:#FFF4DE;border-radius:9px;padding:12px 14px;margin-top:4px;">` +
+      `<div style="font-family:Arial,sans-serif;font-size:11.5px;font-weight:800;letter-spacing:.06em;color:${AMBER};">NOTE FROM ${esc(String(h.note.by_name).split(/\s+/)[0].toUpperCase())}${h.note.at ? ' · ' + esc(OH.when(OH.chi(h.note.at), today)) : ''}</div>` +
+      `<div style="font-family:Arial,sans-serif;font-size:15px;color:#1f2a36;line-height:1.5;margin-top:4px;white-space:pre-wrap;">${esc(h.note.text)}</div>` +
+      `<div style="font-family:Arial,sans-serif;font-size:12px;color:${GRAY};margin-top:6px;">Press Got it, then Done, on My Work.</div></div>`
+    if (h.needs.length) inner += head('Needs you this morning', h.needs.length, RED) + lines(h.needs, '#1f2a36')
+    if (h.handled.length) inner += head('Handled overnight', h.handled.length, '#1F6D45') + lines(h.handled, '#1f2a36')
+    if (h.came_in.length) inner += head('Came in overnight', h.came_in.length, NAVY) + lines(h.came_in, '#1f2a36')
+    if (OH.quiet(h)) inner += `<div style="font-family:Arial,sans-serif;font-size:14px;color:#1f2a36;padding:4px 0;">Nothing happened overnight that needs you.</div>`
+    if (h.errors.length) inner += `<div style="font-family:Arial,sans-serif;font-size:13px;color:${RED};padding-top:8px;">Could not read ${esc(h.errors.join(', '))}. Check the Hub before relying on this list.</div>`
+    inner += `<div style="padding-top:12px;"><a href="${HUB}/#mywork" style="display:inline-block;background:${NAVY};color:#ffffff;font-family:Arial,sans-serif;text-decoration:none;font-weight:700;font-size:13px;padding:8px 16px;border-radius:8px;">Mark it read on My Work →</a></div>`
+    const fromT = OH.when(h.from, today), toT = OH.when(h.to, today)
+    handHtml = card('🌅', 'Overnight Handoff', HONEY, inner, esc(`Overnight is ${fromT} to ${toT}.`))
+  }
+
   let sent = 0
   const summaries: Record<string, unknown>[] = []
   const ghlToken = Deno.env.get('GHL_TOKEN')
@@ -441,7 +484,7 @@ Deno.serve(async (req) => {
     const leadTop = myLeads.slice(0, 8), moreLeads = myLeads.length - 8
     const triTop = triage.slice(0, 5)
 
-    let body = ''
+    let body = handHtml
     // 🧑‍💼 Interviews today and 🏠 Assessments today: who is coming in and where we are going, first thing.
     const ivChip = (s: string) => s === 'no-show' ? badge('no-show', '#FDE8E8', RED) : s === 'done' ? badge('done', '#E3F4EA', '#1F6D45') : badge('booked', '#E6F4F3', '#1F6F6B')
     if (ivErr) body += card('🧑‍💼', 'Interviews today', RED, `<div style="font-family:Arial,sans-serif;font-size:13.5px;color:${RED};">Could not load today's interviews (${esc(ivErr)}). Check the Interviews tab in the Hub before anyone arrives.</div>`)
@@ -455,7 +498,7 @@ Deno.serve(async (req) => {
     if (ncErr) body += card('🎉', 'New clients', RED, `<div style="font-family:Arial,sans-serif;font-size:13.5px;color:${RED};">Could not load the new-clients scoreboard (${esc(ncErr)}). Check Today in the Hub.</div>`)
     else if (ncLine) body += card('🎉', 'New clients', TEAL, `<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5;">${esc(ncLine)}</div>`)
     // 🌙 While you were out: the news.
-    if (myOvernightOps.length || myOvernightLeads.length) {
+    if (!hand && (myOvernightOps.length || myOvernightLeads.length)) {   /* the Overnight Handoff replaces it while on */
       const when = (iso: unknown) => {
         const c = chi(iso); if (!c) return ''
         const isToday = c.slice(0, 10) === today
@@ -525,7 +568,7 @@ Deno.serve(async (req) => {
     if (clocks.length) body += card('🕰', 'Also ticking', TEAL,
       `<div style="font-family:Arial,sans-serif;font-size:13.5px;color:#1f2a36;line-height:2;">${clocks.join('<br>')}</div>`)
 
-    const nothing = !body
+    const nothing = body === handHtml && (!hand || (OH.quiet(hand) && !hand.errors.length))   /* a quiet night: the handoff box still shows */
     const good = nothing
       ? 'Nothing overdue, nothing waiting, nothing came in overnight. You are ahead. ☀️'
       : (clearedYesterday > 0 ? `You cleared ${clearedYesterday} item${clearedYesterday > 1 ? 's' : ''} yesterday. Keep going. 💪`
@@ -538,7 +581,7 @@ Deno.serve(async (req) => {
       if (ivToday.length) cells.push(chip(ivToday.length, 'interviews', NAVY))
       if (asToday.length) cells.push(chip(asToday.length, 'assessments', TEAL))
       if (myPass.length) cells.push(chip(myPass.length, 'pass-alongs', AMBER))
-      if (myOvernightOps.length + myOvernightLeads.length) cells.push(chip(myOvernightOps.length + myOvernightLeads.length, 'overnight', NAVY))
+      if (!hand && myOvernightOps.length + myOvernightLeads.length) cells.push(chip(myOvernightOps.length + myOvernightLeads.length, 'overnight', NAVY))
       if (myLeads.length) cells.push(chip(myLeads.length, 'leads to call', NAVY))
       if (myOps.length) cells.push(chip(myOps.length, 'priorities', RED))
       if (r.admin && shortNotice.length) cells.push(chip(shortNotice.length, 'write-ups', RED))
@@ -547,9 +590,11 @@ Deno.serve(async (req) => {
     }
 
     const counts: string[] = []
+    if (hand?.note) counts.push('a note from ' + String(hand.note.by_name).split(/\s+/)[0])
+    if (hand?.needs.length) counts.push(`${hand.needs.length} from overnight to act on`)
     if (ivToday.length) counts.push(`${ivToday.length} interview${ivToday.length > 1 ? 's' : ''}`)
     if (asToday.length) counts.push(`${asToday.length} assessment${asToday.length > 1 ? 's' : ''}`)
-    if (myOvernightOps.length + myOvernightLeads.length) counts.push(`${myOvernightOps.length + myOvernightLeads.length} overnight`)
+    if (!hand && myOvernightOps.length + myOvernightLeads.length) counts.push(`${myOvernightOps.length + myOvernightLeads.length} overnight`)
     if (myPass.length) counts.push(`${myPass.length} pass-along${myPass.length > 1 ? 's' : ''}`)
     if (myLeads.length) counts.push(`${myLeads.length} lead${myLeads.length > 1 ? 's' : ''} to call`)
     if (myOps.length) counts.push(`${myOps.length} priorit${myOps.length > 1 ? 'ies' : 'y'}`)
@@ -566,7 +611,7 @@ Deno.serve(async (req) => {
       `</td></tr></table></div>` +
       `<div style="background:#F8FAFD;border:1px solid ${BORDER};border-top:none;border-radius:0 0 14px 14px;padding:4px 16px 18px;">` +
       glance +
-      (nothing ? `<p style="font-family:Arial,sans-serif;font-size:15px;color:#1f2a36;padding:10px 4px 0;">${good}</p>` : body) +
+      (nothing ? handHtml + `<p style="font-family:Arial,sans-serif;font-size:15px;color:#1f2a36;padding:10px 4px 0;">${good}</p>` : body) +
       `<div style="font-family:Arial,sans-serif;font-size:13px;color:${GRAY};margin-top:14px;padding:0 4px;">${nothing ? '' : good}</div>` +
       `<div style="margin-top:14px;padding:0 4px;"><a href="${HUB}/#mywork" style="display:inline-block;background:${NAVY};color:#ffffff;font-family:Arial,sans-serif;text-decoration:none;font-weight:700;font-size:13.5px;padding:10px 20px;border-radius:9px;">Start my day in the hub →</a></div>` +
       `</div><div style="text-align:center;font-family:Arial,sans-serif;color:#9aa3ad;font-size:11px;padding:12px;">Sent at 8am by your hub · cc.mo-care.com</div></div></div>`
@@ -597,9 +642,15 @@ Deno.serve(async (req) => {
     await sb.rpc('upsert_app_data_item', { target_key: 'morning_brief_state',
       item: { id: 'sent_' + today, at: new Date().toISOString(), sent } })
   }
+  /* My Work shows exactly what the email said (the scheduled run only; a test brief changes nothing) */
+  if (!testTo && hand) {
+    const { error } = await sb.rpc('upsert_app_data_item', { target_key: OH.KEY, item: { id: 'report_' + today, kind: 'report', ...hand, sent_at: new Date().toISOString(), sent } })
+    if (error) await reportSendProblem(sb, { sender: 'lead-digest', channel: 'email', who: 'Overnight Handoff', reasons: ['the copy for My Work was not saved: ' + String(error.message || error).slice(0, 100)], failed: true })
+  }
   /* J1: the scheduled run's reply carries counts, not the staff's email addresses. A staff test brief (only ever to
      their own address) keeps it, so the Hub can say what happened. */
   // deno-lint-ignore no-explicit-any
   const briefs = testTo ? summaries : summaries.map(({ to: _to, ...rest }: any) => rest)
-  return json({ status: 'sent', date: today, recipients: sent, axiscare_reached: !!acToday, briefs })
+  return json({ status: 'sent', date: today, recipients: sent, axiscare_reached: !!acToday, briefs,
+    overnight_handoff: hand ? { note: !!hand.note, needs: hand.needs.length, handled: hand.handled.length, came_in: hand.came_in.length, errors: hand.errors.length } : 'off' })
 })
