@@ -12,7 +12,8 @@
 //
 //   vocab     (the owner's server key only, read-only) whether PRN Team and CNA exist in AxisCare
 //   list      every current track and the whole history (for the Hub)
-//   start     {applicant_id}: after a PRN offer is sent. Joins the PRN CNA Team at the approved PRN rate. Once only.
+//   start     {applicant_id, team?}: after a PRN offer is sent. Joins the team picked on the offer ('cna' | 'caregiver'),
+//             or the PRN role they applied for, at its approved PRN rate. Once only.
 //   link      {applicant_id, axiscare_caregiver_id}: AxisCare gives applicants and caregivers different numbers, so
 //             staff link them. Refused unless the caregiver's phone or email in AxisCare matches this hire exactly,
 //             and no other PRN hire matches too. Their application's days and times become their starting
@@ -345,14 +346,18 @@ Deno.serve(async (req) => {
   const today = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })
 
   if (action === 'start') {
-    /* 1037: the role's own key decides the team (requires_cna: the PRN CNA Team; otherwise the PRN Caregiver Team) */
+    /* 1037: the role's own key decides the team (requires_cna: the PRN CNA Team; otherwise the PRN Caregiver Team).
+       2026-10-30 (Samantha, after an interview): the team picked on the offer wins, so someone who came in
+       through another prescreener can be offered a PRN team spot. The history says which prescreener they used. */
     const { data: role } = await db.from('job_positions').select('track, requires_cna, label').eq('key', a.position ?? '').maybeSingle()
-    if (role?.track !== 'prn') return json({ outcome: 'not_prn', detail: 'this applicant did not apply for a PRN team' })
-    if (tr) return json({ outcome: 'already', track: tr })
-    const team: Team = role.requires_cna === false ? 'caregiver' : 'cna'
+    const picked: Team | null = b.team === 'cna' || b.team === 'caregiver' ? b.team as Team : null
+    if (role?.track !== 'prn' && !picked) return json({ outcome: 'not_prn', detail: 'this applicant did not apply for a PRN team' })
+    if (tr) return json({ outcome: 'already', track: tr, team: teamOf(tr) })
+    const team: Team = picked ?? (role!.requires_cna === false ? 'caregiver' : 'cna')
     const rate = (await rates(team)).prn_team
+    const came = role?.track === 'prn' ? '' : '; came in through ' + (role?.label || a.position || 'another prescreener')
     const { data, error } = await db.rpc('pay_track_start', { p_applicant: id, p_team: team, p_rate: rate,
-      p_effective: today(), p_by: by, p_reason: 'Joined the ' + TEAM_LABEL[team] + ' (offer sent)' })
+      p_effective: today(), p_by: by, p_reason: 'Joined the ' + TEAM_LABEL[team] + ' (offer sent' + came + ')' })
     if (error) return json({ error: 'could not start their pay track: ' + error.message }, 500)
     return json({ outcome: data?.outcome === 'already' ? 'already' : 'started', rate, team })
   }
