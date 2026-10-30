@@ -118,7 +118,7 @@ Deno.serve(async (req) => {
       else await save('error', { note: r.why || 'the AI could not read this call' })
       continue
     }
-    const kept = toStore(toPrefill(a, { first_name: '', last_name: '', phone: '', email: '' }, (cat as Any).list || []))
+    const kept = toStore(toPrefill(a, { first_name: '', last_name: '', phone: '', email: '' }, (cat as Any).list || [], chicagoDay(String(s.msg_at))))
     await save('read', { reading: kept, note: null })
   }
   await beat(db, out.errors === 0, JSON.stringify(out))
