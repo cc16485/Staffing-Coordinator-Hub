@@ -9,7 +9,8 @@ res = []; ck = lambda n, c, note="": res.append((n, bool(c), "" if c else str(no
 TMP = tempfile.mkdtemp(prefix="t966-"); BIN = os.path.join(TMP, "bin"); os.makedirs(BIN)
 COPY = os.path.join(TMP, "hub")
 subprocess.run(["git", "clone", "-q", HERE, COPY], check=True)
-HEAD = subprocess.run(["git", "-C", HERE, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+# 2026-10-30: 1209 made a newer master current, so 966 is rehearsed on the build it shipped (it ran 2026-10-18).
+HEAD = "76a7007f9756a65ded91807fa35ac830d1f26486"
 subprocess.run(["git", "-C", COPY, "checkout", "-q", HEAD], check=True)
 BASE = "ecb821d96b9ec6f953c29bc8b3b5d2ac9ce5a28a"   # main when 966 was built (its SB_BASE); fixed now that 966 is merged
 FNROOT = os.path.join(COPY, "supabase", "functions")
