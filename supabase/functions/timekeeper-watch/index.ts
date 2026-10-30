@@ -97,8 +97,11 @@ import { isPlaceholder } from '../_shared/visit-reasons.ts'
 import { SECOND_TEXT, fillText, secondTextDue, atRisk, live as p3live, fixedInAxis, noteDraft } from '../_shared/clockin-v2.ts'   // Cara Phase 3
 import { readPlan, isMustCover, type PlanRead } from '../_shared/callin-plan.ts'
 import { ghlStoredContactIfAllowed } from '../_shared/optout.ts'
+import { axisReader } from '../_shared/axis-reader.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+/* A (2026-10-29): every AxisCare read goes through the shared reader (live: copies at most 60 s old) */
+const axFetch = axisReader(sb, { job: 'timekeeper-watch', tier: 'live' })
 const json = (b: unknown, s = 200) =>
   new Response(JSON.stringify(b, null, 2), { status: s, headers: { 'Content-Type': 'application/json' } })
 
@@ -248,7 +251,7 @@ Deno.serve(async (req) => {
   try {
     let url: string | null = `https://${site}.axiscare.com/api/visits?startDate=${day}&endDate=${day}`
     for (let page = 0; url && page < 12; page++) {
-      const r: Response = await fetch(url, { headers: {
+      const r: Response = await axFetch(url, { headers: {
         Authorization: `Bearer ${token}`, Accept: 'application/json',
         'X-AxisCare-Api-Version': AC_VERSION } })
       if (!r.ok) { fetchError = `AxisCare responded ${r.status}`; break }
@@ -856,7 +859,7 @@ Deno.serve(async (req) => {
       let v = byVisitId.get(String(c.visit_id))
       if (!v || String(c.shift_date) !== day) {
         try {
-          const r = await fetch(`https://${site}.axiscare.com/api/visits/${encodeURIComponent(String(c.visit_id))}`, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'X-AxisCare-Api-Version': AC_VERSION } })
+          const r = await axFetch(`https://${site}.axiscare.com/api/visits/${encodeURIComponent(String(c.visit_id))}`, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'X-AxisCare-Api-Version': AC_VERSION } })
           // deno-lint-ignore no-explicit-any
           const j: any = r.ok ? await r.json().catch(() => null) : null
           v = j?.results?.visit ?? j?.visit ?? null

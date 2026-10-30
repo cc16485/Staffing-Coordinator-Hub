@@ -40,6 +40,7 @@ import '../_shared/lead-rules.js'
 import { careAction, pausedAx, runPlannedEnds } from './care.ts'
 import { loadQuiet } from '../_shared/client-quiet.ts'
 import { planned as dutyPlanned, seatHolder } from '../_shared/duty.ts'
+import { axisReader } from '../_shared/axis-reader.ts'
 
 // deno-lint-ignore no-explicit-any
 type Any = any
@@ -477,7 +478,7 @@ function axFetcher() {
   const site = Deno.env.get('AXISCARE_SITE') || Deno.env.get('AXISCARE_SITE_NUMBER') || ''
   return async (path: string) => {
     if (!token || !/^\d+$/.test(site)) return null
-    try { const r = await fetch(`https://${site}.axiscare.com${path}`, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'X-AxisCare-Api-Version': '2023-10-01' } })
+    try { const r = await axFetch(`https://${site}.axiscare.com${path}`, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'X-AxisCare-Api-Version': '2023-10-01' } })
       return { status: r.status, json: await r.json().catch(() => ({})) } } catch { return null }
   }
 }
@@ -952,10 +953,16 @@ async function pauseDue(db: Any) {
   return n
 }
 
+/* A (2026-10-29): every AxisCare read goes through the shared reader (display); the database client is set per run */
+// deno-lint-ignore no-explicit-any
+let axDb: any = null
+const axFetch = axisReader(() => axDb, { job: 'client-journey', tier: 'display' })
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { status: 200, headers: cors })
   if (req.method !== 'POST') return json({ error: 'POST only' }, 405)
   const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } })
+  axDb = db
   let b: Any = {}; try { b = await req.json() } catch { return json({ error: 'bad request' }, 400) }
 
   /* the scheduled sweep: every open journey */
