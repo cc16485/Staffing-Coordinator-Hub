@@ -46,6 +46,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { textAdmin, type Admin } from '../_shared/clockin-admins.ts'
 import { normalisePhone } from '../_shared/outreach.ts'
 import { loadNotClients, isNotClient } from '../_shared/client-quiet.ts'   // Office Staff and other not-clients (2026-10-12)
+import { calmOn, normalsFor, usualBlock, openTopicCard, recentNotes, addNote, cleanupPlan, closedInto, combinable } from '../_shared/calm-flags.ts'   // calmer flags (2026-10-30)
 
 const AC_VERSION = '2023-10-01'
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
@@ -370,6 +371,7 @@ export async function flagRun(db: any, opts: { practice: boolean; hours?: number
   const kindLive = os?.data?.kind_words_suggest_live === true   /* My Desk 6b: its own switch (Owners Hub Admin page) */
   const levelsLive = os?.data?.care_notes_levels_live === true   /* red / yellow flags (her switch, Owners Hub Admin page) */
   const redTextLive = levelsLive && os?.data?.care_notes_red_text_live === true
+  const calm = levelsLive && calmOn(os?.data)   /* calmer shift-note flags (2026-10-30, her switch calm_flags_live) */
   /* Life Story step 3 (2026-10-24): what each note shows the client enjoys, collected in practice (nothing on profiles) */
   const lifeOn = opts.lifeOnly === true || os?.data?.life_notes_practice === true || os?.data?.life_notes_live === true
   if (!opts.practice && !live) return { ok: true, off: true, note: 'switched off (ops_settings.care_notes_flag_live is not true)' }
@@ -395,6 +397,7 @@ export async function flagRun(db: any, opts: { practice: boolean; hours?: number
   const out = { ok: true, practice: opts.practice, window_hours: Math.round((now - since) / 3600e3), visits_finished: 0, read: 0, stopped_early: false,
     days_with_words: 0, already_flagged: 0, asked: 0, flagged: 0, urgent: 0, ai_could_not_read: 0, by_kind: {} as Record<string, number>, items_made: 0,
     levels_switch: levelsLive, red_text_switch: redTextLive, red: 0, yellow: 0, normal_day: 0, pattern_red: 0, red_texts: 0, by_level_kind: {} as Record<string, number>,
+    calm_switch: calm, calm_added_to_card: 0, calm_usual_marks: 0, calm_cleanup: null as unknown,
     kind_switch: kindLive, kind_asked: 0, kind_found: 0, kind_not_in_note: 0, kind_ai_failed: 0, kind_already: 0, kind_suggested: 0,
     life_on: lifeOn, life_asked: 0, life_ai_failed: 0, life_found: 0, life_rejected: 0, life_new: 0, life_combined: 0, life_known: 0, life_same_note: 0 }
   // deno-lint-ignore no-explicit-any
@@ -427,6 +430,13 @@ export async function flagRun(db: any, opts: { practice: boolean; hours?: number
      Client Care (Hub Settings > who owns what), not on nobody. No owner set there = unassigned, as before. */
   const cc = opts.practice ? { email:'', name:'' } : await clientCareOwner(db)
   const have = new Set(items.map((i) => String(i?.id ?? '')))
+  const normals = calm && !opts.practice ? await readKey(db, 'client_flag_normals') : []
+  /* calmer flags: the one-time cleanup, the first live run after the switch is on (state.calm_cleanup_at) */
+  if (calm && !opts.practice && !opts.lifeOnly && !state.calm_cleanup_at) {
+    out.calm_cleanup = await calmCleanup(db, { practice: false }, items)
+    state.calm_cleanup_at = new Date().toISOString()
+    await db.rpc('upsert_app_data_item', { target_key: 'care_notes_state', item: { ...state, id: 'state' } })
+  }
   for (const [k, vs] of groups) {
     const last = vs.slice().sort((a, b) => String(a?.clockOut?.time ?? '').localeCompare(String(b?.clockOut?.time ?? ''))).pop()
     const note = vs.map((v) => typeof v?.careNote === 'string' ? v.careNote.trim() : '').find(Boolean) || ''
@@ -444,7 +454,7 @@ export async function flagRun(db: any, opts: { practice: boolean; hours?: number
     if (opts.lifeOnly) continue
     if (opts.practice || kindLive) await kindPass(db, opts.practice, k, text, last, out)
     if (have.has(id) && !opts.practice) { out.already_flagged++; continue }
-    if (useLevels) { await levelPass(db, opts, { id, k, text, note, tasks, last, items, cc, cgs, incidents, redTextLive, now, out, have }); if (!opts.practice) continue }
+    if (useLevels) { await levelPass(db, opts, { id, k, text, note, tasks, last, items, cc, cgs, incidents, redTextLive, now, out, have, calm, normals }); if (!opts.practice) continue }
     out.asked++
     const a = await askConcern(text, Number(Deno.env.get('CARE_NOTES_PAUSE_MS') ?? 2000))
     if (a.failed) out.ai_could_not_read++
@@ -470,7 +480,7 @@ export async function flagRun(db: any, opts: { practice: boolean; hours?: number
     if (!error) out.items_made++
   }
   if (!opts.practice && !opts.lifeOnly) {
-    if (!out.stopped_early) await db.rpc('upsert_app_data_item', { target_key: 'care_notes_state', item: { id: 'state', last_look: new Date(now).toISOString() } })
+    if (!out.stopped_early) await db.rpc('upsert_app_data_item', { target_key: 'care_notes_state', item: { ...state, id: 'state', last_look: new Date(now).toISOString() } })
     try { await db.rpc('upsert_app_data_item', { target_key: 'automation_heartbeats', item: { id: 'hb_care-notes-flag', automation: 'care-notes-flag',
       at: new Date().toISOString(), ok: !out.stopped_early, note: (levelsLive ? `${out.red} red, ${out.yellow} yellow of ${out.red + out.yellow + out.normal_day} read` : `${out.flagged} flagged of ${out.asked} read`) + (kindLive ? `; ${out.kind_suggested} kind word${out.kind_suggested === 1 ? '' : 's'} suggested` : '') + (out.stopped_early ? '; AxisCare asked us to slow down' : '') } }) } catch { /* a beat must not stop the run */ }
   }
@@ -480,12 +490,15 @@ export async function flagRun(db: any, opts: { practice: boolean; hours?: number
 /* One caregiver-client-day's words, read for a level. A red or yellow becomes a card (never in practice). */
 // deno-lint-ignore no-explicit-any
 async function levelPass(db: any, opts: { practice: boolean }, c: any) {
-  const { id, text, note, tasks, last, items, cc, cgs, incidents, redTextLive, now, out } = c
-  const a = await askLevel(text, Number(Deno.env.get('CARE_NOTES_PAUSE_MS') ?? 2000))
+  const { id, text, note, tasks, last, items, cc, cgs, incidents, redTextLive, now, out, calm, normals } = c
+  const clientAx = String(last?.client?.id ?? '')
+  /* calmer flags: the reader is told what the office marked as usual for this client */
+  const marks = calm ? normalsFor(normals, clientAx) : {}
+  if (Object.keys(marks).length) out.calm_usual_marks++
+  const a = await askLevel(text + usualBlock(marks, String(last?.client?.firstName ?? '').trim() || 'the client'), Number(Deno.env.get('CARE_NOTES_PAUSE_MS') ?? 2000))
   if (a.failed) out.ai_could_not_read++
   if (!a.failed && a.level === 'none') { out.normal_day++; return }
-  const clientAx = String(last?.client?.id ?? '')
-  const past = recentFlags(items, clientAx, now)
+  const past = calm ? recentNotes(items, clientAx, now) : recentFlags(items, clientAx, now)
   let level: 'red' | 'yellow' | 'unread' = a.failed ? 'unread' : a.level as 'red' | 'yellow'
   let pattern = 0
   if (level === 'yellow' && past.yellows + 1 >= 3) { level = 'red'; pattern = past.yellows + 1; out.pattern_red++ }
@@ -497,7 +510,8 @@ async function levelPass(db: any, opts: { practice: boolean }, c: any) {
   const cg = [String(last?.caregiver?.firstName ?? '').trim(), String(last?.caregiver?.lastName ?? '').trim()].filter(Boolean).join(' ') || 'The caregiver'
   const cgAx = String(last?.caregiver?.id ?? '')
   const day = dayChi(last?.startDate ?? last?.scheduledStartDate)
-  const why = a.failed ? 'The AI couldn\'t read this note (twice), so a person should.' : (pattern ? `Pattern: ${pattern} concerns for ${clientFirst} in 2 weeks. ` : '') + (a.why || a.kind)
+  const usual = calm && !a.failed ? marks[a.kind] : null
+  const why = a.failed ? 'The AI couldn\'t read this note (twice), so a person should.' : (usual ? 'Worse or different than usual. ' : '') + (pattern ? `Pattern: ${pattern} concerns for ${clientFirst} in 2 weeks. ` : '') + (a.why || a.kind)
   const also = level === 'red' && incidents && incidents !== cc.email ? [incidents] : []
   const item = {
     id, kind: 'care_note', domain: 'client_care', status: 'open', level, flag_kind: a.kind || '', why, trigger: a.trigger || '',
@@ -512,12 +526,32 @@ async function levelPass(db: any, opts: { practice: boolean }, c: any) {
     owner: cc.email, owner_name: cc.name, also_for: also,
     due: new Date(now + (level === 'red' ? 4 : 24) * 3600e3).toISOString(),
     created_at: new Date().toISOString(), created_by: 'care-notes', opened_by: 'care-note-flag' }
-  const { error } = await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item })
+  if (usual) (item as Record<string, unknown>).usual_note = String(usual.note || '')
+  /* calmer flags: one open card per client and topic. The note goes onto the open card instead of making another. */
+  const noteRec = { key: id, at: new Date(now).toISOString(), day, caregiver: cg, caregiver_ax: cgAx, caregiver_phone: item.caregiver_phone, words: note || '(no care note)',
+    tasks, trigger: a.trigger || '', why: a.why || a.kind, level: level === 'red' && !pattern ? 'red' : 'yellow', family_line: a.family_line || '' }
+  let toSave: Record<string, unknown> = item
+  if (calm && level !== 'unread' && combinable(a.kind)) {
+    const open = openTopicCard(items, clientAx, a.kind)
+    if (open) {
+      const merged = addNote(open, noteRec, { level, pattern, why, nowMs: now })
+      if (!merged) return   // this visit is already on the card
+      if (level === 'red' && incidents && incidents !== cc.email) merged.also_for = [...new Set([...(Array.isArray(open.also_for) ? open.also_for : []), incidents])]
+      toSave = merged
+    } else toSave = { ...item, notes: [noteRec], last_note_at: noteRec.at }
+  }
+  // deno-lint-ignore no-explicit-any
+  const isNew = !items.some((x: any) => x?.id === toSave.id)
+  const { error } = await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: toSave })
   if (error) return
-  out.items_made++; items.push(item)
-  /* one short text to the Client Care owner for a red flag, 8am to 9pm only (her rule: no office texts at night) */
+  // deno-lint-ignore no-explicit-any
+  if (isNew) { out.items_made++; if (!items.some((x: any) => x?.id === toSave.id)) items.push(toSave) }
+  // deno-lint-ignore no-explicit-any
+  else { out.calm_added_to_card++; const ix = items.findIndex((x: any) => x?.id === toSave.id); items[ix] = toSave }
+  /* one short text to the Client Care owner for a red flag, 8am to 9pm only (her rule: no office texts at night).
+     Calmer flags: a pattern never texts (her decision 1); a note that is red on its own still does. */
   const h = chiHour(Date.now())
-  if (level === 'red' && redTextLive && cc.email && h >= 8 && h < 21) {
+  if (level === 'red' && !(calm && pattern) && redTextLive && cc.email && h >= 8 && h < 21) {
     try {
       const { data } = await db.from('app_data').select('data').eq('key', 'coordinator_staff').maybeSingle()
       // deno-lint-ignore no-explicit-any
@@ -526,9 +560,31 @@ async function levelPass(db: any, opts: { practice: boolean }, c: any) {
       const admin: Admin = { email: cc.email, name, first: name.split(/\s+/)[0], phone: normalisePhone(p?.phone) || null }
       const ghl = { token: Deno.env.get('GHL_TOKEN') || Deno.env.get('GHL_API_KEY') || '', locationId: Deno.env.get('GHL_LOCATION_ID') || '' }
       const msg = `Red flag on ${clientFirst}'s ${day} visit (${a.kind || 'a pattern'}): ${String(why).slice(0, 120)} It's on your My Work: https://cc.mo-care.com/#mywork`
-      if (await textAdmin(db, ghl, admin, msg)) { out.red_texts++; await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { ...item, texted_to: cc.email, texted_at: new Date().toISOString() } }) }
+      if (await textAdmin(db, ghl, admin, msg)) { out.red_texts++; await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { ...toSave, texted_to: cc.email, texted_at: new Date().toISOString() } }) }
     } catch { /* the card is there either way; a failed text raises its own card */ }
   }
+}
+
+/* CALMER FLAGS one-time cleanup (2026-10-30): open flags combine into one card per client and topic, and a topic with
+   no new note in 7 days closes ("Quiet for a week"). A fall or injury, neglect or abuse, and medication are never
+   touched. ?calm_cleanup=1&practice=1 (the owner's key) only counts; the live flag run does it once, the first time
+   calm_flags_live is on. Sends nothing. */
+// deno-lint-ignore no-explicit-any
+export async function calmCleanup(db: any, opts: { practice: boolean }, itemsIn?: any[]) {
+  const items = itemsIn ?? await readKey(db, 'ops_items'), now = Date.now()
+  const p = cleanupPlan(items, now)
+  const out = { ok: true, practice: opts.practice, open_flags: p.before, open_after: p.keep.length, combined_away: p.combined.length, quiet_closed: p.quiet.length, written: 0, errors: 0 }
+  if (opts.practice) return out
+  // deno-lint-ignore no-explicit-any
+  const put = async (it: any) => {
+    const { error } = await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: it })
+    if (error) { out.errors++; return }
+    out.written++
+    const ix = items.findIndex((x) => x?.id === it.id); if (ix >= 0) items[ix] = it
+  }
+  for (const it of [...p.keep, ...p.quiet]) await put(it)
+  for (const x of p.combined) await put(closedInto(x.card, x.into, now))
+  return out
 }
 
 /* RE-READ (Desktop 472, Samantha 2026-10-06: "make the re-read step"): the shift-note flags that are open and were made
@@ -660,6 +716,12 @@ Deno.serve(async (req) => {
     if ((await jobCaller(req, false)) !== 'owner') return json({ error: 'not allowed' }, 401)
     const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
     return json(await flagRun(db, { practice: true, lifeOnly: true, hours: Math.min(Math.max(Number(q.get('hours')) || 48, 1), 96), endHoursAgo: Number(q.get('end_hours')) || 0 }))
+  }
+  if (q.get('calm_cleanup') === '1') {
+    if ((await jobCaller(req, false)) !== 'owner') return json({ error: 'not allowed' }, 401)
+    if (q.get('practice') !== '1') return json({ error: 'the cleanup runs by itself the first time calm_flags_live is on; here it only counts (practice=1)' }, 400)
+    const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+    return json(await calmCleanup(db, { practice: true }))
   }
   if (q.get('regrade') === '1') {
     if ((await jobCaller(req, false)) !== 'owner') return json({ error: 'not allowed' }, 401)
