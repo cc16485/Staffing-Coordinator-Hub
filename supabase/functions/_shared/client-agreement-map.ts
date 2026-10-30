@@ -3,17 +3,18 @@
 // Do not edit by hand: rebuild the agreement, then regenerate this file. Every fill-in, checkbox, initials box and signature
 // line on the printed agreement, with its page (1-based) and box in PDF points measured from the TOP-LEFT of a 612 x 792 page.
 // PDF_SHA256 is the sha256 of the exact master PDF these boxes belong to; the function refuses any other file.
-// 2026-10-18b (Samantha: the Booking App needs its own terms, signed at the care assessment): the current master. Section 9 is
-// now "The Caring Companions Booking App" (the $15 month-with-no-visits fee, the join month free, who may book, turning it off),
-// and each Exhibit I contact has "Can book in the app" Yes / No (c1-c4.book_yes / book_no). 23 pages, same initials.
-// Earlier masters stay in client-agreement-map-2026-10-18.ts, -2026-10-17.ts and -2026-10-16.ts; agreement-masters.ts picks
-// the right one for each agreement by its pdf_sha256.
+// 2026-10-30 (Samantha: an approved visit under 4 hours costs a flat $5.00 more per hour): the current master. Section 2 says
+// "Any approved shift under four hours is billed at the Client's hourly rate plus $5.00 per hour, for every hour of that shift"
+// (was "a rate increase of $5.00 per hour for each hour below four hours") and the Exhibit A Short-shift fee reads "Hourly rate
+// plus $5.00 per hour". Page 9 carries her 2026-10-28 ending-services notice wording. 23 pages, every box the same as 10-18b.
+// Earlier masters stay in client-agreement-map-2026-10-18b.ts, -2026-10-18.ts, -2026-10-17.ts and -2026-10-16.ts;
+// agreement-masters.ts picks the right one for each agreement by its pdf_sha256.
 // =============================================================================
 export const DOC = 'client-care-agreement'
 export const VERSION = "Rev. 10/2026"
 export const PAGES = 23
-export const PDF_SHA256 = "a06569407574b49985c0c80fcca149db53904c237b850e874298ba23d66ce3fa"
-export const MASTER_PATH = 'master/client-care-agreement-rev-2026-10-18b.pdf'
+export const PDF_SHA256 = "e11cbf8295107d42be8419fc76069543371c3788b0981d4c915823244bfc6309"
+export const MASTER_PATH = 'master/client-care-agreement-rev-2026-10-30.pdf'
 export type FieldType = 'text' | 'check' | 'initials' | 'signature'
 export type Field = { type: FieldType; page: number; box: [number, number, number, number] }
 export const FIELDS: Record<string, Field> = {
