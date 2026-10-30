@@ -17,6 +17,8 @@ import { OFFICE_ROLES, requireStaff } from '../_shared/staff-auth.ts'
 type Any = any
 const S = (v: unknown) => (typeof v === 'string' ? v.trim() : v == null ? '' : String(v).trim())
 const listOf = (v: Any): Any[] => Array.isArray(v) ? v : (v && typeof v === 'object' ? Object.values(v) : [])
+// AxisCare sends a blank date as 1969-12-31 or 1970-01-01 (8 of 24 active clients on 2026-10-30), so those mean "not recorded".
+const dayOf = (v: unknown) => { const d = S(v).slice(0, 10); return /^\d{4}-\d\d-\d\d$/.test(d) && !/^(1969-12-31|1970-01-01)$/.test(d) ? d : null }
 
 /** "4175550001" or "+1 417-555-0001" -> "(417) 555-0001"; anything else as given. */
 export function phoneText(v: unknown): string {
@@ -29,7 +31,6 @@ export function glanceFrom(c: Any, members: Any[], rps: Any[]) {
   const a = c?.residentialAddress ?? c?.mailingAddress ?? {}
   const street = [S(a.streetAddress1 ?? a.street1 ?? a.line1), S(a.streetAddress2 ?? a.street2 ?? a.line2)].filter(Boolean).join(' ')
   const place = [S(a.city), [S(a.state), S(a.postalCode ?? a.zip).slice(0, 5)].filter(Boolean).join(' ')].filter(Boolean).join(', ')
-  const dob = S(c?.dateOfBirth ?? c?.birthDate).match(/^\d{4}-\d\d-\d\d/)
   let contact: { name: string; relationship: string; phone: string; from: string } | null = null
   const m = [...members].filter((x) => S(x?.name) && !/^(self|client)$/i.test(S(x?.relationship)))
     .sort((x, y) => Number(!!y?.is_primary) - Number(!!x?.is_primary) || Number(x?.axiscare_list_number ?? 99) - Number(y?.axiscare_list_number ?? 99))[0]
@@ -43,10 +44,10 @@ export function glanceFrom(c: Any, members: Any[], rps: Any[]) {
     }
   }
   return {
-    dob: dob ? dob[0] : null,
+    dob: dayOf(c?.dateOfBirth ?? c?.birthDate),
     address: [street, place].filter(Boolean).join(', ') || null,
     phone: phoneText(c?.homePhone || c?.mobilePhone || c?.otherPhone) || null,
-    start_date: /^\d{4}-\d\d-\d\d/.test(S(c?.startDate)) ? S(c?.startDate).slice(0, 10) : null,
+    start_date: dayOf(c?.startDate),
     contact,
   }
 }
