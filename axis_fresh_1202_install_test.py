@@ -69,6 +69,7 @@ if a[:2] == ['functions', 'download']:
     src = {WT!r} if (os.path.exists(os.path.join(T, 'dep_' + fn)) or os.path.exists(os.path.join(T, 'already'))) else {BASEWT!r}
     shutil.copytree(os.path.join(src, 'supabase', 'functions'), os.path.join(os.getcwd(), 'supabase', 'functions'), dirs_exist_ok=True)
     if os.path.exists(os.path.join(T, 'drift')) and fn == 'coverage-run': open(os.path.join(os.getcwd(), 'supabase', 'functions', 'coverage-run', 'index.ts'), 'a').write('// someone else')
+    if os.path.exists(os.path.join(T, 'oldprn')) and src == {BASEWT!r}: open(os.path.join(os.getcwd(), 'supabase', 'functions', '_shared', 'prn-page.ts'), 'a').write('// the copy live before PRN step 7')
     sys.exit(0)
 sys.exit(1)
 """)
@@ -77,10 +78,10 @@ sha = lambda p: hashlib.sha256(open(p, "rb").read()).hexdigest()
 PIN = {k: sha(os.path.join(WT, f"supabase/functions/{k}/index.ts")) for k in FNS + ["axis-health"]}
 PIN["_shared/axis-reader"] = sha(os.path.join(WT, "supabase/functions/_shared/axis-reader.ts"))
 SQLP = {f: sha(os.path.join(WT, f)) for f in ["axis_reader_A.sql", "axis_reader_A_selftest.sql", "axis_health_B.sql", "axis_health_B_selftest.sql", "axis_reader_A_rollback.sql", "axis_health_B_rollback.sql"]}
-def run(env_over=None, already=False, drift=False, tests=False, **mode):
+def run(env_over=None, already=False, drift=False, oldprn=False, tests=False, **mode):
     reset(**mode); rep = os.path.join(TMP, "r.txt")
     for f in [LOG, rep] + [os.path.join(TMP, x) for x in os.listdir(TMP) if x.startswith(("dep_", "sql_"))]: os.path.exists(f) and os.remove(f)
-    for fl, on in (("already", already), ("drift", drift)):
+    for fl, on in (("already", already), ("drift", drift), ("oldprn", oldprn)):
         fp = os.path.join(TMP, fl); (open(fp, "w").write("x") if on else (os.path.exists(fp) and os.remove(fp)))
     env = dict(os.environ, PATH=FAKEBIN + ":/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin", SB_TOKEN="sbp_test", SB_REPORT=rep, SB_API_BASE=URL, SB_FN_BASE=URL,
                SB_SUPA_CLI=os.path.join(FAKEBIN, "supabase"), SB_REPO=WT, SB_BASE=BASE_SHA, SB_SHAS=json.dumps(PIN), SB_SQL_SHAS=json.dumps(SQLP),
@@ -126,6 +127,12 @@ try:
     ck("a practice look that fails is caught", c == 8 and "✗ axis-health practice look" in out, out[-600:])
     c, out = run(reads=False)
     ck("no AxisCare reads counted after the deploy is caught", c == 8 and "✗ AxisCare reads are being counted: none yet" in out, out[-600:])
+    OLDPRN = hashlib.sha256(open(os.path.join(BASEWT, "supabase/functions/_shared/prn-page.ts"), "rb").read() + b"// the copy live before PRN step 7").hexdigest()
+    c, out = run(oldprn=True, env_over={"SB_PRIOR": json.dumps({"supabase/functions/_shared/prn-page.ts": OLDPRN})})
+    ck("an earlier copy of a shared file is live (named in the pins): goes ahead and says it brings it up to main", c == 0 and deploys() == ["axis-health"] + FNS
+       and "also pick up the newer copy on GitHub's main of: _shared/prn-page.ts" in out, out[-1500:])
+    c, out = run(oldprn=True)
+    ck("an unknown copy of a shared file is live: STOPS before any change", c == 3 and not deploys(), out[-600:])
     c, out = run(env_over={"SB_TOKEN": "nope"})
     ck("no access token: nothing runs", c == 2 and not S["sql"], out[-300:])
 finally:

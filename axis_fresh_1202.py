@@ -17,6 +17,7 @@ SUPA = os.environ.get("SB_SUPA_CLI", ""); API = os.environ.get("SB_API_BASE", "h
 HUB_REF = "zngsgedlsxinbygwmxwn"
 HUB = os.environ["SB_REPO"]; HUB_BASE = os.environ.get("SB_BASE", "")
 HUB_SHAS = json.loads(os.environ["SB_SHAS"]); SQL_SHAS = json.loads(os.environ.get("SB_SQL_SHAS", "{}"))
+PRIOR = json.loads(os.environ.get("SB_PRIOR", "{}")); PRIOR_USED = set()   # a shared file whose earlier copy is what is live now (merged on main since these jobs were last deployed)
 FNB = os.environ.get("SB_FN_BASE", f"https://{HUB_REF}.supabase.co")
 POLL = float(os.environ.get("SB_POLL", "15")); POLL_MAX = float(os.environ.get("SB_POLL_MAX", "420"))
 lines = []; fails = []; HIDE = []
@@ -111,7 +112,9 @@ def state(ref, root, base, fn, pinned):
     if not okd or not isinstance(vj, bool): return "unreadable", vj
     nd = need(root, fn)
     if all(k in live and live[k] == sha(os.path.join(root, k)) for k in nd): return "this", vj
-    if all((k in live and live[k] == base_sha(root, base, k)) or (k not in live and base_sha(root, base, k) is None and k in pinned) for k in nd): return "base", vj
+    if all((k in live and (live[k] == base_sha(root, base, k) or live[k] == PRIOR.get(k))) or (k not in live and base_sha(root, base, k) is None and k in pinned) for k in nd):
+        PRIOR_USED.update(k for k in nd if k in live and live[k] == PRIOR.get(k) and live[k] != base_sha(root, base, k))
+        return "base", vj
     return "other", vj
 def deploy(ref, root, fn, vj):
     p = subprocess.run([SUPA, "functions", "deploy", fn, "--project-ref", ref, "--use-api"] + ([] if vj else ["--no-verify-jwt"]), cwd=root, env=dict(os.environ, SUPABASE_ACCESS_TOKEN=TOKEN), capture_output=True, text=True)
@@ -176,6 +179,8 @@ for fn in FNS + [NEWFN]:
     st[fn] = (s_, vj)
     say(f"  ✓ {fn}: " + {"base": "live is the build this builds on", "this": "already this build", "new": "new (not on the server yet)"}[s_]
         + ("" if fn == NEWFN else f", gateway sign-in check {'on' if vj else 'off'} (kept)"))
+if PRIOR_USED: say("  · these jobs also pick up the newer copy on GitHub's main of: " + ", ".join(sorted(k.split("functions/")[-1] for k in PRIOR_USED))
+    + " (other work merged and reviewed earlier, not yet live in these jobs)")
 before = switches()
 if before is None: bad("couldn't read the Hub's settings. Nothing was changed."); done(3)
 say("  · Shared AxisCare reader: " + ("ON" if before.get("axis_shared_reader_live") is True else "OFF") + " · Tell me when AxisCare can't be read: "
