@@ -61,7 +61,7 @@ try:
     ck("the reader answering outsiders is caught", c == 1 and "NOT COMPLETE" in out, out[-600:])
     c, out = run(env_over={"SB_SHAS": json.dumps({"ghl-thread/index.ts": "0" * 64})})
     ck("not the reviewed build: nothing runs", c == 2 and not deploys() and not S["posts"], out[-400:])
-    c, out = run(env_over={"SB_MAIN_REF": HEAD + "~1"})
+    c, out = run(env_over={"SB_MAIN_REF": subprocess.run(["git", "-C", HERE, "merge-base", "HEAD", "origin/main"], capture_output=True, text=True).stdout.strip()})
     ck("not what GitHub's main has: stops before any change", c == 2 and not deploys() and "isn't the same as GitHub's main" in out, out[-400:])
 finally:
     subprocess.run(["git", "-C", HERE, "worktree", "remove", "--force", WT])
