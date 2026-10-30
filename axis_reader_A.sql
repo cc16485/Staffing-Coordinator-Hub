@@ -123,7 +123,7 @@ begin
   on conflict (key) do update set lease_owner = excluded.lease_owner, lease_until = excluded.lease_until
     where public.axis_cache.lease_until is null or public.axis_cache.lease_until < clock_timestamp() or public.axis_cache.lease_owner = excluded.lease_owner
   returning lease_owner into got;
-  return got = p_owner;
+  return coalesce(got = p_owner, false);
 end $$;
 
 create or replace function public.axis_cache_put(p_key text, p_owner text, p_body text, p_status int) returns void
