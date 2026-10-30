@@ -131,6 +131,8 @@ try:
     c, out = run(oldprn=True, env_over={"SB_PRIOR": json.dumps({"supabase/functions/_shared/prn-page.ts": OLDPRN})})
     ck("an earlier copy of a shared file is live (named in the pins): goes ahead and says it brings it up to main", c == 0 and deploys() == ["axis-health"] + FNS
        and "also pick up the newer copy on GitHub's main of: _shared/prn-page.ts" in out, out[-1500:])
+    c, out = run(oldprn=True, env_over={"SB_PRIOR": json.dumps({"supabase/functions/_shared/prn-page.ts": ["1" * 64, OLDPRN]})})
+    ck("several known earlier copies of one shared file (one per job): any of them is accepted", c == 0 and "_shared/prn-page.ts" in out and "RESULT: DONE" in out, out[-900:])
     c, out = run(oldprn=True)
     ck("an unknown copy of a shared file is live: STOPS before any change", c == 3 and not deploys(), out[-600:])
     c, out = run(env_over={"SB_TOKEN": "nope"})
