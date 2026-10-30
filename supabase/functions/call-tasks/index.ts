@@ -39,7 +39,7 @@ import { jobCaller } from '../_shared/job-auth.ts'
 import { seatHolder } from '../_shared/duty.ts'
 import { VERSION, MODEL, ACK, request, retryRequest, clean, answerOf, openCards, transcriptText, shortName, related as relatedOf, workflows,
   ownerFor, dueFor, dueEnd, checkRequest, cleanCheck, nextStatus, cardIdFor, liveCard, chicago, LIVE_KIND, type CallIn, type Who, type OpenCard, type Earlier, type Related, type Action,
-  checkMode, stepProof, cardDecision, promiseCardIdFor, sameCallPrefix, unreadCardIdFor, unreadFinal, unreadSkip, unreadCard, UNREAD_MIN_SECONDS, UNREAD_DAYS, UNREAD_PER_RUN, promiseSkip, promiseCardTime, promiseOwner, promiseCard, PROMISE_CARDS_PER_RUN, cardCheckRequest, cleanCardCheck, CARD_CHECK_DAYS, CARD_CHECK_PER_RUN, CARD_CHECK_AI_PER_RUN, CARD_CHECK_EVERY_MS, type Facts, type Ev, type Fact, type CheckMode } from '../_shared/call-tasks.ts'
+  checkMode, stepProof, cardDecision, promiseCardIdFor, sameCallPrefix, unreadCardIdFor, unreadFinal, unreadSkip, unreadCard, UNREAD_MIN_SECONDS, UNREAD_DAYS, UNREAD_PER_RUN, promiseSkip, promiseCardTime, promiseOwner, promiseCard, PROMISE_CARDS_PER_RUN, cardCheckRequest, cleanCardCheck, CARD_CHECK_DAYS, CARD_CHECK_PER_RUN, CARD_CHECK_AI_PER_RUN, CARD_CHECK_EVERY_MS, quietOn, closesForDay, dayWords, DAY_PASSED_PER_RUN, type Facts, type Ev, type Fact, type CheckMode } from '../_shared/call-tasks.ts'
 
 const GHL = 'https://services.leadconnectorhq.com'
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } })
@@ -359,6 +359,12 @@ Deno.serve(async (req) => {
     Object.assign(out, { card_check_mode: ccMode, cards_open: cc.cards, cards_checked: cc.checked, cards_asked: cc.asked, cards_would_close: cc.would_close,
       cards_would_suggest: cc.would_suggest, cards_closed: cc.closed, cards_suggested: cc.suggested, card_check_errors: cc.errors })
     if (cc.broken) out.save_failed = (out.save_failed || 0) + 1
+  }
+  /* 7c · QUIETER CALL READER (2026-10-29): a call card about a day that ended more than 2 days ago closes by itself */
+  if (live && quietOn(st)) {
+    const dp = await closePastDays(db)
+    Object.assign(out, { day_passed_closed: dp.closed, day_passed_errors: dp.errors })
+    if (dp.broken) out.save_failed = (out.save_failed || 0) + 1
   }
   /* 8 · the promise watch (v13) */
   const pw = await watchPromises(db, ai, hub, tok, since, st)
@@ -790,6 +796,35 @@ function coverageFact(a: Action, card: Any, coverage: Any[]): Fact {
   const who = String(a.client_name || card.about || '')
   const c = coverage.find((x: Any) => x && Date.parse(String(x.opened_at || '')) > since && sameName(who, String(x.client || '')) && (!a.date || String(x.shift_date) === a.date))
   return c ? { proven: true, line: `[Hub] Call-off case opened ${chicago(String(c.opened_at))} for ${c.client}, ${c.shift_date}` } : { proven: false, line: '' }
+}
+/* QUIETER CALL READER (2026-10-29): open call cards whose day has passed close with "Closed: the day has passed".
+   No AI, no AxisCare, no GoHighLevel: the card and its reading only. Promise, could-not-read and care-at-risk cards never
+   close this way, and neither does a card a person reopened (keep_open). */
+async function closePastDays(db: Any) {
+  const res = { closed: 0, errors: 0, broken: false }
+  const now = Date.now(), nowIso = new Date(now).toISOString()
+  const { data: row, error: rErr } = await db.from('app_data').select('data').eq('key', 'ops_items').maybeSingle()
+  if (rErr) { res.broken = true; res.errors++; return res }
+  const ops: Any[] = Array.isArray(row?.data) ? row.data : []
+  const cands = ops.filter((o: Any) => o && o.kind === LIVE_KIND && o.status === 'open' && o.created_by === 'call-tasks')
+  const need = [...new Set(cands.filter((c: Any) => !c.source?.day).map((c: Any) => String(c.source?.message_id || '')).filter(Boolean))]
+  const newest = new Map<string, Any>()
+  for (let i = 0; i < need.length; i += 100) {
+    const { data: rd, error: dErr } = await db.from('call_task_reading').select('message_id, read_at, tasks').in('message_id', need.slice(i, i + 100)).order('read_at', { ascending: false })
+    if (dErr) { res.broken = true; res.errors++; return res }
+    for (const r of rd ?? []) if (!newest.has(r.message_id)) newest.set(r.message_id, r)
+  }
+  for (const c of cands) {
+    if (res.closed >= DAY_PASSED_PER_RUN) break
+    const day = closesForDay(c, newest.get(String(c.source?.message_id || '')), now)
+    if (!day) continue
+    const why = `Closed: the day has passed. This card was about ${dayWords(day)}. Reopen it if it still needs doing.`
+    const { data, error } = await db.rpc('call_card_patch', { p_id: c.id, p_patch: { status: 'done', closed_at: nowIso, closed_by: 'call-tasks', resolution_code: 'day_passed',
+      close_reason: why, last_activity_at: nowIso }, p_history: { at: nowIso, by: 'AI (call follow-ups)', text: why } })
+    if (error) { res.errors++; res.broken = true; continue }
+    if (data === true) res.closed++
+  }
+  return res
 }
 async function checkCards(db: Any, ai: Any, hub: Any, tok: string, mode: CheckMode) {
   const res = { cards: 0, checked: 0, asked: 0, would_close: 0, would_suggest: 0, closed: 0, suggested: 0, errors: 0, broken: false }

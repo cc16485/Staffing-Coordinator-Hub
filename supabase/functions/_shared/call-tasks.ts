@@ -519,10 +519,59 @@ export function liveCard(r: R, t: Task, i: number, owner: { email: string; name:
     owner: owner?.email || '', owner_name: owner?.name || '',
     created_at: iso, first_at: iso, last_at: iso, last_activity_at: iso, created_by: 'call-tasks', opened_by: 'call-tasks',
     person_id: r.person_id || null, lead_id: r.lead_id || null,
-    source: { type: 'call_reading', channel: r.channel || 'call', message_id: r.message_id, call_at: r.call_at, version: r.version },
+    source: { type: 'call_reading', channel: r.channel || 'call', message_id: r.message_id, call_at: r.call_at, version: r.version, ...(visitDay(t, domainFor(t.area)) ? { day: visitDay(t, domainFor(t.area)) } : {}) },
     origin: { employee: 'office-awareness', reading: r.message_id },
     history: [{ at: iso, by: 'AI (call follow-ups)', text: `Made from ${what} with ${who}, ${chicago(r.call_at)}${owner ? '; ' + owner.name + ' ' + (t.owner?.via || 'owns this area') : '; nobody owns this area yet'}` }],
   }
+}
+
+/* ── QUIETER CALL READER (2026-10-29, her approval of plan M2yJiaLMGCekNzZrL6WdT6 "with your three recommendations") ──────
+   Switch ops_settings.quiet_calls_live (one switch for the Hub and this job). Only a promise not kept and care at risk stay
+   in Team Work (the Hub decides that, team-work.js callKept); the rest stay with their owner. Here: a call card about a
+   visit or shift day closes by itself 2 days after that day ended, "Closed: the day has passed", and a person can reopen
+   it (then it is never closed this way again). The day is the date of the card's visit step (a visit change or a
+   call-off), else the reader's day on scheduling work. A deadline on other work (a referral to send, a quote to pay) is
+   never "the day has passed": those stay open until a person closes them. Never a promise card, a could-not-read card
+   or a care-at-risk card. Nothing is sent to anyone. */
+export const DAY_PASSED_MS = 2 * 864e5, DAY_PASSED_PER_RUN = 40
+// deno-lint-ignore no-explicit-any
+export function quietOn(st: any): boolean { return st?.quiet_calls_live === true }
+/** The same rule as the Hub's callKept: promise and could-not-read cards, anything urgent, an incident, or client care
+ *  that is urgent or for today (a change in a client's condition, her decision 3). */
+// deno-lint-ignore no-explicit-any
+export function callKept(c: any): boolean {
+  const id = String(c?.id || ''), u = String(c?.urgency || '').toLowerCase(), d = String(c?.domain || '').toLowerCase()
+  return id.startsWith('cfp_') || id.startsWith('cfu_') || u === 'urgent' || d === 'incidents' || (d === 'client_care' && u === 'today')
+}
+const isDay = (v: unknown) => /^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) && !isNaN(Date.parse(String(v)))
+/** The visit or shift day a follow-up is about: its latest visit-change or call-off step's date, else its day when the
+ *  work is scheduling; '' for anything else. */
+// deno-lint-ignore no-explicit-any
+export function visitDay(t: any, domain: string): string {
+  const v = (Array.isArray(t?.actions) ? t.actions : []).filter((a: Action) => (a?.kind === 'axiscare_visit_change' || a?.kind === 'open_calloff_case') && isDay(a.date))
+    .map((a: Action) => String(a.date)).sort().pop()
+  if (v) return v
+  return domain === 'scheduling_coverage' && isDay(t?.due) ? String(t.due) : ''
+}
+/** The day a call card is about (YYYY-MM-DD), from the card, else from its reading's follow-up; '' when it has none. */
+// deno-lint-ignore no-explicit-any
+export function cardDay(c: any, reading?: any): string {
+  if (isDay(c?.source?.day)) return String(c.source.day)
+  const ti = Number((/_(\d+)$/.exec(String(c?.id || '')) || [])[1] || 0)
+  const t = Array.isArray(reading?.tasks) ? reading.tasks[ti] : null
+  return t ? visitDay(t, String(c?.domain || '')) : ''
+}
+/** Whether the day has passed: it ended (6 pm Central) more than 2 days ago. */
+export function dayPassed(day: string, now = Date.now()): boolean { return !!day && now - dueEnd(day) > DAY_PASSED_MS }
+/** Whether this open card closes now. */
+// deno-lint-ignore no-explicit-any
+export function closesForDay(c: any, reading: any, now = Date.now()): string {
+  if (!c || c.kind !== LIVE_KIND || c.status !== 'open' || c.created_by !== 'call-tasks' || c.keep_open || callKept(c)) return ''
+  const day = cardDay(c, reading)
+  return dayPassed(day, now) ? day : ''
+}
+export function dayWords(day: string): string {
+  return new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', weekday: 'short', month: 'short', day: 'numeric' }).format(new Date(day + 'T12:00:00Z'))
 }
 
 /* ── CARDS CLOSE THEMSELVES (2026-10-17; her plan of 2026-10-14, item 1, her "go") ─────────────────────────────────────
