@@ -57,6 +57,7 @@ import { loadQuiet, isQuiet } from '../_shared/client-quiet.ts'
 import { isPlaceholder } from '../_shared/visit-reasons.ts'
 import { cantComeCase, live as p3live } from '../_shared/clockin-v2.ts'   // Cara Phase 3
 import { opEvent } from '../_shared/events.ts'
+import { axisReader } from '../_shared/axis-reader.ts'
 
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } })
 const AC_VERSION = '2023-10-01'
@@ -85,7 +86,7 @@ export async function listShifts(days: number, now = Date.now()): Promise<{ shif
   const shifts: Shift[] = []
   let url: string | null = `${base}/api/visits?startDate=${chiDay(now - days * 864e5)}&endDate=${chiDay(now)}`
   for (let page = 0; url && page < 40; page++) {
-    const r: Response = await fetch(url, { headers: head })
+    const r: Response = await axFetch(url, { headers: head })
     if (!r.ok) return { shifts: [], error: 'the visit list answered ' + r.status }
     // deno-lint-ignore no-explicit-any
     const j: any = await r.json().catch(() => ({}))
@@ -413,7 +414,7 @@ async function listVisits(fromDay: string, toDay: string): Promise<{ visits: Vis
   const visits: Visit[] = []
   let url: string | null = `${base}/api/visits?startDate=${fromDay}&endDate=${toDay}`
   for (let page = 0; url && page < 20; page++) {
-    const r: Response = await fetch(url, { headers: head })
+    const r: Response = await axFetch(url, { headers: head })
     if (!r.ok) return { visits: [], error: 'the visit list answered ' + r.status }
     // deno-lint-ignore no-explicit-any
     const j: any = await r.json().catch(() => ({}))
@@ -788,6 +789,11 @@ export async function run(db: any, opts: { dry?: boolean; now?: number } = {}) {
   return { ok: true, ...out }
 }
 
+/* A (2026-10-29): every AxisCare read goes through the shared reader (live); the database client is set per run */
+// deno-lint-ignore no-explicit-any
+let axDb: any = null
+const axFetch = axisReader(() => axDb, { job: 'late-watch', tier: 'live' })
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok')
   const q = new URL(req.url).searchParams
@@ -795,6 +801,7 @@ Deno.serve(async (req) => {
   if (!caller) return json({ error: 'not allowed' }, 401)
   if (q.get('auth_check') === '1') return json({ ok: true, caller })
   const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+  axDb = db
   await loadQuiet(db)   // Pause care / End care: paused and ended clients' visits are skipped
   const days = Math.min(Math.max(Number(q.get('days')) || 14, 1), 21)
   /* the L0 looks: the owner's key only */

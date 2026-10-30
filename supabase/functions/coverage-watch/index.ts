@@ -43,8 +43,11 @@ import { mergeFlagIntoWatch } from '../_shared/cara-visit-match.ts'   // CARA PH
 import { quietOn, mondayOf, weekCard, weekCardId, suggestedBefore, recheckCases } from '../_shared/quiet-cards.ts'
 import { openShiftSkip, openShiftItem, openShiftCloseWhy, openShiftId, scheduleOf, OPEN_SHIFT_KIND, OPEN_SHIFT_PER_RUN, type OpenVisit } from '../_shared/open-shift.ts'
 import { reasonTable, readVisit, isPlaceholder, closeHowFor, MEANING_WORDS, type Table as ReasonTable } from '../_shared/visit-reasons.ts'   // 2026-10-24 reasons by id
+import { axisReader } from '../_shared/axis-reader.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+/* A (2026-10-29): every AxisCare read goes through the shared reader (fresh: never a copy of schedule information) */
+const axFetch = axisReader(sb, { job: 'coverage-watch', tier: 'fresh' })
 const json = (b: unknown, s = 200) =>
   new Response(JSON.stringify(b, null, 2), { status: s, headers: { 'Content-Type': 'application/json' } })
 
@@ -134,7 +137,7 @@ Deno.serve(async (req) => {
   try {
     let url: string | null = `https://${site}.axiscare.com/api/visits?startDate=${startDate}&endDate=${endDate}`
     for (let page = 0; url && page < 12; page++) {
-      const r: Response = await fetch(url, { headers: {
+      const r: Response = await axFetch(url, { headers: {
         Authorization: `Bearer ${token}`, Accept: 'application/json',
         'X-AxisCare-Api-Version': AC_VERSION } })
       if (!r.ok) { fetchError = `AxisCare responded ${r.status}`; break }
@@ -157,7 +160,7 @@ Deno.serve(async (req) => {
   const reasonsLive = settings.visit_reasons_live === true && !forceDry
   let rt: ReasonTable = reasonTable(null, settings), rtError: string | null = null
   try {
-    const r = await fetch(`https://${site}.axiscare.com/api/visits/modification-reasons`, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'X-AxisCare-Api-Version': AC_VERSION } })
+    const r = await axFetch(`https://${site}.axiscare.com/api/visits/modification-reasons`, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'X-AxisCare-Api-Version': AC_VERSION } })
     // deno-lint-ignore no-explicit-any
     const j: any = await r.json().catch(() => ({}))
     const list = j?.results?.modificationReasons ?? j?.modificationReasons ?? null
@@ -427,7 +430,7 @@ Deno.serve(async (req) => {
       + `&endDate=${new Date(Date.now() + SWEEP_DAYS * 86400000).toISOString().slice(0, 10)}`
     try {
       for (let page = 0; sUrl && page < 12; page++) {
-        const r: Response = await fetch(sUrl, { headers: {
+        const r: Response = await axFetch(sUrl, { headers: {
           Authorization: `Bearer ${token}`, Accept: 'application/json',
           'X-AxisCare-Api-Version': AC_VERSION } })
         if (!r.ok) break
@@ -528,7 +531,7 @@ Deno.serve(async (req) => {
           const backVisits: any[] = []
           let bu: string | null = `https://${site}.axiscare.com/api/visits?startDate=${new Date(Date.now() - 21 * 86400000).toISOString().slice(0, 10)}&endDate=${new Date(Date.now() - 86400000).toISOString().slice(0, 10)}`
           for (let page = 0; bu && page < 12; page++) {
-            const r: Response = await fetch(bu, { headers: {
+            const r: Response = await axFetch(bu, { headers: {
               Authorization: `Bearer ${token}`, Accept: 'application/json',
               'X-AxisCare-Api-Version': AC_VERSION } })
             if (!r.ok) break
@@ -940,7 +943,7 @@ Deno.serve(async (req) => {
       let u: string | null = `https://${st}.axiscare.com/api/visits?startDate=${dates[0]}&endDate=${dates[dates.length - 1]}`
       try {
         for (let page = 0; u && page < 20; page++) {
-          const r: Response = await fetch(u, { headers: { Authorization: `Bearer ${tk}`, Accept: 'application/json', 'X-AxisCare-Api-Version': AC_VERSION } })
+          const r: Response = await axFetch(u, { headers: { Authorization: `Bearer ${tk}`, Accept: 'application/json', 'X-AxisCare-Api-Version': AC_VERSION } })
           if (!r.ok) { loops.errors.push(`AxisCare ${r.status} reading past shifts`); u = null; break }
           const j: any = await r.json().catch(() => ({}))
           for (const v of (Array.isArray(j?.results?.visits) ? j.results.visits : Object.values(j?.results?.visits ?? {})))
@@ -1087,7 +1090,7 @@ Deno.serve(async (req) => {
       const sibsBySchedule = new Map<string, Map<string, { open: boolean; caregiver: string }>>()
       let vUrl: string | null = `https://${site}.axiscare.com/api/visits?startDate=${chiToday}&endDate=${farDate}`
       for (let page = 0; vUrl && page < 12; page++) {
-        const r: Response = await fetch(vUrl, { headers: {
+        const r: Response = await axFetch(vUrl, { headers: {
           Authorization: `Bearer ${token}`, Accept: 'application/json',
           'X-AxisCare-Api-Version': AC_VERSION } })
         if (!r.ok) throw new Error(`visits window ${r.status}`)
@@ -1113,7 +1116,7 @@ Deno.serve(async (req) => {
       try {
         let sUrl: string | null = `https://${site}.axiscare.com/api/schedules?startDate=${chiToday}&endDate=${farDate}`
         for (let page = 0; sUrl && page < 12; page++) {
-          const r: Response = await fetch(sUrl, { headers: {
+          const r: Response = await axFetch(sUrl, { headers: {
             Authorization: `Bearer ${token}`, Accept: 'application/json',
             'X-AxisCare-Api-Version': AC_VERSION } })
           if (!r.ok) break
@@ -1180,7 +1183,7 @@ Deno.serve(async (req) => {
       const dayRows: any[] = []
       let u: string | null = `https://${st}.axiscare.com/api/visits?startDate=${chiYesterday}&endDate=${chiYesterday}`
       for (let page = 0; u && page < 12; page++) {
-        const r: Response = await fetch(u, { headers: {
+        const r: Response = await axFetch(u, { headers: {
           Authorization: `Bearer ${tk}`, Accept: 'application/json',
           'X-AxisCare-Api-Version': AC_VERSION } })
         if (!r.ok) { u = null; break }
@@ -1432,7 +1435,7 @@ Deno.serve(async (req) => {
       const rows: any[] = []
       let u2: string | null = `https://${st}.axiscare.com/api/visits?startDate=${chiYest}&endDate=${chiToday}`
       for (let page = 0; u2 && page < 12; page++) {
-        const r: Response = await fetch(u2, { headers: {
+        const r: Response = await axFetch(u2, { headers: {
           Authorization: `Bearer ${tk}`, Accept: 'application/json',
           'X-AxisCare-Api-Version': AC_VERSION } })
         if (!r.ok) { u2 = null; break }
@@ -1476,7 +1479,7 @@ Deno.serve(async (req) => {
         for (const v of rows.slice(0, 5)) {
           for (const ep of ['careNotes', 'notes']) {
             try {
-              const r = await fetch(`https://${st}.axiscare.com/api/visits/${v?.id}/${ep}`, { headers: {
+              const r = await axFetch(`https://${st}.axiscare.com/api/visits/${v?.id}/${ep}`, { headers: {
                 Authorization: `Bearer ${tk}`, Accept: 'application/json',
                 'X-AxisCare-Api-Version': AC_VERSION } })
               if (!r.ok) continue
@@ -1492,7 +1495,7 @@ Deno.serve(async (req) => {
           shape = 'endpoint:/api/visits/{id}/' + endpoint
           for (const v of rows.slice(0, 60)) {
             try {
-              const r = await fetch(`https://${st}.axiscare.com/api/visits/${v?.id}/${endpoint}`, { headers: {
+              const r = await axFetch(`https://${st}.axiscare.com/api/visits/${v?.id}/${endpoint}`, { headers: {
                 Authorization: `Bearer ${tk}`, Accept: 'application/json',
                 'X-AxisCare-Api-Version': AC_VERSION } })
               if (!r.ok) continue

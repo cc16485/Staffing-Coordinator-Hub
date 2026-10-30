@@ -72,6 +72,7 @@ import { openCandidates, eligibleOn, openView, interestAsk, interestCardLine, in
 import { visitMatches } from '../_shared/shift-offer.ts'
 import { onCallNow, holdFor } from '../_shared/prn-oncall.ts'   // PRN on-call calendar, decision 26
 import { lookingState } from '../_shared/prn-page.ts'   // 2026-10-29: the ask list's "Looking for hours" tag
+import { axisReader } from '../_shared/axis-reader.ts'
 
 /* Straight-line miles between two zips' Census centroids — an honest
    estimate for "who lives closest", never a route. Null when either zip
@@ -86,6 +87,8 @@ function zipMiles(a: string, b: string): number | null {
 }
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+/* A (2026-10-29): every AxisCare read goes through the shared reader (fresh: never a copy of schedule information) */
+const axFetch = axisReader(sb, { job: 'coverage-run', tier: 'fresh' })
 const clean = (v: unknown) => String(v ?? '').trim()
 const nowIso = () => new Date().toISOString()
 /* Used when recording an ask. Its ABSENCE was a production 500: the engine
@@ -469,7 +472,7 @@ async function fetchVisits(params: string): Promise<{ rows: any[]; error: string
   try {
     let url: string | null = `https://${site}.axiscare.com/api/visits?${params}`
     for (let page = 0; url && page < 12; page++) {
-      const r: Response = await fetch(url, { headers: {
+      const r: Response = await axFetch(url, { headers: {
         Authorization: `Bearer ${token}`, Accept: 'application/json',
         'X-AxisCare-Api-Version': AC_VERSION } })
       if (!r.ok) return { rows, error: `AxisCare responded ${r.status}` }
@@ -775,7 +778,7 @@ async function buildCandidatesForCase(c: any, opts: { v2?: boolean; includeAsked
     try {
       const { token: t2, site: s2 } = axisCreds()
       if (t2 && s2) {
-        const r = await fetch(`https://${s2}.axiscare.com/api/clients/${encodeURIComponent(clientRes.id)}`, {
+        const r = await axFetch(`https://${s2}.axiscare.com/api/clients/${encodeURIComponent(clientRes.id)}`, {
           headers: { Authorization: `Bearer ${t2}`, Accept: 'application/json',
                      'X-AxisCare-Api-Version': AC_VERSION } })
         // deno-lint-ignore no-explicit-any
@@ -853,7 +856,7 @@ async function buildCandidatesForCase(c: any, opts: { v2?: boolean; includeAsked
     else try {
       let url: string | null = `https://${site}.axiscare.com/api/caregivers`
       for (let page = 0; url && page < 12; page++) {
-        const r: Response = await fetch(url, { headers: {
+        const r: Response = await axFetch(url, { headers: {
           Authorization: `Bearer ${token}`, Accept: 'application/json',
           'X-AxisCare-Api-Version': AC_VERSION } })
         if (!r.ok) { censusError = `AxisCare responded ${r.status}`; break }
@@ -1863,7 +1866,7 @@ Deno.serve(async (req) => {
         const { token, site } = axisCreds()
         let vn = 'unchecked'
         if (token && site) try {
-          const r = await fetch(`https://${site}.axiscare.com/api/visits/${encodeURIComponent(String(kase.axiscare_visit_id))}`, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'X-AxisCare-Api-Version': Deno.env.get('AXISCARE_API_VERSION') || '2023-10-01' } })
+          const r = await axFetch(`https://${site}.axiscare.com/api/visits/${encodeURIComponent(String(kase.axiscare_visit_id))}`, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'X-AxisCare-Api-Version': Deno.env.get('AXISCARE_API_VERSION') || '2023-10-01' } })
           // deno-lint-ignore no-explicit-any
           vn = r.status === 404 ? 'closed' : !r.ok ? 'unchecked' : visitMatches(kase, ((j: any) => j?.results?.visit ?? j?.results ?? null)(await r.json().catch(() => ({}))))
         } catch { vn = 'unchecked' }
@@ -2017,7 +2020,7 @@ Deno.serve(async (req) => {
           let cur: unknown[] | null = []
           if (row?.approved_share_care === true) {
             const { token: t3, site: s3 } = axisCreds(); let cl3 = null
-            if (t3 && s3) { const r3 = await fetch(`https://${s3}.axiscare.com/api/clients/${encodeURIComponent(axId)}`, { headers: { Authorization: `Bearer ${t3}`, Accept: 'application/json', 'X-AxisCare-Api-Version': AC_VERSION } }); if (r3.ok) { const j3 = await r3.json().catch(() => ({})); cl3 = j3?.results?.client ?? j3?.results ?? null } }
+            if (t3 && s3) { const r3 = await axFetch(`https://${s3}.axiscare.com/api/clients/${encodeURIComponent(axId)}`, { headers: { Authorization: `Bearer ${t3}`, Accept: 'application/json', 'X-AxisCare-Api-Version': AC_VERSION } }); if (r3.ok) { const j3 = await r3.json().catch(() => ({})); cl3 = j3?.results?.client ?? j3?.results ?? null } }
             cur = await careNow(sb, axId, cl3)
           }
           // deno-lint-ignore no-explicit-any
@@ -2391,7 +2394,7 @@ Deno.serve(async (req) => {
     else try {
       let url: string | null = `https://${site}.axiscare.com/api/caregivers`
       for (let page = 0; url && page < 12; page++) {
-        const r: Response = await fetch(url, { headers: {
+        const r: Response = await axFetch(url, { headers: {
           Authorization: `Bearer ${token}`, Accept: 'application/json',
           'X-AxisCare-Api-Version': AC_VERSION } })
         if (!r.ok) { censusError = `AxisCare responded ${r.status}`; break }
@@ -2919,7 +2922,7 @@ Deno.serve(async (req) => {
       try {
         const { token: acTok, site: acSite } = axisCreds()
         if (acTok && acSite) {
-          const r = await fetch(`https://${acSite}.axiscare.com/api/clients/${encodeURIComponent(String(clientRes.id))}`, {
+          const r = await axFetch(`https://${acSite}.axiscare.com/api/clients/${encodeURIComponent(String(clientRes.id))}`, {
             headers: { Authorization: `Bearer ${acTok}`, Accept: 'application/json',
                        'X-AxisCare-Api-Version': AC_VERSION } })
           const j: any = await r.json().catch(() => ({}))
