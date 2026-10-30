@@ -68,7 +68,7 @@ def run(env_over=None, already=False, drift=False, sameduty=False, **mode):
     return p.returncode, (open(rep).read() if os.path.exists(rep) else p.stdout + p.stderr)
 cli = lambda: open(LOG).read() if os.path.exists(LOG) else ""
 deploys = lambda: re.findall(r"functions deploy ([\w-]+)", cli())
-writes = lambda: [q for q in S["sql"] if not q.lstrip().lower().startswith("select")]
+writes = lambda: [q for q in S["sql"] if not q.lstrip().lower().startswith(("select", "with c as"))]   # the would-close count is a read-only WITH
 try:
     c, out = run()
     ck("clean run from a fresh copy: exit 0, RESULT: DONE, switch left OFF", c == 0 and "RESULT: DONE" in out and "(OFF). When you're ready" in out, out[-1800:])
