@@ -21,6 +21,13 @@ import { opEvent } from '../_shared/events.ts'
 import { escalationDue, ladder, minsToShift, onDuty, routable, STAGE_SEAT, stagePerson } from '../_shared/duty.ts'
 import { fallbackList } from '../_shared/notice-to.ts'
 
+/** left with its owner (Escalated to you, Leave with) and still within the days it was left for */
+export function leftWith(it: Any, owner: string, now: Date | number): boolean {
+  const l = it && it.left_with_owner
+  if (!l || !owner || String(l.owner || '').toLowerCase() !== String(owner).toLowerCase()) return false
+  const until = Date.parse(String(l.until || ''))
+  return Number.isFinite(until) && until > +now
+}
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b, null, 2), { status: s, headers: { 'Content-Type': 'application/json' } })
 // deno-lint-ignore no-explicit-any
@@ -60,7 +67,7 @@ Deno.serve(async (req) => {
       escalation: { first: seats.escalation.person ? first(seats.escalation.person) : null, from: seats.escalation.source },
       backup: { first: seats.backup.person ? first(seats.backup.person) : null } },
     ladder: L,
-    routed: 0, escalated_urgent: 0, escalated_overdue: 0, cleared: 0, written: 0 }
+    routed: 0, escalated_urgent: 0, escalated_overdue: 0, cleared: 0, left_with: 0, written: 0 }
   const changes = new Map<string, (it: Any) => void>()
 
   for (const it of items) {
@@ -85,6 +92,14 @@ Deno.serve(async (req) => {
     const c = it.coverage_case_id != null ? caseById.get(String(it.coverage_case_id)) : null
     const due = escalationDue(it, now, { minsToShift: c ? minsToShift(c, now) : null, ownerFirst: owner ? first(owner) : 'Nobody', ladder: L })
     const prev = it.escalation && !it.escalation.cleared_at ? it.escalation : null
+    /* LEAVE WITH (Samantha 2026-10-30, Escalated to you made simple): someone it was escalated to left it with its owner.
+       It is not escalated again until left_with_owner.until, unless it turns urgent (a shift about to start with nobody, a
+       missed clock-in). A new owner, or the date passing, ends it. */
+    if (leftWith(it, owner, now) && due?.level !== 'urgent') {
+      plan.left_with++
+      if (prev) changes.set(String(it.id), ((before) => (x: Any) => { before?.(x); if (x.escalation && !x.escalation.cleared_at) { x.escalation.cleared_at = nowIso; x.escalation.cleared_why = 'left with the owner' } })(changes.get(String(it.id))))
+      continue
+    }
     /* The stage reached, or the nearest earlier stage whose person isn't the owner. Krystal's own late item has nobody
        above her in the team, so it stays hers (it shows on the Overview, it doesn't interrupt leadership). */
     let stage = due?.stage, to = ''

@@ -130,6 +130,18 @@ item('ops_tk_1').claimed_by = K; r = await run(WR)
 ck('on · Krystal takes it: the escalation is marked cleared ("taken")', item('ops_tk_1').escalation?.cleared_at && item('ops_tk_1').escalation?.cleared_why === 'taken', item('ops_tk_1').escalation)
 ck('on · nothing texted or emailed by the routing job', SENT.length === 0, SENT)
 
+/* ── 2b · Leave with (2026-10-30): left with its owner, not escalated again for the days it was left for ── */
+const inDays = (d) => new Date(NOW + d * 864e5).toISOString()
+seed(true); item('mine').left_with_owner = { owner: K, by: S, at: new Date(NOW).toISOString(), until: inDays(3) }; r = await run(WR)
+ck('leave with · Krystal\'s overdue item left with her is not escalated again (and is counted)', !item('mine').escalation && r.left_with === 1 && item('mine').owner === K, r)
+ck('leave with · the urgent shift is still escalated (leaving never hides a shift about to start)', item('ops_cov_cc1').escalation?.level === 'urgent')
+item('mine').left_with_owner.until = inDays(-0.01); r = await run(WR)
+ck('leave with · once the days pass, it escalates again as before', item('mine').escalation?.level === 'overdue' && r.left_with === 0, item('mine').escalation)
+seed(true); item('mine').left_with_owner = { owner: 'someone-else@mo-care.com', by: S, until: inDays(3) }; r = await run(WR)
+ck('leave with · left with someone who no longer owns it: escalates as before', item('mine').escalation?.level === 'overdue')
+seed(true); item('mine').escalation = { to: S, level: 'overdue', why: 'x', at: new Date(NOW).toISOString() }; item('mine').left_with_owner = { owner: K, by: S, until: inDays(3) }; r = await run(WR)
+ck('leave with · an escalation still standing is marked cleared ("left with the owner")', item('mine').escalation?.cleared_at && item('mine').escalation.cleared_why === 'left with the owner', item('mine').escalation)
+
 /* ── 3 · missed clock-in texts: the person on Staffing first, then Owner Escalation after 15 minutes (daytime) ── */
 const tkSeed = (live) => { reset(); APP.ops_settings.routing_live = live; at('2026-10-06T14:05:00Z')     // Tue 9:05am
   APP.duty_windows = W.map((w, i) => ({ id: 'dw' + i, ...w })); APP.positions = []
