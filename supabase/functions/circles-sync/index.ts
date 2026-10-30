@@ -34,6 +34,30 @@ export function countsOnly(o: any): Record<string, unknown> {
   return out
 }
 
+/* AxisCare answers 429 (slow down) or a 5xx when it is busy. At 4 AM this sync shares the minute with a dozen other
+   AxisCare readers, and on 2026-10-29 18 of its 27 clients failed. So: a short gap between clients, and a busy answer
+   is asked again (waiting Retry-After when AxisCare gives one), up to 3 more times. */
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+export const AX_GAP_MS = 250, AX_RETRIES = 3
+async function askAxisCare(url: string, headers: Record<string, string>): Promise<Response> {
+  await sleep(AX_GAP_MS)
+  for (let i = 0; ; i++) {
+    const r = await fetch(url, { headers })
+    if ((r.status !== 429 && r.status < 500) || i >= AX_RETRIES) return r
+    const h = r.headers.get('retry-after'), ra = h === null ? NaN : Number(h)
+    await sleep(Number.isFinite(ra) && ra >= 0 ? Math.min(ra, 20) * 1000 : 2000 * (i + 1))
+  }
+}
+
+/* The heartbeat note says WHY a run failed, without client names (the Hub shows it to all staff):
+   "18 errors: AxisCare 429 ×18". Each error reads "<client>: <why>" (or "<client> link: …", "<client>/<person>: …"). */
+export function errorNote(errors: string[]): string {
+  const why = new Map<string, number>()
+  for (const e of errors) { const k = String(e).replace(/^[^:]*:\s*/, '').slice(0, 60) || 'unknown'; why.set(k, (why.get(k) ?? 0) + 1) }
+  const top = [...why.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k, n]) => `${k} ×${n}`).join('; ')
+  return `${errors.length} error${errors.length === 1 ? '' : 's'}: ${top}`
+}
+
 /* ── FAMILY CIRCLES FROM AXISCARE ────────────────────────────────────────────
    AxisCare holds up to three responsible parties per client (Primary/
    Secondary/Tertiary) with relationship, phones, email and two authorisation
@@ -121,7 +145,7 @@ async function syncCirclesFromAxisCare(commit: boolean) {
     // deno-lint-ignore no-explicit-any
     let parties: any[] = []
     try {
-      const r = await fetch(`https://${site}.axiscare.com/api/clients/${ax}/responsibleParties`, { headers: HEAD })
+      const r = await askAxisCare(`https://${site}.axiscare.com/api/clients/${ax}/responsibleParties`, HEAD)
       if (!r.ok) { if (r.status !== 404) out.errors.push(`${clientName}: AxisCare ${r.status}`); continue }
       // deno-lint-ignore no-explicit-any
       const j: any = await r.json().catch(() => ({}))
@@ -244,7 +268,7 @@ Deno.serve(async (req) => {
     try {
       await sb.rpc('upsert_app_data_item', { target_key: 'automation_heartbeats', item: {
         id: 'hb_circles-sync', automation: 'circles-sync', at: new Date().toISOString(), ok,
-        note: ok ? 'synced' : String(r?.error || (errs + ' error' + (errs === 1 ? '' : 's'))).slice(0, 200) } })
+        note: ok ? 'synced' : String(r?.error || errorNote(r.errors)).slice(0, 200) } })
     } catch (e) { console.error('[circles-sync] heartbeat failed', e) }
   }
   return json(job === 'owner' ? res : countsOnly(res))
