@@ -111,6 +111,13 @@ try {
   ck('the AI service fails twice: an error that says why, tried again on a later run', row('c1')?.status === 'error' && row('c1').note === 'the AI service answered 529 (overloaded_error): Overloaded' && AI.length === 2 && row('c1').tries === 1, row('c1'))
   r = await run('?limit=1')
   ck('...and the next run reads it', row('c1')?.status === 'read' && row('c1').tries === 2, row('c1'))
+  const fut = new Date(NOW + 3 * 864e5).toISOString().slice(0, 10)
+  reset(); AIQ = [answer({ short_note: 'Linda wants weekday mornings and will call her brother.', call_back_day: fut, call_back_why: 'after her brother', people: [{ name: 'Mark Hayes', relationship: 'Son', phone: '417-555-0101' }] })]; r = await run('?limit=1')
+  const cn1 = row('c1')?.reading?.call_note
+  ck('2026-10-29 call note: the short note, the call back day and why are kept with the reading', cn1 && cn1.note === 'Linda wants weekday mornings and will call her brother.' && cn1.call_back.day === fut && cn1.call_back.why === 'after her brother', row('c1'))
+  ck('2026-10-29 call note: a person heard with a phone keeps it', row('c1').reading.profile.people[0].phone === '4175550101', row('c1').reading.profile)
+  reset(); AIQ = []; r = await run('?limit=1')
+  ck('2026-10-29 call note: a call with no note and no call back keeps none', row('c1')?.status === 'read' && row('c1').reading.call_note === null, row('c1')?.reading)
   reset(); AIQ = []; r = await run('?limit=1')
   ck('?limit=1 reads one call (the installer\'s proof)', r.j.looked_at === 1 && T.call_learned.length === 1, r.j)
 } finally { fs.rmSync(tmp, { recursive: true, force: true }) }

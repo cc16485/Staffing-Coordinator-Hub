@@ -31,7 +31,8 @@ const reset = () => { CALLS = []; AI = [{ content: [{ type: 'tool_use', name: 'f
     auth_identities: [{ auth_user_id: 'u-kr', project_ref: 'zngsgedlsxinbygwmxwn', person_id: 'p-kr' }, { auth_user_id: 'u-cg', project_ref: 'zngsgedlsxinbygwmxwn', person_id: 'p-cg' }],
     persons: [{ person_id: 'p-kr', full_name: 'Krystal Office', active: true }, { person_id: 'p-cg', full_name: 'Cara Giver', active: true }],
     entity_memberships: [{ person_id: 'p-kr', entity: 'cc_ihs', active: true, ended_at: null }, { person_id: 'p-cg', entity: 'cc_ihs', active: true, ended_at: null }],
-    staff_roles: [{ person_id: 'p-kr', entity: 'cc_ihs', role: 'care_coordinator' }, { person_id: 'p-cg', entity: 'cc_ihs', role: 'caregiver' }] } }
+    staff_roles: [{ person_id: 'p-kr', entity: 'cc_ihs', role: 'care_coordinator' }, { person_id: 'p-cg', entity: 'cc_ihs', role: 'caregiver' }],
+    call_learned: [{ message_id: 'msgAAA111', lead_id: 'L1' }, { message_id: 'msgNOREC9', lead_id: 'L1' }] } }
 let WRITES = 0
 const q = (t) => { const st = { f: [] }; const b = { select() { return b }, limit() { return b }, eq(c, v) { st.f.push([c, v]); return b },
   upsert() { WRITES++; return Promise.resolve({ error: null }) }, insert() { WRITES++; return Promise.resolve({ error: null }) }, update() { WRITES++; return b },
@@ -50,6 +51,7 @@ globalThis.fetch = async (url, o) => { url = String(url); CALLS.push(url)
     { id: 'callNEW02', messageType: 'TYPE_CALL', direction: 'outbound', dateAdded: '2026-10-14T15:00:00Z', meta: { call: { duration: 120 } } },
     { id: 'callMISS3', messageType: 'TYPE_CALL', direction: 'inbound', dateAdded: '2026-10-14T16:00:00Z', meta: { call: { duration: 0 } } },
     { id: 'smsXXXX04', messageType: 'TYPE_SMS', direction: 'inbound', dateAdded: '2026-10-14T17:00:00Z' }] } }), { status: 200 })
+  if (url.endsWith('/recording')) return url.includes('msgNOREC9') ? new Response('{}', { status: 404 }) : new Response(new Uint8Array([82, 73, 70, 70]), { status: 200, headers: { 'content-type': 'audio/x-wav' } })
   if (url.endsWith('/tags')) return new Response('{}', { status: TAG_FAIL ? 500 : 200 })
   if (url.includes('/conversations/messages/')) return MSG ? new Response(JSON.stringify({ message: MSG }), { status: 200 }) : new Response('{}', { status: 404 })
   if (url.includes('/contacts/')) return new Response(JSON.stringify({ contact: CONTACT }), { status: 200 })
@@ -135,6 +137,23 @@ try {
   ck('made: a lead that was not saved with this call is refused, nothing tagged', r.status === 409 && !CALLS.some((u) => u.endsWith('/tags')), r.j)
   reset(); TAG_FAIL = true; r = await call({ action: 'made', message_id: 'msgAAA111', lead_id: 'L1' })
   ck('made: a failed tag says so (never quietly)', r.status === 502 && r.j.tagged === false && /lead/.test(r.j.error), r.j)
+  /* 2026-10-29 Call notes: Read the whole call and Listen, only for calls the call reader put a note on */
+  reset(); WRITES = 0; r = await call({ action: 'transcript', message_id: 'msgAAA111' })
+  ck('call notes: the whole call reads live from GoHighLevel, nothing written', r.status === 200 && r.j.transcript === 'Speaker 1: Hi, my mom fell.' && WRITES === 0, r)
+  reset(); r = await call({ action: 'transcript', message_id: 'msgZZZ999' })
+  ck('call notes: a call that is not one of the call notes is refused before GoHighLevel', r.status === 404 && !CALLS.some((u) => u.includes('leadconnector')), r)
+  reset(); r = await call({ action: 'transcript', message_id: 'msgAAA111' }, 'cg')
+  ck('call notes: a caregiver sign-in cannot read a call', r.status === 403, r)
+  reset(); { const rr = await handler(new Request('https://x/functions/v1/call-to-lead', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer kr' }, body: JSON.stringify({ action: 'recording', message_id: 'msgAAA111' }) }))
+    const buf = new Uint8Array(await rr.arrayBuffer())
+    ck('call notes: Listen streams the recording to the signed-in person, never a link', rr.status === 200 && /audio/.test(rr.headers.get('content-type')) && buf[0] === 82 && rr.headers.get('cache-control') === 'no-store', rr.status) }
+  reset(); r = await call({ action: 'recording', message_id: 'msgNOREC9' })
+  ck('call notes: no recording says so', r.status === 404 && /no recording/.test(r.j.error), r)
+  const CN = await import(path.join(process.cwd(), 'supabase/functions/_shared/call-lead.ts'))
+  const cn = CN.toCallNote({ short_note: 'Linda will talk to her brother \u2014 then call us.', call_back_day: '2026-10-19', call_back_why: 'after the brother' }, '2026-10-14 (Wednesday)')
+  ck('call note: the short note (no em dash) and a call back on or after the call day', cn.note === 'Linda will talk to her brother, then call us.' && cn.call_back.day === '2026-10-19' && cn.call_back.why === 'after the brother', cn)
+  ck('call note: a call back before the call day, or not a date, is dropped', CN.toCallNote({ call_back_day: '2026-10-01' }, '2026-10-14 (Wednesday)').call_back === null && CN.toCallNote({ call_back_day: 'Monday' }, '2026-10-14').call_back === null)
+  ck('call note: a person heard with a phone keeps it (10 digits only)', CN.toProfile({}, [{ name: 'Mark', relationship: 'Son', phone: '+1 (417) 555-0101' }, { name: 'Sue', phone: '555' }]).people.map((x) => x.phone || '').join('|') === '4175550101|')
   /* 1058: the form is no longer strict, so the code's own checks are the only guard. Junk from the AI never gets through. */
   const CLx = await import(path.join(process.cwd(), 'supabase/functions/_shared/call-lead.ts'))
   const junk = CLx.toPrefill({ needs: 'personalCare', safety: ['fallRisk', 'falls'], schedule_days: ['Mon', 'Funday'], number_of_hours: 'twenty', funding_source: 'medicaid',

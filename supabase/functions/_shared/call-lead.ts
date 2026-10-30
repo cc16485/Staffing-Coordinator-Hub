@@ -112,6 +112,10 @@ export const TOOL = {
     rate_quoted: str('A rate the office quoted on the call, e.g. "$32 an hour". Empty if none.'),
     why_called: str('Why they called, one line under 140 characters.'),
     summary: str('3 to 6 sentences for the coordinator: who called, who needs care, what they need, timeline, worries, and the next step agreed.'),
+    /* 2026-10-29 (Call notes, her ask "do the same for our leads" after the CDS hub): what this one call adds, for the office notes */
+    short_note: str('One to three short sentences for the office notes about THIS call only: what it was about, what changed and what was agreed. Plain everyday words, first names, no em dashes. Internal only.'),
+    call_back_day: str('YYYY-MM-DD: the day we said we would call them back, or the day they asked to be called, worked out from the call date given ("Monday" = the next Monday after the call). Never before the call date. Empty when no call back was talked about.'),
+    call_back_why: str('What the call back is about, under 80 characters, e.g. "after she talks to her brother". Empty when no call back.'),
     other_details: str('Everything else useful the call said that no box above covers: home and family, who lives with them, pets, stairs, interests, routines, preferences, likes and dislikes, faith, personality, caregiver preferences, past agencies. As short sentences.'),
     care_plan: obj(PLAN, 'The start of the care plan, from this call. Reported by the family, to be checked and added to at the home visit.'),
     home_life: obj({
@@ -129,6 +133,7 @@ export const TOOL = {
       name: str('Their name, or a description if no name was said, e.g. "her boyfriend".'),
       relationship: str('Who they are to the client, e.g. "Son", "Boyfriend", "POA", "Current caregiver".'),
       note: str('What was said about them that matters, e.g. "can get in the way during care".'),
+      phone: str('Their phone number, only if it was said on the call.'),
     }, 'One person') },
   }, 'The lead form and care plan draft'),
 }
@@ -171,7 +176,16 @@ const AX_DAY: Record<string, string> = { Sun: 'N', Mon: 'M', Tue: 'T', Wed: 'W',
 export type Contact = { first_name: string; last_name: string; phone: string; email: string }
 export type CarePlanDraft = { fields: Record<string, string>; narrative: string; axiscare_tasks: Record<string, unknown>[]; heard: string[] }
 export type Profile = { facts: Record<string, unknown>; attributes: Record<string, string>; people: Record<string, string>[] }
-export type Prefill = { prefill: Record<string, unknown>; heard: string[]; is_new_family: boolean; not_new_family_reason: string; medicaid_mentioned: boolean; care_plan: CarePlanDraft; profile: Profile }
+export type CallNote = { note: string; call_back: { day: string; why: string } | null }
+export type Prefill = { prefill: Record<string, unknown>; heard: string[]; is_new_family: boolean; not_new_family_reason: string; medicaid_mentioned: boolean; care_plan: CarePlanDraft; profile: Profile; call_note: CallNote }
+
+/** The call note (2026-10-29): the short note, and a call back day on or after the call day (anything else is dropped). */
+export function toCallNote(a: Record<string, unknown>, callDay = ''): CallNote {
+  const note = para(String(a?.short_note ?? '').replace(/\s*[\u2014\u2013]\s*/g, ', '), 400)
+  const day = ymd(a?.call_back_day), from = String(callDay || '').slice(0, 10)
+  const ok = day && (!/^\d{4}-\d{2}-\d{2}$/.test(from) || day >= from)
+  return { note, call_back: ok ? { day, why: clip(String(a?.call_back_why ?? '').replace(/\s*[\u2014\u2013]\s*/g, ', '), 80) } : null }
+}
 
 /** Home & Life and the people involved, held to the Hub's own choices: facts use the fact kinds' own values (Gate 3);
  *  the AxisCare checklist uses yes / preferred. Nothing empty is kept. */
@@ -195,7 +209,10 @@ export function toProfile(h: any, people: any): Profile {
   if (g === 'male_preferred') attributes.male_caregiver = 'preferred'
   if (x.spanish === true) attributes.spanish_speaking = 'yes'
   const seen = new Set<string>()
-  const ppl = (Array.isArray(people) ? people : []).map((p: Record<string, unknown>) => ({ name: clip(p?.name, 60), relationship: clip(p?.relationship, 40), note: clip(p?.note, 200) }))
+  const ppl = (Array.isArray(people) ? people : []).map((p: Record<string, unknown>) => {
+    const ph = String(p?.phone ?? '').replace(/\D/g, '').replace(/^1(?=\d{10}$)/, '')
+    return { name: clip(p?.name, 60), relationship: clip(p?.relationship, 40), note: clip(p?.note, 200), ...(ph.length === 10 ? { phone: ph } : {}) }
+  })
     .filter((p: Record<string, string>) => p.name && !seen.has(p.name.toLowerCase()) && seen.add(p.name.toLowerCase())).slice(0, 8)
   return { facts, attributes, people: ppl }
 }
@@ -226,7 +243,7 @@ export function toPlan(cp: any, adls: Adl[], scheduleDays: string[]): CarePlanDr
 /** The answer held to the form's fixed choices. Phone always comes from GoHighLevel's contact, never from what was
  *  heard; a caller name or email heard on the call fills only a box GoHighLevel left empty. `heard` lists every box
  *  filled from the call (the Hub shows them yellow). */
-export function toPrefill(a: Record<string, unknown>, ct: Contact, adls: Adl[] = []): Prefill {
+export function toPrefill(a: Record<string, unknown>, ct: Contact, adls: Adl[] = [], callDay = ''): Prefill {
   const p: Record<string, unknown> = {
     first_name: ct.first_name || '', last_name: ct.last_name || '', phone: ct.phone || '', email: ct.email || '', source: 'Phone',
   }
@@ -282,5 +299,5 @@ export function toPrefill(a: Record<string, unknown>, ct: Contact, adls: Adl[] =
   const extra = [a.client_age ? 'Age: ' + clip(a.client_age, 10) + '.' : '', a.heard_about_us ? 'Heard about us: ' + clip(a.heard_about_us, 120) + '.' : '', para(a.other_details, 2000)].filter(Boolean).join(' ')
   put('interest_notes', [para(a.summary, 1500), extra ? 'Also said on the call: ' + extra : ''].filter(Boolean).join('\n\n'))
   return { prefill: p, heard, is_new_family: a.is_new_family !== false, not_new_family_reason: clip(a.not_new_family_reason, 120),
-    medicaid_mentioned: a.medicaid_mentioned === true, care_plan: toPlan(a.care_plan, adls, days), profile: toProfile(a.home_life, a.people) }
+    medicaid_mentioned: a.medicaid_mentioned === true, care_plan: toPlan(a.care_plan, adls, days), profile: toProfile(a.home_life, a.people), call_note: toCallNote(a, callDay) }
 }

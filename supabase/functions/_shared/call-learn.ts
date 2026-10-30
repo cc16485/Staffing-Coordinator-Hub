@@ -49,5 +49,7 @@ export function toStore(p: Any): Any {
   const heard = (Array.isArray(p?.heard) ? p.heard : []).filter((k: string) => !['phone', 'email', 'source'].includes(k) || (k === 'source' && p.prefill?.source && p.prefill.source !== 'Phone'))
   for (const k of heard) if (p?.prefill && k in p.prefill) prefill[k] = p.prefill[k]
   return { prefill, heard: heard.filter((k: string) => k in prefill), care_plan: p?.care_plan || null, profile: p?.profile || null,
-    medicaid_mentioned: p?.medicaid_mentioned === true, is_new_family: p?.is_new_family !== false }
+    medicaid_mentioned: p?.medicaid_mentioned === true, is_new_family: p?.is_new_family !== false,
+    /* 2026-10-29 Call notes: the short note and the suggested call back, waiting on the lead for a person's OK */
+    call_note: p?.call_note && (p.call_note.note || p.call_note.call_back) ? p.call_note : null }
 }

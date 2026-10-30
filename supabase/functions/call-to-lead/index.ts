@@ -17,6 +17,10 @@
 //                                 made: every answered call with its GoHighLevel contact (up to the newest 3 with a
 //                                 transcript), read together, newest wins. The contact comes from the LEAD on the server,
 //                                 never from the page. Writes nothing.
+//   transcript {message_id}       2026-10-29 Call notes ("Read the whole call"): GoHighLevel's transcript of a call the
+//                                 call reader put a note on (call_learned), read live, never stored. Writes nothing.
+//   recording  {message_id}       2026-10-29 Call notes ("Listen"): the same call's recording, streamed from GoHighLevel
+//                                 to the signed-in person (never a public link). Writes nothing.
 //   made  {message_id, lead_id}   after the person saved: checks the lead really carries this call (from_calls), then
 //                                 tags the GoHighLevel contact "lead" (the tag the old reader added). Says if it failed.
 //
@@ -141,6 +145,23 @@ Deno.serve(async (req) => {
 
   const id = String(body?.message_id || '').trim()
   if (!/^[A-Za-z0-9_-]{6,64}$/.test(id)) return json({ error: 'Which call? (no call id was sent)' }, 400)
+
+  /* Call notes (2026-10-29): only calls the call reader put on a lead, so a message id alone opens nothing else */
+  if (body.action === 'transcript' || body.action === 'recording') {
+    const { data: known } = await db.from('call_learned').select('message_id').eq('message_id', id).maybeSingle()
+    if (!known) return json({ error: 'That call is not one of the call notes.' }, 404)
+    if (body.action === 'transcript') {
+      const tr = await fetch(`${GHL}/conversations/locations/${encodeURIComponent(loc)}/messages/${encodeURIComponent(id)}/transcription`, { headers: H(tok) })
+      if (tr.status === 404) return json({ error: 'GoHighLevel has no transcript for this call. Listen to the recording.' }, 404)
+      if (!tr.ok) return json({ error: `GoHighLevel answered ${tr.status} for the transcript.` }, 502)
+      const text = transcriptText(await tr.json().catch(() => null))
+      return text ? json({ ok: true, transcript: text }) : json({ error: 'GoHighLevel has no transcript for this call. Listen to the recording.' }, 404)
+    }
+    const r = await fetch(`${GHL}/conversations/messages/${encodeURIComponent(id)}/locations/${encodeURIComponent(loc)}/recording`, { headers: { Authorization: `Bearer ${tok}`, Version: '2021-04-15' } })
+    if (r.status === 404) return json({ error: 'GoHighLevel has no recording for this call.' }, 404)
+    if (!r.ok || !r.body) return json({ error: `GoHighLevel answered ${r.status} for the recording.` }, 502)
+    return new Response(r.body, { status: 200, headers: { ...cors, 'Content-Type': r.headers.get('content-type') || 'audio/wav', 'Cache-Control': 'no-store' } })
+  }
 
   if (body.action === 'read') {
     const c = await readCall(tok, loc, id)
