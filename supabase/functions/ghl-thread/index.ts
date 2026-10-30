@@ -11,7 +11,14 @@
 // render inside the profile. Read only: it never sends anything.
 //
 // POST { phone?, email?, contact_id?, limit? }
-//   -> { ok, contact_id, name, open_url, messages: [{ at, direction, type, body, status }] }
+//   -> { ok, v: 2, contact_id, name, open_url, messages: [{ id, at, direction, type, body, status, call? }] }
+//      call (calls and voicemails only): { status, duration_s, recording: true when there may be one to play }
+// POST { recording: <message id> }      -> the call or voicemail recording itself (audio), for the profile's Listen button
+// POST { transcription: <message id> }  -> { ok, text } GoHighLevel's words for that call, '' when it has none
+//
+// 2026-10-30 (Samantha: "put the text, voicemail, etc right there in the communication tab"): the kind of each message
+// now comes from GoHighLevel's own name for it (messageType, e.g. TYPE_SMS). The numbers this used before were one off:
+// calls showed as blank "SMS", texts as "Email", emails as "Voicemail".
 //
 // Deploy: supabase functions deploy ghl-thread (JWT ON — hub users only).
 
@@ -51,9 +58,32 @@ Deno.serve(async (req) => {
   const email = s(b.email, 200)
   const given = s(b.contact_id, 60)
   const limit = Math.min(50, Math.max(5, parseInt(s(b.limit), 10) || 25))
-  if (!phone && !email && !given) return json({ error: 'no phone, email or contact id given' }, 400)
-
   const h = { Authorization: `Bearer ${tok}`, Version: '2021-07-28', Accept: 'application/json' }
+
+  // ---- one call's recording or words (office only, read only; the same conversations this reads anyway) ----
+  const recId = s(b.recording, 60), trId = s(b.transcription, 60)
+  if (recId || trId) {
+    const id = recId || trId
+    if (!/^[A-Za-z0-9_-]{6,60}$/.test(id)) return json({ error: 'that is not a GoHighLevel message id' }, 400)
+    try {
+      if (recId) {
+        const r = await fetch(`${GHL}/conversations/messages/${id}/locations/${encodeURIComponent(loc)}/recording`, { headers: { ...h, Accept: '*/*' } })
+        if (!r.ok) return json({ ok: false, error: r.status === 404 ? 'GoHighLevel has no recording of this call.' : `GoHighLevel answered ${r.status}.` }, r.status === 404 ? 404 : 502)
+        const type = r.headers.get('content-type') || 'audio/wav'
+        if (/json|html/.test(type)) return json({ ok: false, error: 'GoHighLevel has no recording of this call.' }, 404)
+        return new Response(r.body, { status: 200, headers: { ...cors, 'Content-Type': type, 'Cache-Control': 'private, no-store' } })
+      }
+      const r = await fetch(`${GHL}/conversations/locations/${encodeURIComponent(loc)}/messages/${id}/transcription`, { headers: h })
+      if (r.status === 404 || r.status === 400) return json({ ok: true, text: '' })
+      if (!r.ok) return json({ ok: false, error: `GoHighLevel answered ${r.status}.` }, 502)
+      const j = await r.json().catch(() => null)
+      const parts: Row[] = Array.isArray(j) ? j : (j?.transcriptions ?? j?.data ?? [])
+      const text = parts.map((p) => s(p.transcript ?? p.text, 2000)).filter(Boolean).join(' ').slice(0, 8000)
+      return json({ ok: true, text })
+    } catch (e) { return json({ ok: false, error: 'Could not reach GoHighLevel: ' + String((e as Error)?.message || e).slice(0, 120) }, 502) }
+  }
+
+  if (!phone && !email && !given) return json({ error: 'no phone, email or contact id given' }, 400)
   const digits = (t: string) => t.replace(/\D/g, '').slice(-10)
 
   // ---- find the contact ----------------------------------------------------
@@ -107,9 +137,20 @@ Deno.serve(async (req) => {
   }
 
   // ---- the messages inside them -------------------------------------------
-  const TYPE: Record<number, string> = {
-    1: 'SMS', 2: 'Email', 3: 'Voicemail', 4: 'Call', 5: 'Call', 25: 'Call',
-    19: 'Note', 20: 'Facebook', 21: 'Instagram', 26: 'WhatsApp', 29: 'Live chat',
+  /* GoHighLevel's own names first; its numbers only when a message has no name (1 call, 2 text, 3 email) */
+  const KIND: Record<string, string> = {
+    TYPE_SMS: 'SMS', TYPE_CAMPAIGN_SMS: 'SMS', TYPE_CAMPAIGN_MANUAL_SMS: 'SMS', TYPE_CUSTOM_SMS: 'SMS', TYPE_CUSTOM_PROVIDER_SMS: 'SMS',
+    TYPE_SMS_REVIEW_REQUEST: 'SMS', TYPE_SMS_NO_SHOW_REQUEST: 'SMS',
+    TYPE_EMAIL: 'Email', TYPE_CAMPAIGN_EMAIL: 'Email', TYPE_CUSTOM_EMAIL: 'Email', TYPE_CUSTOM_PROVIDER_EMAIL: 'Email',
+    TYPE_CALL: 'Call', TYPE_IVR_CALL: 'Call', TYPE_CAMPAIGN_CALL: 'Call', TYPE_CAMPAIGN_MANUAL_CALL: 'Call',
+    TYPE_VOICEMAIL: 'Voicemail', TYPE_CAMPAIGN_VOICEMAIL: 'Voicemail',
+    TYPE_WHATSAPP: 'WhatsApp', TYPE_FACEBOOK: 'Facebook', TYPE_CAMPAIGN_FACEBOOK: 'Facebook', TYPE_INSTAGRAM: 'Instagram',
+    TYPE_LIVE_CHAT: 'Live chat', TYPE_WEBCHAT: 'Live chat', TYPE_INTERNAL_COMMENT: 'Note',
+  }
+  const BY_NUMBER: Record<number, string> = { 1: 'Call', 2: 'SMS', 3: 'Email' }
+  const kindOf = (m: Row) => {
+    const t = String(m.messageType || '')
+    return KIND[t] ?? (t ? t.replace(/^TYPE_/, '').replace(/^ACTIVITY_.*/, 'Activity') : BY_NUMBER[Number(m.type)] ?? 'Message')
   }
   const out: Row[] = []
   for (const c of convos.slice(0, 5)) {
@@ -119,16 +160,21 @@ Deno.serve(async (req) => {
       const body = await r.json().catch(() => ({}))
       const msgs: Row[] = body?.messages?.messages ?? body?.messages ?? []
       for (const m of msgs) {
-        const kind = TYPE[Number(m.type)] ?? (m.messageType ? String(m.messageType).replace(/^TYPE_/, '') : 'Message')
+        const kind = kindOf(m)
         let text = s(m.body, 4000)
-        if (!text && kind === 'Call') text = m.meta?.call?.status ? `Call (${m.meta.call.status})` : 'Call'
+        const callish = kind === 'Call' || kind === 'Voicemail'
+        const cs = s(m.meta?.call?.status || m.status, 40)
+        if (!text && kind === 'Call') text = cs ? `Call (${cs})` : 'Call'
         if (!text && m.attachments?.length) text = `[${m.attachments.length} attachment(s)]`
+        const dur = Number(m.meta?.call?.duration ?? m.meta?.duration ?? 0) || 0
         out.push({
+          id: s(m.id, 60),
           at: m.dateAdded ?? m.dateUpdated ?? '',
           direction: m.direction === 'inbound' ? 'in' : 'out',
           type: kind,
           body: text,
           status: s(m.status, 40),
+          ...(callish ? { call: { status: cs, duration_s: dur, recording: kind === 'Voicemail' || dur > 0 || /voicemail|completed/i.test(cs) } } : {}),
         })
       }
     } catch { /* one bad conversation must not lose the rest */ }
@@ -137,6 +183,7 @@ Deno.serve(async (req) => {
   out.sort((a, x) => String(x.at).localeCompare(String(a.at)))
   return json({
     ok: true,
+    v: 2,
     contact_id: contactId,
     name,
     open_url: openUrl,
