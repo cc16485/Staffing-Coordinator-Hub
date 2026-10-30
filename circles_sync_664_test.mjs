@@ -51,9 +51,10 @@ globalThis.__fakeCreateClient = () => ({
       then(ok, bad) { return Promise.resolve(run()).then(ok, bad) } }
     return p },
 })
-const AXCALLS = []
+const AXCALLS = [], BUSY = {}   // BUSY['101'] = [429, 503]: AxisCare answers those first, then the real list
 globalThis.fetch = async (url, o) => { url = String(url); AXCALLS.push(url + ' ' + (o?.method || 'GET'))
   const m = url.match(/\/api\/clients\/(\d+)\/responsibleParties$/)
+  if (m && BUSY[m[1]]?.length) return new Response('{}', { status: BUSY[m[1]].shift(), headers: { 'Retry-After': '0' } })
   if (m) return new Response(JSON.stringify({ results: { responsibleParties: AX[m[1]] || [] } }), { status: 200 })
   return new Response('{}', { status: 404 }) }
 await import(path.join(tmp, 'circles-sync', 'index.ts'))
@@ -102,6 +103,14 @@ try {
   ;[s, j] = await run('owner', '?commit=1')
   const bea2 = DB.circle_contacts.filter((c) => c.circle_id === 'c2' && /Bea/.test(c.name))
   ck('email first: Bea renamed to Beatrice in AxisCare is the same person (renamed), not a second copy, not marked removed', bea2.length === 1 && bea2[0].id === 'k1' && bea2[0].name === 'Beatrice Baker' && !bea2[0].axiscare_removed_at && !DB.circle_contacts.some((c) => c.circle_id === 'c2' && String(c.id).startsWith('n')), { bea2, j })
+  /* 2026-10-29 (18 of 27 clients failed at 4 AM): AxisCare's "slow down" (429) or a busy 5xx is asked again; a failure says why */
+  reset(); AXCALLS.length = 0; BUSY['101'] = [429, 503]
+  ;[s, j] = await run('cron', '?commit=1')
+  const hb = () => RPC.filter(([fn, a]) => fn === 'upsert_app_data_item' && a.item?.id === 'hb_circles-sync').pop()?.[1]?.item
+  ck('AxisCare busy (429, then 503) is asked again and the client still syncs, heartbeat healthy', j.errors === 0 && AXCALLS.filter((u) => u.includes('/101/')).length === 3 && DB.circle_contacts.some((c) => c.name === 'Al Able') && hb()?.ok === true, [j, AXCALLS])
+  reset(); AXCALLS.length = 0; BUSY['101'] = [429, 429, 429, 429]; BUSY['102'] = [429, 429, 429, 429]
+  ;[s, j] = await run('cron', '?commit=1')
+  ck('AxisCare still busy after 3 more tries: it stops asking (4 calls), and the heartbeat says why, with no client names', j.errors === 2 && AXCALLS.filter((u) => u.includes('/101/')).length === 4 && hb()?.ok === false && hb()?.note === '2 errors: AxisCare 429 ×2' && !/Able|Baker/.test(hb()?.note), [j, hb()])
   ck('no em dash in the new code', !/[—―]/.test(code.slice(0, code.indexOf('/* ── FAMILY CIRCLES'))) && !/[—―]/.test(code.slice(code.indexOf('Deno.serve'))))
 } finally { fs.rmSync(tmp, { recursive: true, force: true }) }
 const failed = res.filter((r) => !r[1])
