@@ -123,7 +123,8 @@ if (import.meta.main) Deno.serve(async (req) => {
     members = m ?? []
   }
   // A schedule failure loses only the schedule line; the card says so instead of "no regular schedule".
-  const ok = sc.status >= 200 && sc.status < 300
-  const rows = ok ? listOf(sc.json?.results?.schedules ?? sc.json?.results ?? []).filter((r: Any) => S(r?.client?.id ?? ax) === ax) : []
+  // AxisCare answers 404 when nothing matches, i.e. no regular schedule.
+  const ok = (sc.status >= 200 && sc.status < 300) || sc.status === 404
+  const rows = ok && sc.status !== 404 ? listOf(sc.json?.results?.schedules ?? sc.json?.results ?? []).filter((r: Any) => S(r?.client?.id ?? ax) === ax) : []
   return json({ ...glanceFrom(client, members, rps), schedule: ok ? scheduleFrom(rows, today) : null })
 })
