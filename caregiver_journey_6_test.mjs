@@ -257,6 +257,8 @@ ck('list: approved, AxisCare confirmed, unlocked, may_approve_work for Samantha'
   const j0 = DB.client_journey.find((x) => x.journey_id === JID)
   let o = await CJI.openCheckin(db, j0, { staffing_email: 'krystal@mo-care.com' }, { email: 'hub' })
   ck('check-in OFF (practice): no row, no card, one practice event, shift texts not held', o === 'practice' && !st('cg.checkin.call') && !ops().some((i) => i.id === 'cj_checkin_' + JID) && ev('checkin_practice').length >= 1)
+  r = await call({ action: 'get', journey_id: JID }, 'cc')
+  ck('2026-10-30: no check-in row = the card does NOT say check-in open (the engine stand-in is not a row), and the list agrees', r.j.approve.checkin === null && (await call({ action: 'list' }, 'cc')).j.rows.every((x) => x.checkin_open === false), r.j.approve)
   DB.app_data.find((x) => x.key === 'ops_settings').data.checkin_call_live = true
   o = await CJI.openCheckin(db, j0, { checkin_call_live: true }, { email: 'hub' })
   ck('check-in ON: the row opens (waiting), ONE card "Check-in call with Ava Lee" (Recruiting and Orientation), opened again = already', o === 'opened' && st('cg.checkin.call').state === 'waiting' && ops().filter((i) => i.id === 'cj_checkin_' + JID && i.kind === 'checkin_call' && i.status === 'open' && /Check-in call with/.test(i.title) && i.domain === 'recruiting_orientation').length === 1 && (await CJI.openCheckin(db, j0, { checkin_call_live: true }, { email: 'hub' })) === 'already', ops().filter((i) => i.kind === 'checkin_call'))

@@ -288,8 +288,11 @@ function approveState(view: Any, f: Facts, st: Any, who: Any, P: Any, dfs: Any[]
   const approved = !!(aw?.st && aw.st.state === 'complete')
   const axDone = !!(ax?.st && DONE.includes(ax.st.state))
   const axEv = ax?.st?.evidence || {}
-  /* the check-in call row exists only once it was opened (after the read-back, with checkin_call_live): open = not done yet */
-  const ci = rows.find((r) => r.key === CHECKIN_KEY), checkinOpen = !!(ci?.st && !DONE.includes(ci.st.state))
+  /* the check-in call row exists only once it was opened (after the read-back, with checkin_call_live): open = not done yet.
+     2026-10-30: the engine gives every step without a saved row a stand-in { state:'open' }, so "opened" means a saved row
+     (it carries journey_id). Before this, every card read as check-in open and showed "Approved, then check-in call". */
+  const ciRow = rows.find((r) => r.key === CHECKIN_KEY), ci = ciRow?.st?.journey_id ? ciRow : null
+  const checkinOpen = !!(ci && !DONE.includes(ci.st.state))
   const axiscare = axDone ? { state: 'confirmed', label: axEv.label || 'Active', at: ax.st.completed_at || null }
     : ax?.st?.state === 'blocked' ? { state: 'failed', detail: ax.st.blocked_reason || 'AxisCare update failed', at: ax.st.updated_at || null }
     : axEv.practice ? { state: 'practice', at: axEv.practice.at || null }
