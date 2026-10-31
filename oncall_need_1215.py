@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 # 1215 · STAFFING SERVER · WHICH ON-CALL SHIFTS ARE NEEDED MOST? A LOOK, READ ONLY. (Samantha 2026-10-30: "Yes, turn the
 # which-shifts-need-on-call report into a Desktop step I can run.")
-# Samantha 2026-10-30: PRN CNAs (and soon Level 3 caregivers) sign up ON CALL for daytime 7am-5pm or overnight 5pm-7am, any
+# Samantha 2026-10-30: PRN CNAs (and soon Level 3 caregivers) sign up ON CALL for daytime 7am-7pm or overnight 7pm-7am, any
 # day. Her question: "which shifts are needed most for an on-call person and what is fine to leave without on call".
 #
 # What it counts, for the last 90 days (or as far back as each record goes), by the on-call slot the shift STARTS in:
-#   daytime   = a shift starting 7:00am to 4:59pm, on that day
-#   overnight = a shift starting 5:00pm to 6:59am; a start after midnight belongs to the PREVIOUS evening's overnight
-#               (a 2am Tuesday start is "Monday overnight", the same on-call slot as 5pm Monday)
+#   daytime   = a shift starting 7:00am to 6:59pm, on that day (the 7am-to-7pm on-call shift, her change 2026-10-30)
+#   overnight = a shift starting 7:00pm to 6:59am; a start after midnight belongs to the PREVIOUS evening's overnight
+#               (a 2am Tuesday start is "Monday overnight", the same on-call slot as 7pm Monday)
 # split by notice (after start, under 2 hours, 2 to 12 hours, more than 12 hours, unknown) and outcome
 # (PRN Team filled, other caregiver filled, caller worked it after all, left unfilled, client cancelled, still open or no
 # answer), plus the median time to fill.
@@ -72,8 +72,8 @@ def start_from_axis(s):
 def slot(start):
     """(on-call day name, 'day' | 'night', on-call date) for a shift start."""
     loc = start.astimezone(CHI)
-    if 7 <= loc.hour < 17: return WD[loc.weekday()], "day", loc.date()
-    d = loc.date() if loc.hour >= 17 else loc.date() - dt.timedelta(days=1)
+    if 7 <= loc.hour < 19: return WD[loc.weekday()], "day", loc.date()   # on-call daytime is 7am to 7pm (2026-10-30)
+    d = loc.date() if loc.hour >= 19 else loc.date() - dt.timedelta(days=1)
     return WD[d.weekday()], "night", d
 
 def notice(start, raised):
@@ -194,7 +194,7 @@ def grid(say, title, rows, cols, cell, total=True):
             k = (d, part)
             vals = [cell(k, c) for c in cols]
             tot = sum(v for v in vals if isinstance(v, int))
-            say("    " + f"{d + (' 7a-5p' if part == 'day' else ' 5p-7a'):14}" + "".join(f"{('' if v is None else v):>15}" for v in vals) + (f"{tot:>8}" if total else ""))
+            say("    " + f"{d + (' 7a-7p' if part == 'day' else ' 7p-7a'):14}" + "".join(f"{('' if v is None else v):>15}" for v in vals) + (f"{tot:>8}" if total else ""))
 
 SUMMARY = {}
 
@@ -212,7 +212,7 @@ def main():
         return rows
 
     start("WHICH ON-CALL SHIFTS ARE NEEDED MOST (READ ONLY)")
-    say(f"PART 1 · READ ONLY (nothing changes). Shifts starting {since} to today, Chicago time. 'day' = 7am-5pm start, 'night' = 5pm-7am start.")
+    say(f"PART 1 · READ ONLY (nothing changes). Shifts starting {since} to today, Chicago time. 'day' = 7am-7pm start, 'night' = 7pm-7am start (the on-call shifts).")
     okE, exr = sql(REF, Q_EXISTS)
     if not okE or not exr:
         w = str(exr).lower()
@@ -264,7 +264,7 @@ def main():
             tot = sum(per[(k, d, part)]["all"] for k in ("call-off", "open shift"))
             rank.append((short, unf, tot, d, part))
     for short, unf, tot, d, part in sorted(rank, reverse=True):
-        say(f"    {d} {'7a-5p' if part == 'day' else '5p-7a'}: {short} short-notice of {tot} needs, {unf} not filled")
+        say(f"    {d} {'7a-7p' if part == 'day' else '7p-7a'}: {short} short-notice of {tot} needs, {unf} not filled")
     SUMMARY["rank"] = rank; SUMMARY["first_open"] = first_open
 
     # ---- B. visit_history (AxisCare, since 1108) --------------------------------------------------------------------
@@ -362,15 +362,21 @@ def main():
     # ---- IN PLAIN WORDS (her question: which shifts need an on-call person most, and which are fine to leave) ------------
     say(); say("IN PLAIN WORDS")
     rank = SUMMARY.get("rank") or []
-    word = lambda d, part: {"Mon": "Mondays", "Tue": "Tuesdays", "Wed": "Wednesdays", "Thu": "Thursdays", "Fri": "Fridays", "Sat": "Saturdays", "Sun": "Sundays"}[d] + (", daytime (7am to 5pm)" if part == "day" else ", overnight (5pm to 7am)")
+    word = lambda d, part: {"Mon": "Mondays", "Tue": "Tuesdays", "Wed": "Wednesdays", "Thu": "Thursdays", "Fri": "Fridays", "Sat": "Saturdays", "Sun": "Sundays"}[d] + (", daytime (7am to 7pm)" if part == "day" else ", overnight (7pm to 7am)")
     fo = SUMMARY.get("first_open")
     days = (now.astimezone(CHI).date() - fo.astimezone(CHI).date()).days if fo else 0
     say(f"  · This looks at about {days} days of call-offs and open shifts" + (" (still early: run it again each month for a clearer answer)." if days < 90 else "."))
+    # which shifts are open for sign-up now (ops_settings.prn_oncall_offered; nothing set = Friday to Sunday 7am to 7pm)
+    ofr = read("on-call shifts offered", "select data->'prn_oncall_offered' as v from public.app_data where key = 'ops_settings'") or [{}]
+    offered = ofr[0].get("v") if ofr and isinstance(ofr[0].get("v"), dict) else {"fri:day": True, "sat:day": True, "sun:day": True}
+    KEY = {"Mon": "mon", "Tue": "tue", "Wed": "wed", "Thu": "thu", "Fri": "fri", "Sat": "sat", "Sun": "sun"}
+    is_open = lambda d, part: offered.get(f"{KEY[d]}:{'day' if part == 'day' else 'overnight'}") is True
+    say("  · Open for sign-up now: " + ("; ".join(word(d, p) for d in WD for p in ("day", "night") if is_open(d, p)) or "none") + (" (the starting set)" if not (ofr and isinstance(ofr[0].get("v"), dict)) else "") + ".")
     need = [r for r in sorted(rank, key=lambda r: (r[0] + 2 * r[1], r[2]), reverse=True) if r[0] or r[1]]
     if need:
         say("  · MOST NEEDED for an on-call person (short-notice call-offs and open shifts; unfilled ones count double):")
         for short, unf, tot, d, part in need[:5]:
-            say(f"      {word(d, part)}: {short} short-notice need{'s' if short != 1 else ''}, {unf} not filled, {tot} in all")
+            say(f"      {word(d, part)}: {short} short-notice need{'s' if short != 1 else ''}, {unf} not filled, {tot} in all" + ("" if is_open(d, part) else "  (not open for sign-up now)"))
     else: say("  · No short-notice call-offs or open shifts in this window, so there's no clear most-needed time yet.")
     quiet = [r for r in rank if not r[2]]
     if quiet: say("  · FINE TO LEAVE WITHOUT ON CALL for now (no call-offs or open shifts at all in this window): " + "; ".join(word(d, part) for _, _, _, d, part in quiet))

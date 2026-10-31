@@ -20,9 +20,9 @@ def z(date, hhmm, hours_before):
     return t.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 cases = [
   # Tuesday overnight: three short-notice call-offs, two never filled (the most needed)
-  {"id": "cw_1", "status": "done", "resolved_how": "uncovered", "shift_date": TUE, "shift_time": "17:00-21:00", "opened_at": z(TUE, "17:00", 1), "covered_by": "Ann Bee"},
+  {"id": "cw_1", "status": "done", "resolved_how": "uncovered", "shift_date": TUE, "shift_time": "19:00-23:00", "opened_at": z(TUE, "19:00", 1), "covered_by": "Ann Bee"},
   {"id": "cw_2", "status": "done", "resolved_how": "couldnt_staff", "shift_date": TUE, "shift_time": "22:00-06:00", "opened_at": z(TUE, "22:00", 3)},
-  {"id": "cw_3", "status": "done", "resolved_how": "covered", "covered_by": "Ann Bee", "shift_date": TUE, "shift_time": "18:00-22:00", "opened_at": z(TUE, "18:00", 0.5), "confirmed_at": z(TUE, "18:00", 0.1)},
+  {"id": "cw_3", "status": "done", "resolved_how": "covered", "covered_by": "Ann Bee", "shift_date": TUE, "shift_time": "20:00-23:00", "opened_at": z(TUE, "20:00", 0.5), "confirmed_at": z(TUE, "20:00", 0.1)},
   # Saturday daytime: one short-notice call-off, filled
   {"id": "cw_4", "status": "done", "resolved_how": "covered", "covered_by": "Cal Dee", "shift_date": SAT, "shift_time": "09:00-13:00", "opened_at": z(SAT, "09:00", 5), "confirmed_at": z(SAT, "09:00", 4)},
   # Monday daytime: lots of notice, filled (probably fine)
@@ -85,12 +85,13 @@ try:
     ck("read only: every statement it sent is a single SELECT, and it refuses anything else", SENT and all(N.is_select_only(q) for q in SENT)
        and not N.is_select_only("update public.app_data set data = '[]'") and not N.is_select_only("select 1; delete from public.app_data") and not N.is_select_only("select upsert_app_data_item('x', '{}')"), [q[:80] for q in SENT if not N.is_select_only(q)])
     ck("no names: nobody's name from the cases appears", "Ann Bee" not in out and "Cal Dee" not in out)
-    ck("the slots: Tuesday 5pm and 10pm starts are Tuesday overnight; a 9am Saturday start is Saturday daytime", N.slot(N.start_of(TUE, "22:00-06:00"))[:2] == ("Tue", "night") and N.slot(N.start_of(SAT, "09:00"))[:2] == ("Sat", "day")
+    ck("the slots (7am to 7pm since 2026-10-30): a Tuesday 6pm start is daytime, 7pm and 10pm are Tuesday overnight; a 9am Saturday start is Saturday daytime", N.slot(N.start_of(TUE, "18:00"))[:2] == ("Tue", "day") and N.slot(N.start_of(TUE, "19:00"))[:2] == ("Tue", "night") and N.slot(N.start_of(TUE, "22:00-06:00"))[:2] == ("Tue", "night") and N.slot(N.start_of(SAT, "09:00"))[:2] == ("Sat", "day")
        and N.slot(N.start_of(day_with(2), "02:00"))[:2] == ("Tue", "night") and N.start_of(TUE, "this morning") is None)
     ck("the skips are said: a flag is not a staffing need, a free-text time is not guessed", "not a staffing need" in out and "start time unreadable" in out, out[:3000])
     plain = out[out.index("IN PLAIN WORDS"):] if "IN PLAIN WORDS" in out else ""
     most = plain[plain.index("MOST NEEDED"):plain.index("FINE TO LEAVE")] if "MOST NEEDED" in plain and "FINE TO LEAVE" in plain else plain
-    ck("IN PLAIN WORDS: Tuesdays overnight first (3 short-notice, 2 not filled), then Saturdays daytime", re.search(r"MOST NEEDED.*\n\s+Tuesdays, overnight \(5pm to 7am\): 3 short-notice needs, 2 not filled, 3 in all\n\s+Saturdays, daytime \(7am to 5pm\): 1 short-notice need, 0 not filled", plain), plain)
+    ck("IN PLAIN WORDS: what is open now (the starting set); Tuesdays overnight first (3 short-notice, 2 not filled, not open now), then Saturdays daytime (open)", "Open for sign-up now: Fridays, daytime (7am to 7pm); Saturdays, daytime (7am to 7pm); Sundays, daytime (7am to 7pm) (the starting set)." in plain
+       and re.search(r"MOST NEEDED.*\n\s+Tuesdays, overnight \(7pm to 7am\): 3 short-notice needs, 2 not filled, 3 in all  \(not open for sign-up now\)\n\s+Saturdays, daytime \(7am to 7pm\): 1 short-notice need, 0 not filled, 1 in all\n", plain), plain)
     ck("...Monday daytime (lots of notice, filled) is 'probably fine', not most needed", "Probably fine too" in plain and "Mondays, daytime" in plain.split("Probably fine too")[1] and "Mondays" not in most, plain)
     ck("...times with nothing at all are 'fine to leave without on call'", re.search(r"FINE TO LEAVE WITHOUT ON CALL.*Wednesdays, daytime", plain) and "Tuesdays, overnight" not in plain.split("FINE TO LEAVE")[1].split("\n")[0], plain)
     ck("...says how many days it looked at, and to run it again monthly while history is short", re.search(r"about \d+ days of call-offs and open shifts \(still early", plain), plain)
