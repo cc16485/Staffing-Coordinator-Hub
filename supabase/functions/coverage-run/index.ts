@@ -2641,7 +2641,9 @@ Deno.serve(async (req) => {
         const patchU: Record<string, unknown> = {}
         if (!prevU || prevU.level !== u.level) patchU[fieldU] = { level: u.level, why: u.why, at: nowIso() }
         const doneKey = urgLive ? 'critical_alerted' : 'critical_alerted_practice'
-        if (u.level === 'critical' && !confirmed(c) && !c[doneKey]) {
+        /* 2026-10-31 (Newton-Donati): a case held because its visit was deleted in AxisCare (removed_hold) is not an open
+           shift there: the "does it still need someone?" card asks a person, and no CRITICAL open shift text goes */
+        if (u.level === 'critical' && !confirmed(c) && !c[doneKey] && !c.removed_hold) {
           {
             const rd = async (k: string) => { const { data } = await sb.from('app_data').select('data').eq('key', k).maybeSingle(); return Array.isArray(data?.data) ? data!.data : [] }
             const [dw, pos, cs] = await Promise.all([rd('duty_windows'), rd('positions'), rd('coordinator_staff')])

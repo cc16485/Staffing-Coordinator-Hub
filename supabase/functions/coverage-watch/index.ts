@@ -33,7 +33,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { opEvent } from '../_shared/events.ts'
 import { jobCaller } from '../_shared/job-auth.ts'
 import { archivedSchedules, caseHistory, changedSince, decideHeld, heldItem, visitMs } from '../_shared/held-shift.ts'
-import { outsideVerdict } from '../_shared/covered-outside.ts'
+import { outsideVerdict, replacementCover } from '../_shared/covered-outside.ts'
 import { attendanceCard, caseEnded, caseWhen, shiftAhead, chiNowNaive, evvDayStats, evvWeek, familyCallNeeded, itemsToCloseForCases,
   markNoClosureTexts, pastCaseVerdict, weekOf } from '../_shared/loops.ts'
 import { loadQuiet, isQuiet, isNotClient } from '../_shared/client-quiet.ts'
@@ -687,6 +687,21 @@ Deno.serve(async (req) => {
           const how = closeHowFor(rg.cancelled)
           const why = `The visit was deleted in AxisCare with the reason "${rg.reason.name}", so Cara closed the case as ${how === 'couldnt_staff' ? 'couldn\'t staff' : 'client cancelled'}. No texts were sent.`
           if (byId && live) await closeCancelled(cc, how, why); else planNote({ case: cc.id, client: cc.client || null, before: 'stays open', by_id: why })
+          continue
+        }
+        /* 2026-10-31 (Newton-Donati): deleted and REPLACED by new visits for the same hours with somebody else on them.
+           That is a cover: close the case as covered (the closure pass then runs as if Confirm had been tapped). */
+        const rep = replacementCover(cc, gone, visits, { ms: visitMs, usable: (x) => { const r = readOf(x); return !r.cancelled && r.state === 'caregiver' } })
+        if (rep) {
+          const who = rep.names.join(' and ')
+          if (!live) { outsideLeftOpen.push({ case: cc.id, caregiver_on_shift: who, calling_off: cc.calling_off || null, verdict: 'replaced', dry: true }); continue }
+          const liveTime = [rep.start, rep.end].map((x: string) => x ? x.slice(11, 16) : '').filter(Boolean).join('-')
+          if (rep.start) cc.shift_date = rep.start.slice(0, 10)
+          if (liveTime && liveTime !== cc.shift_time) { cc.note = [String(cc.note || '').trim(), `Visit time is now ${liveTime} (was ${cc.shift_time || 'unrecorded'}).`].filter(Boolean).join('\n'); cc.shift_time = liveTime }
+          cc.status = 'resolved'; cc.resolved_at = nowIso; cc.resolved_how = 'covered'; cc.covered_by = who
+          cc.note = [String(cc.note || '').trim(), `The visit was deleted in AxisCare and replaced by a new visit for the same hours with ${who}, so Cara closed the case as covered.`].filter(Boolean).join('\n')
+          const { error } = await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: cc })
+          if (!error) { coveredOutside++; await opEvent(sb, { job: 'coverage-watch', verb: 'coverage_replaced_axiscare', item_id: String(cc.id), area: 'coverage', summary: `Cara closed ${cc.client || 'a'} call-off case: deleted visit replaced, ${who} on it` }) }
           continue
         }
         /* deleted WITHOUT a cancel reason: AxisCare also deletes and re-makes visits when a schedule is edited, so Cara can't
