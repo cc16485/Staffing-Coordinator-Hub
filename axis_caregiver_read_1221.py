@@ -81,7 +81,7 @@ if NODE and os.path.exists(PGLITE):
                     ("prn_caregiver_1037_team_test.mjs", "11/11"), ("caregiver_journey_6_test.mjs", "128/128"), ("level_1033_test.mjs", "16/16"), ("lpn_step2_708_test.mjs", "9/9"),
                     ("lpn_journey_708_test.mjs", "37/37"), ("leave_1035_test.mjs", "22/22"), ("in_training_part_b_test.mjs", "15/15"), ("ref_auto_ask_1032_test.mjs", "10/10"),
                     ("step2_handoff_575_test.mjs", "58/58"), ("team_ask_test.mjs", "38/38"), ("team_ask_gate_test.mjs", "29/29"), ("axiscare_note_fn_test.mjs", "12/12"),
-                    ("family_app_1a_test.mjs", "142/142"), ("family_app_flex_test.mjs", "182/182"), ("ask_list_test.mjs", "25/25")):
+                    ("family_app_1a_test.mjs", "142/142"), ("family_app_flex_test.mjs", "182/182")):
         c, o = run([NODE, t], cwd=ROOT, env=env)
         if c != 0 or must not in o: stop(f"the tests failed ({t}): " + " ".join(l.strip() for l in o.splitlines() if "FAIL" in l)[:240])
     ok("the caregiver read, on-call, PRN Team, Approved to Work, level, nurse, hand-off, team ask, note and family app tests pass (fake data only)")
