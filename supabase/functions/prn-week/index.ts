@@ -103,7 +103,7 @@ import { monthFacts, readDraft, lastMonth, isMonth, monthWord, monthlyText, mont
 import { keptMessage } from '../_shared/prn-page-texts.ts'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
 import { readMentor, readAsk, mentorLive, mayOffer, mentorTextLive, mentorText, workingNow, MENTOR_TEXT_DEFAULT, SKILLS, KINDS } from '../_shared/prn-mentor.ts'
-import { withKeys, personCols, isCaregiverKey, inviteList, inviteText, isLevel3, INVITE_DEFAULT, offeredOf, offeredWords, calendar, payMonth, blockOf, signedCurrent, termsText, termsVersion, onCallNow, holdFor, outcomeFor, takeBackOnMiss, onCallAsk, slotsOf, fillPlan, endPlan, seriesView, seriesWord, weekdayOf, SLOT_WORD, MISS_KINDS, OUTCOMES, HOLD_MIN } from '../_shared/prn-oncall.ts'
+import { withKeys, personCols, isCaregiverKey, inviteList, inviteText, isLevel3, INVITE_DEFAULT, offeredOf, offeredWords, calendar, payMonth, blockOf, signedCurrent, termsText, termsVersion, onCallNow, holdFor, outcomeFor, takeBackOnMiss, onCallAsk, slotsOf, fillPlan, endPlan, seriesView, seriesWord, weekdayOf, SLOT_WORD, MISS_KINDS, OUTCOMES, HOLD_MIN, oncallAskOf, askAnswer, noAnswerDue } from '../_shared/prn-oncall.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
@@ -537,6 +537,9 @@ Deno.serve(async (req) => {
     /* their Yes on the case, so the board shows it and the office confirms it the usual way (puts them on the AxisCare visit) */
     let onCase = 'not_open'
     if (kase && kase.status === 'open') {
+      /* 2026-10-31: the on-call text already put an ask on the case; the Yes replaces it (one line per person) */
+      const prev = oncallAskOf(kase, id)
+      if (prev && prev.state !== 'yes') await sb.rpc('coverage_case_remove_ask', { p_id: caseId, p_ask_id: String(prev.id) })
       const ask = onCallAsk({ id: crypto.randomUUID(), name: m.name, phone: await phoneOf(m), ax: m.axiscare_id, key: `${S(kase.shift_date, 10)}|${S(kase.shift_time, 20)}`, now: new Date().toISOString(), by: who.name })
       const { data: held, error: he } = await sb.rpc('coverage_case_add_ask', { p_id: caseId, p_ask: ask })
       onCase = he ? 'failed' : String(held || 'failed')
@@ -645,8 +648,13 @@ Deno.serve(async (req) => {
       const n = onCallNow({ c, rows: withKeys(rows ?? []), marks: ocx.marks, members: people }); if (!n) continue
       const o = outcomeFor(ocx.marks, S(c.id, 80)), h = holdFor({ c, now: n, marks: ocx.marks, nowMs: Date.now() })
       const pm = people.find((m) => m.applicant_id === n.applicant_id)
+      /* 2026-10-31: what the Hub did (texted, skipped because AxisCare has them working then, or couldn't text), how they
+         answered the text, and the 15-minute question for the office */
+      const dsp = c.oncall_dispatch && String(c.oncall_dispatch.oncall_id) === String(n.oncall_id) ? c.oncall_dispatch : null
       out.push({ case_id: c.id, ...n, caregiver: isCaregiverKey(n.applicant_id), phone: pm ? await phoneOf(pm) : null,
-        outcome: o ? { kind: o.kind, word: OUTCOMES[o.kind], by: o.by_name || null, at: o.at } : null, hold_until: st.prn_oncall_first_live === true ? h.until : null })
+        outcome: o ? { kind: o.kind, word: OUTCOMES[o.kind], by: o.by_name || null, at: o.at } : null, hold_until: st.prn_oncall_first_live === true ? h.until : null,
+        dispatch: dsp ? { texted_at: dsp.texted_at || null, skipped: dsp.skipped || null, not_texted: dsp.not_texted || null, nudged_at: dsp.nudged_at || null } : null,
+        answer: askAnswer(oncallAskOf(c, n.oncall_id)), no_answer_due: !o && noAnswerDue({ c, now: n, marks: ocx.marks, nowMs: Date.now() }) })
     }
     return json({ ok: true, live: st.prn_oncall_first_live === true, records_ready: ocx.ok, hold_min: HOLD_MIN, cases: out })
   }

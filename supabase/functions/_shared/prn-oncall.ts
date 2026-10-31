@@ -55,7 +55,7 @@ type Any = any
 const S = (v: unknown, n = 200) => String(v ?? '').trim().slice(0, n)
 const DAY = 86_400_000
 const YMD = /^\d{4}-\d\d-\d\d$/
-export const DAYS_AHEAD = 28, MAX_OPEN_ASKS = 10, HOLD_MIN = 20, ASK_LEAD_MIN = 120, GIVE_BACK_HOURS = 24
+export const DAYS_AHEAD = 28, MAX_OPEN_ASKS = 10, HOLD_MIN = 15, ASK_LEAD_MIN = 120, GIVE_BACK_HOURS = 24
 export const SLOTS = ['day', 'overnight'] as const
 export type Slot = typeof SLOTS[number]
 export const SLOT_WORD: Record<string, string> = { day: 'Daytime, 7am to 7pm', overnight: 'Overnight, 7pm to 7am' }   // T1
@@ -295,34 +295,82 @@ export function inviteList(x: { census: Any[]; prnAx: string[]; invites: Any[]; 
 }
 
 /* ── decision 26: on call when a shift opens ── */
+/* 2026-10-31 (Samantha: "when there is a call in we need to send it to the on-call person if there is on-call signed up for that
+   day"; her picks the same day: text them at once and the office calls; at 15 minutes with no answer the Hub asks the office to
+   record it with one tap; saying no is a miss; then caregivers who know the client, the PRN teams by care level, everyone else).
+   A shift is theirs when any part of it falls in their on-call time (it used to be only when it started then). */
 /** The start of a coverage case's shift ('YYYY-MM-DDTHH:MM'), or null. */
 export function caseStart(c: Any): string | null {
   const d = S(c?.shift_date, 10), t = S(c?.shift_time, 20).split('-')[0]
   return YMD.test(d) && /^\d\d:\d\d$/.test(t) ? `${d}T${t}` : null
 }
-/** Who is on call when this shift starts: the confirmed, live, not-missed row whose shift covers the start. The person who
+/** The whole shift as [start, end) ('YYYY-MM-DDTHH:MM'); an end at or before the start is the next morning; no end = 1 hour. */
+export function caseWindow(c: Any): [string, string] | null {
+  const st = caseStart(c); if (!st) return null
+  const e = S(c?.shift_time, 20).split('-')[1] || ''
+  if (!/^\d\d:\d\d$/.test(e)) { const h = Number(st.slice(11, 13)) + 1; return [st, h >= 24 ? `${addDays(st.slice(0, 10), 1)}T00:00` : `${st.slice(0, 11)}${String(h).padStart(2, '0')}${st.slice(13)}`] }
+  const end = e <= st.slice(11) ? `${addDays(st.slice(0, 10), 1)}T${e}` : `${st.slice(0, 10)}T${e}`
+  return [st, end]
+}
+const nameKey = (n: unknown) => S(n, 80).toLowerCase().replace(/[^a-z ]/g, '').replace(/\s+/g, ' ').trim()
+/** The person who called off, however the case was opened: by AxisCare id (calling_off_id or calling_off_axiscare_id) or name. */
+export function isCaller(c: Any, m: Any): boolean {
+  const ids = [S(c?.calling_off_id, 20), S(c?.calling_off_axiscare_id, 20)].filter(Boolean)
+  if (m?.axiscare_id && ids.includes(String(m.axiscare_id))) return true
+  const off = nameKey(c?.calling_off)
+  return !!off && !!nameKey(m?.name) && off === nameKey(m.name)
+}
+/** Who is on call for this shift: the confirmed, live, not-missed row whose on-call time covers any part of it. The person who
     called off is never their own cover. */
 export function onCallNow(x: { c: Any; rows: Any[]; marks: Any[]; members: Any[] }): Any | null {
-  const st = caseStart(x.c); if (!st) return null
-  const off = S(x.c?.calling_off_id, 20)
+  const w = caseWindow(x.c); if (!w) return null
   for (const r of live(x.rows).filter((r) => r.kind === 'confirmed').sort((a, b) => Number(a.id) - Number(b.id))) {
     if (missOf(x.marks, r.id)) continue
     const m = x.members.find((mm) => mm.applicant_id === r.applicant_id && (mm.team === 'cna' || mm.team === 'oncall')); if (!m) continue   // C1: Level 3 caregivers too
-    if (off && m.axiscare_id && String(m.axiscare_id) === off) continue
-    const hit = slotsOf(r).find((s) => { const [a, b] = slotWindow(s.date, s.slot); return st >= a && st < b })
+    if (isCaller(x.c, m)) continue
+    const hit = slotsOf(r).find((s) => { const [a, b] = slotWindow(s.date, s.slot); return w[0] < b && w[1] > a })
     if (hit) return { oncall_id: r.id, applicant_id: r.applicant_id, name: m.name, first: m.first || S(m.name).split(' ')[0], axiscare_id: m.axiscare_id || null, date: hit.date, slot: hit.slot, slot_word: SLOT_WORD[hit.slot] }
   }
   return null
 }
 /** The outcome the office recorded for this case's on-call call, if any. */
 export const outcomeFor = (marks: Any[], caseId: string) => marks.filter((m) => m && caseId && S(m.case_id, 80) === caseId && OUTCOMES[m.kind]).sort((a, b) => S(a.at, 40).localeCompare(S(b.at, 40))).pop() || null
-/** Hold the automatic texts while the office calls the on-call CNA: until an outcome is recorded, at most HOLD_MIN minutes
-    after the case opened. A case with no open time is not held (nothing to count from). */
+/** The ask the on-call text put on the case (coverage-run oncallDispatch), and how they answered it: 'yes', 'no' or null. */
+export function oncallAskOf(c: Any, oncallId: unknown): Any | null {
+  return (Array.isArray(c?.asked) ? c.asked : []).find((a: Any) => a && a.from_oncall === true && String(a.oncall_id ?? '') === String(oncallId ?? '')) || null
+}
+export const askAnswer = (a: Any): 'yes' | 'no' | null => !a ? null : a.state === 'yes' ? 'yes' : (a.state === 'no' || a.state === 'declined') ? 'no' : null
+/** When the 15 minutes start: when they were texted; else when the case was confirmed open (a flagged text or call becomes
+    open later than it was first seen); else when it opened. */
+export function holdStart(c: Any): number | null {
+  for (const k of [c?.oncall_dispatch?.texted_at, c?.oncall_dispatch?.at, c?.flag_confirmed_at, c?.opened_at]) { const t = Date.parse(S(k, 40)); if (Number.isFinite(t)) return t }
+  return null
+}
+/** Hold the automatic texts while the on-call person is reached: until how it went is recorded (or they answered the text), at
+    most HOLD_MIN minutes. Someone AxisCare has working then was never texted: no hold. */
 export function holdFor(x: { c: Any; now: Any | null; marks: Any[]; nowMs: number }): { hold: boolean; until: string | null } {
   if (!x.now || outcomeFor(x.marks, S(x.c?.id, 80))) return { hold: false, until: null }
-  const opened = Date.parse(S(x.c?.opened_at, 40)); if (!Number.isFinite(opened)) return { hold: false, until: null }
-  const until = opened + HOLD_MIN * 60000
+  if (x.c?.oncall_dispatch?.skipped) return { hold: false, until: null }
+  if (askAnswer(oncallAskOf(x.c, x.now.oncall_id))) return { hold: false, until: null }
+  const from = holdStart(x.c); if (from == null) return { hold: false, until: null }
+  const until = from + HOLD_MIN * 60000
   return until > x.nowMs ? { hold: true, until: new Date(until).toISOString() } : { hold: false, until: null }
+}
+/** The 15-minute question for the office: texted (or the case opened), nothing recorded, no answer to the text, time is up. */
+export function noAnswerDue(x: { c: Any; now: Any | null; marks: Any[]; nowMs: number }): boolean {
+  if (!x.now || outcomeFor(x.marks, S(x.c?.id, 80)) || x.c?.oncall_dispatch?.skipped) return false
+  if (askAnswer(oncallAskOf(x.c, x.now.oncall_id))) return false
+  const from = holdStart(x.c); return from != null && x.nowMs >= from + HOLD_MIN * 60000
+}
+/* the text to the on-call person (her pick 2026-10-31; ops_settings.prn_oncall_text_msg to change it) */
+export const ONCALL_TEXT_DEFAULT = "Hi {first_name}, it's Caring Companions. You're on call, and {client} in {town} needs someone {when}. Please call the office now at (417) 234-8494, or reply YES if you can cover it."
+export function oncallText(tmpl: unknown, x: { first: string; client: string; town: string; when: string }): string {
+  return (S(tmpl, 700) || ONCALL_TEXT_DEFAULT).replace(/\{first_name\}/g, x.first || 'there').replace(/\{client\}/g, x.client || 'a client')
+    .replace(/ in \{town\}/g, x.town ? ` in ${x.town}` : '').replace(/\{town\}/g, x.town || '').replace(/\{when\}/g, x.when || 'today').replace(/\s{2,}/g, ' ').trim()
+}
+/* the admins' text at 15 minutes */
+export function noAnswerText(x: { name: string; client: string; when: string }): string {
+  return `${x.name} (on call) hasn't answered about ${x.client || 'the open shift'} ${x.when} in 15 minutes. Record it with one tap, then ask the PRN teams: {link}`.replace(/\s{2,}/g, ' ')
 }
 /** What a miss takes back: their other live confirmed shifts and asks from today on (never the missed one itself). */
 export function takeBackOnMiss(rows: Any[], aid: string, missedId: unknown, today: string): Any[] {
