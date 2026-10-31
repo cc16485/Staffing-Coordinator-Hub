@@ -51,18 +51,21 @@ if a[:2] == ['functions', 'download']:
     fn = a[2]
     src = {WT!r} if (os.path.exists(os.path.join({TMP!r}, 'deployed-' + fn)) or os.path.exists(os.path.join({TMP!r}, 'already'))) else {BASEWT!r}
     shutil.copytree(os.path.join(src, 'supabase', 'functions'), os.path.join(os.getcwd(), 'supabase', 'functions'), dirs_exist_ok=True)
+    if os.path.exists(os.path.join({TMP!r}, 'older')) and fn == 'coverage-run' and not os.path.exists(os.path.join({TMP!r}, 'deployed-' + fn)):
+        shutil.copy(os.path.join({TMP!r}, 'older_prn_oncall.ts'), os.path.join(os.getcwd(), 'supabase', 'functions', '_shared', 'prn-oncall.ts'))
     if os.path.exists(os.path.join({TMP!r}, 'drift')) and fn == 'coverage-run' and not os.path.exists(os.path.join({TMP!r}, 'deployed-' + fn)):
         open(os.path.join(os.getcwd(), 'supabase', 'functions', 'coverage-run', 'index.ts'), 'a').write('// someone else')
     sys.exit(0)
 sys.exit(1)
 """)
 os.chmod(os.path.join(FAKEBIN, "supabase"), 0o755)
+open(os.path.join(TMP, "older_prn_oncall.ts"), "w").write(subprocess.run(["git", "-C", HERE, "show", "ebbbd1427c50f80f9cfb6478938e9e1bf994661c:supabase/functions/_shared/prn-oncall.ts"], capture_output=True, text=True).stdout)   # 1191's copy, as 1202 left it live
 sha = lambda p: hashlib.sha256(open(p, "rb").read()).hexdigest()
 PIN = {k: sha(os.path.join(WT, "supabase/functions", k)) for k in ("_shared/prn-oncall.ts", "prn-week/index.ts", "oncall-page/index.ts", "coverage-run/index.ts", "_shared/oncall-links.ts")}
-def run(env_over=None, already=False, drift=False, **mode):
+def run(env_over=None, already=False, drift=False, older=False, **mode):
     reset(**mode); rep = os.path.join(TMP, "r.txt")
     for f in [LOG, rep] + [os.path.join(TMP, x) for x in os.listdir(TMP) if x.startswith("deployed-")]: os.path.exists(f) and os.remove(f)
-    for flag, on in (("already", already), ("drift", drift)):
+    for flag, on in (("already", already), ("drift", drift), ("older", older)):
         fp = os.path.join(TMP, flag); (open(fp, "w").write("x") if on else (os.path.exists(fp) and os.remove(fp)))
     env = dict(os.environ, PATH=FAKEBIN + ":/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin", SB_STEP="1214", SB_TOKEN="sbp_test", SB_REPORT=rep, SB_API_BASE=URL, SB_FN_BASE=URL,
                SB_SUPA_CLI=os.path.join(FAKEBIN, "supabase"), SB_FNROOT=os.path.join(WT, "supabase/functions"), SB_SHAS=json.dumps(PIN), SB_BASE=BASE_SHA, SB_SETTLE="0", SB_MAIN_REF="HEAD", SB_RETRY_SCALE="0")
@@ -76,7 +79,7 @@ try:
     c, out = run()
     ck("clean run from a fresh copy: exit 0, DONE, invites left OFF", c == 0 and "1214: DONE" in out and "invites OFF" in out, out[-1800:])
     ck("Part 1: the reviewed build, the eight tests ran, the switch read, gateway settings (oncall-page new and public), live = the build this builds on", "the reviewed build is what is on GitHub's main" in out
-       and "office-line tests pass" in out and "Caregiver on-call invites: OFF" in out and "oncall-page off (new)" in out and "prn-week live is the build this one builds on" in out and "coverage-run live is the build this one builds on" in out, out[:3000])
+       and "office-line tests pass" in out and "Caregiver on-call invites: OFF" in out and "oncall-page off (new)" in out and "prn-week live is GitHub's main, the build this one builds on" in out and "coverage-run live is GitHub's main, the build this one builds on" in out, out[:3000])
     ck("Part 2: the SQL in one transaction; prn-week, oncall-page, coverage-run deployed; only oncall-page without the gateway sign-in check", any("create table if not exists public.oncall_invites" in q for q in writes())
        and deploys() == ["prn-week", "oncall-page", "coverage-run"] and re.search(r"deploy oncall-page .*--no-verify-jwt", cli()) and cli().count("--no-verify-jwt") == 1, cli())
     ck("Part 3: refuses outsiders and forged links; the records; the switch as it was", "prn-week refuses anyone not signed in" in out and "refuses a forged link (401)" in out and "needs an office sign-in" in out
@@ -85,7 +88,10 @@ try:
     c, out = run(already=True)
     ck("run again: live is already this build, still DONE", c == 0 and "already this build (an earlier run)" in out and "1214: DONE" in out, out[-900:])
     c, out = run(drift=True)
-    ck("coverage-run live with someone else's change: STOPS before any change", c == 3 and not deploys() and not writes() and "someone else's work may be live" in out, out[-600:])
+    ck("coverage-run live with code never on GitHub's main: STOPS before any change, naming the file", c == 3 and not deploys() and not writes() and "never on GitHub's main (coverage-run/index.ts)" in out, out[-600:])
+    c, out = run(older=True)
+    ck("coverage-run live with an older main copy of the rules file (1202 before every week): goes on, says it brings it up to date", c == 0 and "older main copy of _shared/prn-oncall.ts that this step brings up to date" in out
+       and "1214: DONE" in out and "coverage-run" in deploys(), out[-1500:])
     c, out = run(switch=True)
     ck("invites already on: said so, left on", c == 0 and "Caregiver on-call invites: ON" in out and "invites ON" in out, out[-900:])
     c, out = run(readfail=(401, {"message": "Unauthorized"}))

@@ -56,6 +56,11 @@ def sha_of(ref, path):
     import hashlib
     c, o = run(["git", "-C", ROOT, "show", f"{ref}:{path}"])
     return hashlib.sha256(o.encode()).hexdigest() if c == 0 else None
+def main_versions(path):
+    """Every version of a file GitHub's main has had (up to the build this builds on, the last 60 changes): live may run an older one
+    when a step deployed it before a later change (1202 put coverage-run live before every week changed prn-oncall.ts)."""
+    c, o = run(["git", "-C", ROOT, "log", "-n", "60", "--format=%H", BASE, "--", path]) if BASE else (1, "")
+    return {h for h in (sha_of(x, path) for x in (o.split() if c == 0 else [])) if h}
 
 # the code this step changes in the two live functions (outreach.ts and send-problems.ts only gain one registry line each)
 CHANGED = {"supabase/functions/prn-week/index.ts", "supabase/functions/coverage-run/index.ts", "supabase/functions/_shared/prn-oncall.ts"}
@@ -90,10 +95,14 @@ for fn in ("prn-week", "coverage-run"):
     okL, livef = L.live_files(REF, fn)
     if not okL: stop(f"couldn't read the live {fn} to compare", 3)
     files = sorted(k for k in L.need(FNROOT, fn) if k in CHANGED)   # the files this step changes; the rest are main as always
-    is_base = bool(BASE) and all(livef.get(k) == sha_of(BASE, k) for k in files if sha_of(BASE, k))
     is_new = all(livef.get(k) == L.sha(os.path.join(ROOT, k)) for k in files)
-    if not (is_base or is_new): stop(f"{fn} live has changes that aren't the build this builds on (someone else's work may be live). Tell Claude before going on.", 3)
-    ok(f"{fn} live is " + ("already this build (an earlier run)" if is_new else "the build this one builds on"))
+    older, foreign = [], []
+    for k in files:
+        have = livef.get(k)
+        if have == L.sha(os.path.join(ROOT, k)) or (BASE and have == sha_of(BASE, k)): continue
+        (older if have and have in main_versions(k) else foreign).append(k.replace("supabase/functions/", ""))
+    if foreign: stop(f"{fn} live has code that was never on GitHub's main ({', '.join(foreign)}): someone else's work may be live. Tell Claude before going on.", 3)
+    ok(f"{fn} live is " + ("already this build (an earlier run)" if is_new else "GitHub's main" + (f", with an older main copy of {', '.join(older)} that this step brings up to date" if older else ", the build this one builds on")))
 K = keys(); ANON = K.get("anon", ""); L.HIDE += [ANON, K.get("service_role", "")]
 if not ANON: stop("couldn't read the Hub's keys", 3)
 
