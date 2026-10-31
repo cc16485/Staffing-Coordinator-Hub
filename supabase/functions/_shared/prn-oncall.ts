@@ -25,8 +25,21 @@
 //   W5  A miss ends every series of theirs (with decision 25's take-back).
 //   W6  Rule 6 of the expectations gains one sentence (a new version: they sign again).
 //   W7  An every-week ask is one of the 10 waiting asks; no cap on how many every-week shifts someone holds.
+// OUR CAREGIVERS (Samantha 2026-10-30, Krystal's idea, "Yes to all, we will only have caregivers who can do level 3 be on-call"):
+//   C1  Only active caregivers AxisCare shows at Level 3 (Advanced Care) can be invited and sign up. PRN CNA Team members keep their
+//       PRN Team page. Every on-call person can cover any open shift, so "the office calls them first" needs no level check.
+//   C2  Pay: the same on-call pay as the PRN CNAs plus their own rate for a shift they cover, a separate payroll line, their pay
+//       track unchanged (pay amounts are never on their page).
+//   C3  Their own "My on-call" page (oncall.html, a sealed 30-day link by AxisCare id): what on call is, the expectations, the
+//       calendar with Just this one / Every week, their shifts. The same rules as the PRN CNAs.
+//   C4  The invite text, her approved draft, editable before it goes (INVITE_DEFAULT).
+//   C5  A person presses Send for each invite, from the office line, through the caregiver text gates, never at night; or Copy link.
+//   C6  The On call tab's Invite caregivers box: who is Level 3, with their status. Caregivers carry a "Caregiver" tag on the calendar.
+//   C7  Switch ops_settings.prn_oncall_invite_live, off: owners can look and preview, nothing is texted, their page says not yet.
+//   A person is a key: a PRN member's applicant id, or 'ax:' + an AxisCare caregiver id (personKey / personCols).
 // Only decisions here (no reads or writes), so every rule is tested. Pay amounts are never here (her plan has them).
 // =============================================================================
+import { careLevelOf } from './care-level.ts'
 // deno-lint-ignore no-explicit-any
 type Any = any
 const S = (v: unknown, n = 200) => String(v ?? '').trim().slice(0, n)
@@ -106,7 +119,7 @@ export function calendar(x: { rows: Any[]; marks: Any[]; members: Any[]; today: 
     if (r.kind !== 'confirmed' && r.kind !== 'asked') continue
     for (const sl of slotsOf(r)) {
       const c = by[sl.date]?.[sl.slot]; if (!c) continue
-      const who = { id: r.id, applicant_id: r.applicant_id, name: nameOf(x.members, r.applicant_id), weekly: r.series_id != null }
+      const who = { id: r.id, applicant_id: r.applicant_id, name: nameOf(x.members, r.applicant_id), weekly: r.series_id != null, caregiver: isCaregiverKey(r.applicant_id) }
       if (r.kind === 'asked') c.asked.push({ ...who, at: r.at || null })
       else { const m = missOf(x.marks, r.id); c.confirmed.push({ ...who, whole: S(r.shift, 10) !== 'day' && S(r.shift, 10) !== 'overnight', shift_recorded: !!S(r.shift, 10), missed: m ? m.kind : null }) }
     }
@@ -213,6 +226,40 @@ export const seriesView = (series: Any[], members: Any[] = []) => liveSeries(ser
   .map((s) => ({ id: s.id, applicant_id: s.applicant_id, name: members.length ? nameOf(members, s.applicant_id) : undefined, word: seriesWord(s), slot: s.slot, weekday: weekdayOf(S(s.first_date, 10)),
     status: s.status, since: S(s.first_date, 10), confirmed_by: s.confirmed_by || null }))
 
+/* ── OUR CAREGIVERS (C1 to C7, 2026-10-30) ── */
+/** The one key for a person on call: a PRN member's applicant id, or 'ax:<AxisCare id>' for a caregiver. */
+export const personKey = (r: Any) => r?.applicant_id ? String(r.applicant_id) : (r?.caregiver_ax ? 'ax:' + String(r.caregiver_ax) : '')
+/** The columns a record gets for a person key. */
+export const personCols = (key: string): Any => key.startsWith('ax:') ? { applicant_id: null, caregiver_ax: key.slice(3) } : { applicant_id: key, caregiver_ax: null }
+export const isCaregiverKey = (key: unknown) => String(key ?? '').startsWith('ax:')
+/** Records as the rules read them: applicant_id is the person key, whoever they are. */
+export const withKeys = (rows: Any[]) => (rows || []).filter(Boolean).map((r) => ({ ...r, applicant_id: personKey(r) }))
+/** C1: AxisCare shows them at Level 3 (the highest level class they hold). */
+export const isLevel3 = (classes: unknown) => careLevelOf(classes).level === 3
+export const INVITE_DEFAULT = "Hi {first_name}! We're inviting a few of our caregivers to sign up for on-call shifts. On call means keeping your phone close during a daytime (7am to 5pm) or overnight (5pm to 7am) shift, so if a caregiver can't make it, we call you first. You're paid for each on-call shift, plus your pay for any shift you cover. Read more and sign up here: {link}"
+/** C4: the invite with their first name and link. The link always goes in, even if {link} was edited out. */
+export function inviteText(tmpl: unknown, first: string, link: string): string {
+  const t = S(tmpl, 1000) || INVITE_DEFAULT
+  const out = t.replace(/\{first_name\}/g, first || 'there').replace(/\{link\}/g, link)
+  return out.includes(link) ? out : out.replace(/\s*$/, ' ') + link
+}
+/** C6: the Invite caregivers list. Active Level 3 caregivers from AxisCare, never someone on the PRN CNA Team (their PRN Team
+    page has on call), each with their status: invited when, signed, has on-call shifts, can't sign up after a miss. */
+export function inviteList(x: { census: Any[]; prnAx: string[]; invites: Any[]; terms: Any[]; rows: Any[]; marks: Any[]; version: string; today: string }): Any[] {
+  const out: Any[] = []
+  for (const g of x.census) {
+    const ax = S(g?.id, 12)
+    if (!ax || g?.active !== true || !isLevel3(g?.classes) || x.prnAx.includes(ax)) continue
+    const key = 'ax:' + ax, inv = x.invites.filter((i) => S(i?.caregiver_ax, 12) === ax).sort((a, b) => S(a.at, 40).localeCompare(S(b.at, 40))).pop() || null
+    const sigs = x.terms.filter((t) => personKey(t) === key), mine = withKeys(x.rows).filter((r) => r.applicant_id === key && !r.cancelled_at && r.kind === 'confirmed' && S(r.end_date, 10) >= x.today)
+    out.push({ caregiver_ax: ax, key, name: [S(g.first), S(g.last)].filter(Boolean).join(' ') || 'A caregiver', first: S(g.goes_by) || S(g.first), has_phone: !!S(g.phone),
+      invited_at: inv?.at || null, invited_via: inv?.via || null, invited_by: inv?.by_name || null,
+      signed: sigs.some((t) => t.version === x.version), signed_old: sigs.length > 0 && !sigs.some((t) => t.version === x.version),
+      upcoming: mine.length, blocked: blockOf(withKeys(x.marks), key).blocked })
+  }
+  return out.sort((a, b) => Number(!!a.invited_at) - Number(!!b.invited_at) || a.name.localeCompare(b.name))
+}
+
 /* ── decision 26: on call when a shift opens ── */
 /** The start of a coverage case's shift ('YYYY-MM-DDTHH:MM'), or null. */
 export function caseStart(c: Any): string | null {
@@ -226,7 +273,7 @@ export function onCallNow(x: { c: Any; rows: Any[]; marks: Any[]; members: Any[]
   const off = S(x.c?.calling_off_id, 20)
   for (const r of live(x.rows).filter((r) => r.kind === 'confirmed').sort((a, b) => Number(a.id) - Number(b.id))) {
     if (missOf(x.marks, r.id)) continue
-    const m = x.members.find((mm) => mm.applicant_id === r.applicant_id && mm.team === 'cna'); if (!m) continue
+    const m = x.members.find((mm) => mm.applicant_id === r.applicant_id && (mm.team === 'cna' || mm.team === 'oncall')); if (!m) continue   // C1: Level 3 caregivers too
     if (off && m.axiscare_id && String(m.axiscare_id) === off) continue
     const hit = slotsOf(r).find((s) => { const [a, b] = slotWindow(s.date, s.slot); return st >= a && st < b })
     if (hit) return { oncall_id: r.id, applicant_id: r.applicant_id, name: m.name, first: m.first || S(m.name).split(' ')[0], axiscare_id: m.axiscare_id || null, date: hit.date, slot: hit.slot, slot_word: SLOT_WORD[hit.slot] }

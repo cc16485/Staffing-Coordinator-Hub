@@ -42,6 +42,15 @@
 //   ?fill=1       the daily fill (its schedule, prn-oncall-fill; oncall_fill for office staff): adds the next weeks of every confirmed
 //                 every-week shift. week and oncall_confirm run the same fill first, so the calendar is never behind.
 //   week          also returns oncall.series (every live every-week shift) and each calendar shift's skipped weeks.
+// OUR CAREGIVERS ON CALL (2026-10-30, Krystal's idea, her "Yes to all", Level 3 only; rules C1 to C7 in _shared/prn-oncall.ts):
+//   oncall_invites {}: the Invite caregivers list (active Level 3 caregivers from AxisCare, not the PRN CNA Team) with each one's
+//                 status, the drafted invite, and whether invites are switched on (ops_settings.prn_oncall_invite_live).
+//   oncall_invite_send {caregiver_ax, message, send_id}: texts their own My on-call link from the office line, through the same
+//                 gates as every caregiver text, never 9pm to 8am; a refused or failed text says why and raises "Didn't go
+//                 through". Switch off: refused, nothing sent. Recorded in oncall_invites.
+//   oncall_invite_link {caregiver_ax}: their link to copy and hand over (recorded too).
+//   Every on-call action takes a caregiver as 'ax:<AxisCare id>' wherever it takes a PRN member's applicant_id; the calendar, the
+//   people list, payroll and "On call now" include the invited caregivers.
 //   goback_mark   {applicant_id, ref, answer: yes | no}: the office read an answer to "Would you be glad to go back?" (step 3).
 //   client_mark   {ref, kind: intro_planned | not_this_one}: a "no PRN backup who knows them" line, planned or set aside for
 //                 the month. Planning only records it: a person gets the family's OK and schedules it in AxisCare.
@@ -78,6 +87,8 @@ import { MO_FROM } from '../_shared/office-from.ts'   // every text goes out fro
 import { computeWeek, memberSigns, onCallWeekends, onCallMonth, THANKS_DEFAULT, PATTERNS, SHIFTS, SHIFT_SHORT, type Member } from '../_shared/prn-week.ts'
 import { pageLines, lookingState } from '../_shared/prn-page.ts'
 import { makePageLink, pageExpiry } from '../_shared/prn-page-links.ts'
+import { makeOncallLink, oncallExpiry } from '../_shared/oncall-links.ts'
+import { readCensus } from '../_shared/axis-census.ts'
 import { welcomeLines, readCall, callSummary, WELCOME_DEFAULT } from '../_shared/prn-welcome.ts'
 import { visitsOf } from '../_shared/axis-visits.ts'
 import { familiarClients, noBackup, weekLines, GOBACK_DEFAULT, FAMILIAR_DAYS, type Familiar } from '../_shared/prn-familiar.ts'
@@ -85,7 +96,7 @@ import { monthFacts, readDraft, lastMonth, isMonth, monthWord, monthlyText, mont
 import { keptMessage } from '../_shared/prn-page-texts.ts'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
 import { readMentor, readAsk, mentorLive, SKILLS, KINDS } from '../_shared/prn-mentor.ts'
-import { calendar, payMonth, blockOf, signedCurrent, termsText, termsVersion, onCallNow, holdFor, outcomeFor, takeBackOnMiss, onCallAsk, slotsOf, fillPlan, endPlan, seriesView, seriesWord, weekdayOf, SLOT_WORD, MISS_KINDS, OUTCOMES, HOLD_MIN } from '../_shared/prn-oncall.ts'
+import { withKeys, personCols, isCaregiverKey, inviteList, inviteText, isLevel3, INVITE_DEFAULT, calendar, payMonth, blockOf, signedCurrent, termsText, termsVersion, onCallNow, holdFor, outcomeFor, takeBackOnMiss, onCallAsk, slotsOf, fillPlan, endPlan, seriesView, seriesWord, weekdayOf, SLOT_WORD, MISS_KINDS, OUTCOMES, HOLD_MIN } from '../_shared/prn-oncall.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
@@ -116,8 +127,20 @@ async function members(sb: any): Promise<Member[]> {
 // deno-lint-ignore no-explicit-any
 async function onCallRecords(sb: any, ids: string[]): Promise<{ ok: boolean; marks: Any[]; terms: Any[] }> {
   if (!ids.length) return { ok: true, marks: [], terms: [] }
-  const [mk, tm] = await Promise.all([sb.from('prn_oncall_marks').select('*').in('applicant_id', ids).order('at'), sb.from('prn_oncall_terms').select('applicant_id, version, typed_name, agreed_at').in('applicant_id', ids)])
-  return { ok: !mk.error && !tm.error, marks: mk.error ? [] : (mk.data ?? []), terms: tm.error ? [] : (tm.data ?? []) }
+  /* read whole (small tables) and keep these people: PRN members by applicant id, caregivers as 'ax:<id>' */
+  const [mk, tm] = await Promise.all([sb.from('prn_oncall_marks').select('*').order('at'), sb.from('prn_oncall_terms').select('*')])
+  const keep = (rows: Any[]) => withKeys(rows).filter((r) => ids.includes(r.applicant_id))
+  return { ok: !mk.error && !tm.error, marks: mk.error ? [] : keep(mk.data ?? []), terms: tm.error ? [] : keep(tm.data ?? []) }
+}
+/* C1/C6: the invited caregivers, as on-call people beside the PRN CNA Team (their latest invite gives the name). Missing table =
+   the caregiver SQL isn't in yet: none. */
+// deno-lint-ignore no-explicit-any
+async function invitedCaregivers(sb: any): Promise<Member[]> {
+  const { data, error } = await sb.from('oncall_invites').select('caregiver_ax, name, at').order('at')
+  if (error) return []
+  const by = new Map<string, Any>()
+  for (const r of data ?? []) by.set(S(r.caregiver_ax, 12), r)
+  return [...by.values()].map((r: Any) => ({ applicant_id: 'ax:' + S(r.caregiver_ax, 12), name: S(r.name, 120) || 'A caregiver', first: firstOf(r.name), team: 'oncall', since: '', axiscare_id: S(r.caregiver_ax, 12), linked_at: null } as unknown as Member))
 }
 
 /* W1/W2: add the next weeks of every confirmed every-week shift (4 weeks ahead). Missing table = the every-week SQL isn't in
@@ -132,10 +155,10 @@ async function fillOnCall(sb: any, by: string): Promise<{ ok: boolean; added: nu
     if (!(se.data ?? []).length) return { ok: true, added: 0, skipped: 0, failed: 0 }
     const rows = await sb.from('prn_oncall').select('*').in('kind', ['confirmed', 'asked']).gte('end_date', t)
     if (rows.error) return { ok: false, added: 0, skipped: 0, failed: 0, why: 'could not read the on-call shifts' }
-    const plan = fillPlan({ series: se.data ?? [], rows: rows.data ?? [], today: t, nowNaive: chicagoNow() })
+    const plan = fillPlan({ series: withKeys(se.data ?? []), rows: withKeys(rows.data ?? []), today: t, nowNaive: chicagoNow() })
     let added = 0, failed = 0
     for (const k of plan.add) {
-      const { error } = await sb.from('prn_oncall').insert({ applicant_id: k.applicant_id, kind: 'confirmed', start_date: k.date, end_date: k.date, shift: k.slot, series_id: k.series_id, note: 'Every week', by_email: 'every-week', by_name: by })
+      const { error } = await sb.from('prn_oncall').insert({ ...personCols(k.applicant_id), kind: 'confirmed', start_date: k.date, end_date: k.date, shift: k.slot, series_id: k.series_id, note: 'Every week', by_email: 'every-week', by_name: by })
       if (!error) added++; else if (!/duplicate|unique/i.test(error.message)) failed++
     }
     return { ok: failed === 0, added, skipped: plan.skipped.length, failed }
@@ -168,6 +191,18 @@ Deno.serve(async (req) => {
   const mem = await members(sb)
   const memberOf = (aid: unknown) => mem.find((m) => m.applicant_id === S(aid, 40)) || null
   const onCallExtras = (ids: string[]) => onCallRecords(sb, ids)
+  /* on-call people: the PRN CNA Team and the invited Level 3 caregivers (read once, when an on-call action needs them) */
+  let ocMemCache: Member[] | null = null
+  const ocMem = async () => ocMemCache ??= [...mem.filter((m) => m.team === 'cna'), ...(await invitedCaregivers(sb))]
+  const ocMemberOf = async (key: unknown) => (await ocMem()).find((m) => m.applicant_id === S(key, 40)) || null
+  const phoneOf = async (m: Member): Promise<string | null> => {
+    const roster = list(await readKey(sb, 'caregivers'))
+    const cg = m.axiscare_id ? roster.find((c: Any) => String(c?.axiscare_id ?? '') === m.axiscare_id) : null
+    if (normalisePhone(cg?.phone)) return normalisePhone(cg?.phone)
+    if (isCaregiverKey(m.applicant_id)) return null
+    const { data: app } = await sb.from('job_applicants').select('phone').eq('id', m.applicant_id).maybeSingle()
+    return normalisePhone(app?.phone) || null
+  }
 
   if (action === 'week') {
     const ids = mem.map((m) => m.applicant_id)
@@ -175,7 +210,7 @@ Deno.serve(async (req) => {
     const [sh, tc, oc] = ids.length ? await Promise.all([
       sb.from('prn_shift_log').select('*').in('applicant_id', ids),
       sb.from('prn_touches').select('*').in('applicant_id', ids),
-      sb.from('prn_oncall').select('*').in('applicant_id', ids).order('at')]) : [{ data: [] }, { data: [] }, { data: [] }]
+      sb.from('prn_oncall').select('*').order('at')]) : [{ data: [] }, { data: [] }, { data: [] }]
     if (tc.error || oc.error) return json({ error: 'The PRN week records are not set up yet (prn_week.sql).' }, 500)
     const kindTo: Record<string, string> = {}
     for (const k of list(await readKey(sb, 'kind_tells'))) for (const t of list(k?.tells)) { const ax = S(t?.caregiver_ax, 20); if (ax && S(t?.at) > (kindTo[ax] || '')) kindTo[ax] = S(t.at) }
@@ -223,12 +258,13 @@ Deno.serve(async (req) => {
           looking: lookingState(mine, t).on, checkins: ckr.error ? [] : (ckr.data ?? []), asks: m.axiscare_id ? asksBy[m.axiscare_id] || [] : [], today: t }) }
     }
     const wk = computeWeek({ members: mem, shifts: sh.data ?? [], touches: tc.data ?? [], kindTo, wantsMore, cases, today: t, sender: who.name, thanksTmpl: st.prn_thanks_msg, extra })
-    const oncall = onCallWeekends(oc.data ?? [], mem, t)
+    const ocRows = withKeys(oc.data ?? []), people = await ocMem(), ocIds = people.map((m) => m.applicant_id)
+    const oncall = onCallWeekends((oc.data ?? []).filter((r: Any) => r.applicant_id), mem, t)
     /* the on-call calendar (her decisions 22 to 27): missing tables = the calendar SQL isn't in yet; the calendar still shows */
-    const ocx = await onCallExtras(ids)
+    const ocx = await onCallExtras(ocIds)
     const tv = termsVersion(termsText(st))
-    const se = ids.length ? await sb.from('prn_oncall_series').select('*').in('applicant_id', ids).in('status', ['asked', 'confirmed']) : { data: [], error: null }
-    const series: Any[] = se.error ? [] : (se.data ?? [])
+    const se = await sb.from('prn_oncall_series').select('*').in('status', ['asked', 'confirmed'])
+    const series: Any[] = se.error ? [] : withKeys(se.data ?? []).filter((x) => ocIds.includes(x.applicant_id))
     return json({ ok: true, today: t, live: st.prn_week_live === true, thanks_live: st.prn_thanks_live === true, owner: S(st.prn_week_owner, 80) || 'Krystal',
       thanks_default: THANKS_DEFAULT, items: wk.items, more: wk.more,
       members: mem.map((m) => ({ applicant_id: m.applicant_id, name: m.name, team: m.team, axiscare_id: m.axiscare_id, familiar: familiar[m.applicant_id] || { clients: [], why: null }, page: page[m.applicant_id] || null })),
@@ -238,13 +274,13 @@ Deno.serve(async (req) => {
       goback_live: st.prn_goback_live === true, goback_default: GOBACK_DEFAULT, welcome_live: st.prn_welcome_live === true, welcome_default: WELCOME_DEFAULT,
       oncall: { ...oncall, patterns: PATTERNS, stipend: null, shifts: SHIFTS, shift_live: st.prn_oncall_shift_live === true,
         /* for payroll: this month and last month, by shift (counts only) */
-        payroll: [t.slice(0, 7), new Date(Date.parse(t.slice(0, 7) + '-01T12:00:00Z') - 86_400_000).toISOString().slice(0, 7)].map((mo) => ({ month: mo, members: ocx.ok ? payMonth(oc.data ?? [], ocx.marks, mem, mo) : onCallMonth(oc.data ?? [], mem, mo) })),
-        calendar: calendar({ rows: oc.data ?? [], marks: ocx.marks, members: mem, today: t, series }), slot_words: SLOT_WORD, miss_kinds: MISS_KINDS,
-        series: seriesView(series, mem), weekly_ready: !se.error, fill: filled,
+        payroll: [t.slice(0, 7), new Date(Date.parse(t.slice(0, 7) + '-01T12:00:00Z') - 86_400_000).toISOString().slice(0, 7)].map((mo) => ({ month: mo, members: ocx.ok ? payMonth(ocRows, ocx.marks, people, mo) : onCallMonth(oc.data ?? [], mem, mo) })),
+        calendar: calendar({ rows: ocRows, marks: ocx.marks, members: people, today: t, series }), slot_words: SLOT_WORD, miss_kinds: MISS_KINDS,
+        series: seriesView(series, people), invite_live: st.prn_oncall_invite_live === true, weekly_ready: !se.error, fill: filled,
         records_ready: ocx.ok, signup_live: st.prn_oncall_signup_live === true, first_live: st.prn_oncall_first_live === true, hold_min: HOLD_MIN,
         terms_version: tv, terms: termsText(st),
-        people: mem.filter((m) => m.team === 'cna').map((m) => { const sig = ocx.terms.filter((x: Any) => x.applicant_id === m.applicant_id).sort((a: Any, b: Any) => S(a.agreed_at).localeCompare(S(b.agreed_at))).pop()
-          return { applicant_id: m.applicant_id, name: m.name, signed: signedCurrent(ocx.terms, m.applicant_id, tv), signed_at: sig?.agreed_at || null, signed_old: !!sig && sig.version !== tv,
+        people: people.map((m) => { const sig = ocx.terms.filter((x: Any) => x.applicant_id === m.applicant_id).sort((a: Any, b: Any) => S(a.agreed_at).localeCompare(S(b.agreed_at))).pop()
+          return { applicant_id: m.applicant_id, name: m.name, caregiver: m.team === 'oncall', signed: signedCurrent(ocx.terms, m.applicant_id, tv), signed_at: sig?.agreed_at || null, signed_old: !!sig && sig.version !== tv,
             ...blockOf(ocx.marks, m.applicant_id) } }) } })
   }
 
@@ -382,8 +418,10 @@ Deno.serve(async (req) => {
       if (data.cancelled_at) return json({ error: 'That ask was already answered or taken back.' }, 409)
       ask = data
     }
-    const m = memberOf(ask ? ask.applicant_id : b.applicant_id); if (!m) return json({ error: 'That person is not on a PRN Team.' }, 404)
-    if (m.team !== 'cna') return json({ error: 'On call is for the PRN CNA Team only.' }, 422)
+    if (ask) ask = withKeys([ask])[0]
+    const m = await ocMemberOf(ask ? ask.applicant_id : b.applicant_id)
+    if (!m) return memberOf(ask ? ask.applicant_id : b.applicant_id) ? json({ error: 'On call is for the PRN CNA Team only. If they work at Level 3, invite them to on call from AxisCare instead.' }, 422)
+      : json({ error: 'That person is not on the PRN CNA Team or invited to on call.' }, 404)
     const note = S(b.note, 300) || null
     /* every week (W1): an every-week ask, or the office putting someone on a shift every week */
     let series: Any = null
@@ -407,22 +445,22 @@ Deno.serve(async (req) => {
       const r = await onCallExtras([m.applicant_id])
       if (!r.ok) return json({ error: 'The on-call records are not set up yet (prn_oncall_calendar.sql).' }, 500)
       if (blockOf(r.marks, m.applicant_id).blocked) return json({ error: `${m.name} can't be put on call: they missed an on-call shift. An owner can let them sign up again.` }, 409)
-      if (!signedCurrent(r.terms, m.applicant_id, termsVersion(termsText(st)))) return json({ error: `${m.first || m.name} hasn't signed the current On-Call Expectations yet. They sign on their PRN Team page before their first on-call shift.` }, 409)
+      if (!signedCurrent(r.terms, m.applicant_id, termsVersion(termsText(st)))) return json({ error: `${m.first || m.name} hasn't signed the current On-Call Expectations yet. They sign on their ${m.team === 'oncall' ? 'My on-call' : 'PRN Team'} page before their first on-call shift.` }, 409)
     }
     /* one person per shift */
     const want = slotsOf({ start_date: s, end_date: e, shift })
     const { data: near } = await sb.from('prn_oncall').select('*').eq('kind', 'confirmed').is('cancelled_at', null).gte('end_date', s).lte('start_date', e)
-    const clash = (near ?? []).find((r: Any) => slotsOf(r).some((x) => want.some((w) => w.date === x.date && w.slot === x.slot)))
+    const clash = withKeys(near ?? []).find((r: Any) => slotsOf(r).some((x) => want.some((w) => w.date === x.date && w.slot === x.slot)))
     if (clash && clash.applicant_id === m.applicant_id) return json({ outcome: 'already' })
-    if (clash) return json({ error: `${memberOf(clash.applicant_id)?.name || 'Someone else'} is already on call then. Take theirs back first if it should change.` }, 409)
+    if (clash) return json({ error: `${(await ocMemberOf(clash.applicant_id))?.name || 'Someone else'} is already on call then. Take theirs back first if it should change.` }, 409)
     const nowIso = new Date().toISOString()
     if (everyWeek) {
-      const { data: sr, error: se } = await sb.from('prn_oncall_series').insert({ applicant_id: m.applicant_id, slot: shift, weekday: weekdayOf(s), first_date: s, status: 'confirmed', note,
+      const { data: sr, error: se } = await sb.from('prn_oncall_series').insert({ ...personCols(m.applicant_id), slot: shift, weekday: weekdayOf(s), first_date: s, status: 'confirmed', note,
         by_email: who.email, by_name: who.name, confirmed_at: nowIso, confirmed_by: who.name || who.email }).select('*').maybeSingle()
       if (se || !sr) return json(/duplicate|unique/i.test(se?.message || '') ? { error: `${m.first || m.name} already has ${seriesWord({ first_date: s, slot: shift })} every week.` } : { error: 'Could not record it: ' + (se?.message || 'no record') }, /duplicate|unique/i.test(se?.message || '') ? 409 : 500)
       series = sr
     }
-    const { error } = await sb.from('prn_oncall').insert({ applicant_id: m.applicant_id, kind: 'confirmed', start_date: s, end_date: e, note, by_email: who.email, by_name: who.name, ...(shift ? { shift } : {}), ...(ask ? { ask_id: ask.id } : {}), ...(series ? { series_id: series.id } : {}) })
+    const { error } = await sb.from('prn_oncall').insert({ ...personCols(m.applicant_id), kind: 'confirmed', start_date: s, end_date: e, note, by_email: who.email, by_name: who.name, ...(shift ? { shift } : {}), ...(ask ? { ask_id: ask.id } : {}), ...(series ? { series_id: series.id } : {}) })
     if (error) {
       if (everyWeek && series) await endSeries(sb, series.id, who.name || who.email, 'Its first week could not be saved')
       return json(/duplicate|unique/i.test(error.message) ? { outcome: 'already' } : { error: 'Could not record it: ' + error.message }, /duplicate|unique/i.test(error.message) ? 200 : 500)
@@ -447,8 +485,8 @@ Deno.serve(async (req) => {
     if (error) return json({ error: 'Could not take it back: ' + error.message }, 500)
     /* an every-week ask: "Not this one" ends it. A confirmed week taken back is that week only (the series goes on). */
     if (row.kind === 'asked' && row.series_id != null) await endSeries(sb, row.series_id, who.name || who.email, 'Not this one', ['asked'])
-    const m = memberOf(row.applicant_id)
-    await opEvent(sb, { verb: row.kind === 'asked' ? 'prn_oncall_declined' : 'prn_oncall_cancelled', actor_name: who.name, actor_email: who.email, item_id: row.applicant_id, area: 'caregivers',
+    const m = await ocMemberOf(withKeys([row])[0].applicant_id)
+    await opEvent(sb, { verb: row.kind === 'asked' ? 'prn_oncall_declined' : 'prn_oncall_cancelled', actor_name: who.name, actor_email: who.email, item_id: withKeys([row])[0].applicant_id, area: 'caregivers',
       summary: row.kind === 'asked' ? `${m?.name || 'A PRN member'}'s on-call ask ${row.start_date} (${SHIFT_SHORT[row.shift] || row.shift}): not this one` : `On call ${row.start_date} to ${row.end_date} taken back for ${m?.name || 'a PRN member'}` })
     return json({ outcome: 'cancelled' })
   }
@@ -461,40 +499,95 @@ Deno.serve(async (req) => {
     const { data: row } = await sb.from('prn_oncall').select('*').eq('id', id).maybeSingle()
     if (!row || row.kind !== 'confirmed') return json({ error: 'No such on-call shift.' }, 404)
     if (row.cancelled_at) return json({ error: 'That on-call shift was taken back.' }, 409)
-    const m = memberOf(row.applicant_id); if (!m) return json({ error: 'That person is no longer on a PRN Team.' }, 404)
+    const m = await ocMemberOf(withKeys([row])[0].applicant_id); if (!m) return json({ error: 'That person is no longer on the PRN CNA Team or invited to on call.' }, 404)
     const caseId = S(b.case_id, 80) || null
     const kase = caseId ? list(await readKey(sb, 'coverage_cases')).find((c: Any) => S(c?.id, 80) === caseId) : null
     if (caseId && !kase) return json({ error: 'That open shift is no longer on the board.' }, 404)
     if (!caseId && kind === 'covering') return json({ error: 'Covering which shift? Use the button on the open shift.' }, 400)
-    const { error } = await sb.from('prn_oncall_marks').insert({ applicant_id: m.applicant_id, oncall_id: id, kind, case_id: caseId, note: S(b.note, 600) || null, by_email: who.email, by_name: who.name })
+    const { error } = await sb.from('prn_oncall_marks').insert({ ...personCols(m.applicant_id), oncall_id: id, kind, case_id: caseId, note: S(b.note, 600) || null, by_email: who.email, by_name: who.name })
     if (error) return json(/duplicate|unique/i.test(error.message) ? { outcome: 'already' } : { error: 'Not saved: ' + error.message }, /duplicate|unique/i.test(error.message) ? 200 : 500)
     const when = `${row.start_date} (${SHIFT_SHORT[row.shift] || 'on call'})`
     if (MISS_KINDS[kind]) {
-      const { data: theirs } = await sb.from('prn_oncall').select('*').eq('applicant_id', m.applicant_id)
-      const back = takeBackOnMiss(theirs ?? [], m.applicant_id, id, today()), failed: string[] = []
+      const pc = personCols(m.applicant_id)
+      const { data: theirs } = pc.caregiver_ax ? await sb.from('prn_oncall').select('*').eq('caregiver_ax', pc.caregiver_ax) : await sb.from('prn_oncall').select('*').eq('applicant_id', m.applicant_id)
+      const back = takeBackOnMiss(withKeys(theirs ?? []), m.applicant_id, id, today()), failed: string[] = []
       for (const r of back) {
         const { error: ce } = await sb.from('prn_oncall').update({ cancelled_at: new Date().toISOString(), cancelled_by: `Taken back after a missed on-call shift (${who.name || who.email})` }).eq('id', r.id).is('cancelled_at', null)
         if (ce) failed.push(`${r.start_date} ${SHIFT_SHORT[r.shift] || ''}`.trim())
       }
       /* W5: a miss ends every every-week shift of theirs (its future weeks were just taken back above) */
-      const { data: theirSeries } = await sb.from('prn_oncall_series').select('id').eq('applicant_id', m.applicant_id).in('status', ['asked', 'confirmed'])
+      const { data: theirSeries } = pc.caregiver_ax ? await sb.from('prn_oncall_series').select('id').eq('caregiver_ax', pc.caregiver_ax).in('status', ['asked', 'confirmed'])
+        : await sb.from('prn_oncall_series').select('id').eq('applicant_id', m.applicant_id).in('status', ['asked', 'confirmed'])
       for (const x of theirSeries ?? []) await endSeries(sb, x.id, who.name || who.email, 'Ended after a missed on-call shift')
       await opEvent(sb, { verb: 'prn_oncall_missed', actor_name: who.name, actor_email: who.email, item_id: m.applicant_id, area: 'caregivers',
         summary: `${m.name}: ${MISS_KINDS[kind].toLowerCase()} on call ${when}. Not paid for it; can't sign up again; ${back.length} future on-call shift${back.length === 1 ? '' : 's'} taken back`, data: { case_id: caseId } })
-      const { data: app } = await sb.from('job_applicants').select('phone').eq('id', m.applicant_id).maybeSingle()
+      const phone = await phoneOf(m)
       return json({ outcome: 'missed', taken_back: back.filter((r) => !failed.includes(`${r.start_date} ${SHIFT_SHORT[r.shift] || ''}`.trim())).map((r) => ({ date: r.start_date, shift: r.shift, kind: r.kind })),
-        failed, name: m.name, phone: normalisePhone(app?.phone) || null })
+        failed, name: m.name, phone })
     }
     await opEvent(sb, { verb: 'prn_oncall_covering', actor_name: who.name, actor_email: who.email, item_id: m.applicant_id, area: 'caregivers', summary: `${m.name} (on call ${when}) is covering ${firstOf(kase?.client) || 'the open shift'}`, data: { case_id: caseId } })
     /* their Yes on the case, so the board shows it and the office confirms it the usual way (puts them on the AxisCare visit) */
     let onCase = 'not_open'
     if (kase && kase.status === 'open') {
-      const { data: app } = await sb.from('job_applicants').select('phone').eq('id', m.applicant_id).maybeSingle()
-      const ask = onCallAsk({ id: crypto.randomUUID(), name: m.name, phone: normalisePhone(app?.phone) || null, ax: m.axiscare_id, key: `${S(kase.shift_date, 10)}|${S(kase.shift_time, 20)}`, now: new Date().toISOString(), by: who.name })
+      const ask = onCallAsk({ id: crypto.randomUUID(), name: m.name, phone: await phoneOf(m), ax: m.axiscare_id, key: `${S(kase.shift_date, 10)}|${S(kase.shift_time, 20)}`, now: new Date().toISOString(), by: who.name })
       const { data: held, error: he } = await sb.rpc('coverage_case_add_ask', { p_id: caseId, p_ask: ask })
       onCase = he ? 'failed' : String(held || 'failed')
     }
     return json({ outcome: 'covering', on_case: onCase, linked: !!m.axiscare_id })
+  }
+
+  /* C1 to C7: invite our Level 3 caregivers to on call */
+  if (action === 'oncall_invites' || action === 'oncall_invite_send' || action === 'oncall_invite_link') {
+    const census = await readCensus()
+    if (!census.ok) return json({ error: "AxisCare's caregiver list couldn't be read just now (" + census.error + '). Try again in a minute.' }, 503)
+    const prnAx = mem.filter((m) => m.team === 'cna' && m.axiscare_id).map((m) => String(m.axiscare_id))
+    const [inv, oc, mk, tm] = await Promise.all([sb.from('oncall_invites').select('*').order('at'), sb.from('prn_oncall').select('*').gte('end_date', today()),
+      sb.from('prn_oncall_marks').select('*'), sb.from('prn_oncall_terms').select('*')])
+    if (inv.error) return json({ error: 'The invite records are not set up on the server yet (the Desktop step for caregiver on call).', ready: false }, 500)
+    const people = inviteList({ census: census.rows, prnAx, invites: inv.data ?? [], terms: tm.data ?? [], rows: oc.data ?? [], marks: mk.data ?? [], version: termsVersion(termsText(st)), today: today() })
+    if (action === 'oncall_invites') return json({ ok: true, live: st.prn_oncall_invite_live === true, people, message: S(st.prn_oncall_invite_msg, 1000) || INVITE_DEFAULT, truncated: census.truncated })
+    const cax = S(b.caregiver_ax, 12), p = people.find((x) => x.caregiver_ax === cax)
+    if (!p) return json({ error: 'That caregiver is not active at Level 3 in AxisCare (or is on the PRN CNA Team), so they can\'t be invited.' }, 404)
+    const secret = Deno.env.get('HUB_JOB_SECRET') ?? ''
+    if (secret.length < 32) return json({ error: 'Page links are not set up on this project.' }, 500)
+    const link = await makeOncallLink(secret, cax, oncallExpiry())
+    if (action === 'oncall_invite_link') {
+      const { error } = await sb.from('oncall_invites').insert({ caregiver_ax: cax, name: p.name, via: 'link', message: null, by_email: who.email, by_name: who.name })
+      if (error) return json({ error: 'Could not record it: ' + error.message }, 500)
+      await opEvent(sb, { verb: 'oncall_invite_link', actor_name: who.name, actor_email: who.email, item_id: 'ax:' + cax, area: 'caregivers', summary: `${who.name} copied ${p.name}'s My on-call link` })
+      return json({ outcome: 'link', link, live: st.prn_oncall_invite_live === true })
+    }
+    /* oncall_invite_send */
+    if (st.prn_oncall_invite_live !== true) return json({ outcome: 'off', error: 'Caregiver on-call invites are switched off (Settings, PRN Teams). Nothing was sent.' }, 409)
+    const hour = Number(new Date().toLocaleString('en-US', { timeZone: 'America/Chicago', hour: '2-digit', hour12: false })) % 24
+    if (!sendHour(hour)) return json({ outcome: 'night', error: 'Caregivers are not texted between 9pm and 8am. Nothing was sent; send it in the morning.' }, 409)
+    const sendId = S(b.send_id, 64); if (!/^[a-z0-9-]{8,64}$/i.test(sendId)) return json({ error: 'bad send id' }, 400)
+    const draft = S(b.message, 1000).replace(/\r\n/g, '\n')
+    const message = inviteText(draft, p.first, link)
+    if (message.includes('\u2014')) return json({ error: 'Please use a comma or a period instead of an em dash.' }, 400)
+    if (message.length > MAX_TEXT) return json({ error: `The message is ${message.length} characters with the link; keep it under ${MAX_TEXT}.` }, 400)
+    const g = census.rows.find((r) => r.id === cax)
+    const phone = normalisePhone(g?.phone)
+    if (!phone) return json({ outcome: 'no_phone', error: `${p.name} has no usable phone number in AxisCare. Nothing was sent. Copy the link instead.` }, 422)
+    const ghl = { token: Deno.env.get('GHL_TOKEN') || Deno.env.get('GHL_API_KEY') || '', locationId: Deno.env.get('GHL_LOCATION_ID') ?? '' }
+    if (!ghl.token || !ghl.locationId) return json({ error: 'GoHighLevel is not configured. Nothing was sent.' }, 502)
+    const dest = await maySendTo(sb, phone)
+    let refusal: string[] = []
+    const contact = await contactForOutbound(sb, ghl, { phone, firstName: g?.first, lastName: g?.last }, 'routine_internal',
+      { audience: 'caregiver', channel: 'sms', sender: 'oncall-invite', humanInitiated: true, onOptOut: (r: string[]) => { refusal = r } })
+    if (!contact) {
+      const why = refusal.length ? `${p.name} has asked not to get texts (${refusal.join('; ')})`
+        : !dest.allowed ? `${p.name}'s phone number isn't cleared for texting (${dest.reason})`
+        : 'the opt-out check could not be completed (GoHighLevel did not answer). Try again in a minute'
+      await opEvent(sb, { verb: 'oncall_invite_refused', actor_name: who.name, actor_email: who.email, item_id: 'ax:' + cax, area: 'caregivers', summary: `On-call invite to ${p.name} not sent`, data: { why } })
+      return json({ outcome: 'refused', error: `Not sent: ${why}.` }, 422)
+    }
+    const ok = await ghlSendChecked(sb, { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' }, 'oncall-invite',
+      { channel: 'sms', contactId: contact.contactId, address: phone, who: p.name }, { message, fromNumber: MO_FROM })
+    if (!ok) return json({ outcome: 'failed', error: `Not sent: GoHighLevel didn't take it. It's on Needs Attention as "Didn't go through".` }, 502)
+    const { error } = await sb.from('oncall_invites').insert({ caregiver_ax: cax, name: p.name, via: 'text', message: keptMessage(message, link), by_email: who.email, by_name: who.name })
+    await opEvent(sb, { verb: 'oncall_invite_sent', actor_name: who.name, actor_email: who.email, item_id: 'ax:' + cax, area: 'caregivers', summary: `${who.name} invited ${p.name} to on call`, data: { send_id: sendId } })
+    return json({ outcome: 'sent', warning: error ? 'The text was sent, but it could not be recorded: ' + error.message : null })
   }
 
   if (action === 'oncall_fill') return json(await fillOnCall(sb, who.name || who.email))
@@ -505,7 +598,7 @@ Deno.serve(async (req) => {
     const { data: sr } = await sb.from('prn_oncall_series').select('*').eq('id', id).maybeSingle()
     if (!sr) return json({ error: 'No such every-week shift.' }, 404)
     if (sr.status === 'ended') return json({ outcome: 'already' })
-    const m = memberOf(sr.applicant_id), note = S(b.note, 300)
+    const m = await ocMemberOf(withKeys([sr])[0].applicant_id), note = S(b.note, 300)
     const { data: rows } = await sb.from('prn_oncall').select('*').eq('series_id', id)
     const plan = endPlan({ seriesId: id, rows: rows ?? [], nowNaive: chicagoNow() })
     if (!(await endSeries(sb, id, who.name || who.email, note ? 'They called to stop it: ' + note : 'They called to stop it'))) return json({ error: 'Not saved. Please try again.' }, 500)
@@ -516,18 +609,18 @@ Deno.serve(async (req) => {
     }
     /* its waiting first-week ask, if the office never confirmed it */
     for (const r of (rows ?? []).filter((r: Any) => r.kind === 'asked' && !r.cancelled_at)) await sb.from('prn_oncall').update({ cancelled_at: new Date().toISOString(), cancelled_by: `Every week ended (${who.name || who.email})` }).eq('id', r.id).is('cancelled_at', null)
-    await opEvent(sb, { verb: 'prn_oncall_series_ended', actor_name: who.name, actor_email: who.email, item_id: sr.applicant_id, area: 'caregivers',
+    await opEvent(sb, { verb: 'prn_oncall_series_ended', actor_name: who.name, actor_email: who.email, item_id: withKeys([sr])[0].applicant_id, area: 'caregivers',
       summary: `${m?.name || 'A PRN member'}: every week ended (${seriesWord(sr)}). ${plan.cancel.length} week${plan.cancel.length === 1 ? '' : 's'} taken back${plan.kept.length ? ', ' + plan.kept.length + ' within 24 hours stays theirs' : ''}` })
     return json({ outcome: 'ended', taken_back: plan.cancel.map((r: Any) => r.start_date).filter((d: string) => !failed.includes(d)), kept: plan.kept.map((r: Any) => ({ date: r.start_date, shift: r.shift })), failed })
   }
 
   if (action === 'oncall_lift') {
     if (!(who.roles || []).includes('owner_admin')) return json({ error: 'Only an owner can let someone sign up for on call again.' }, 403)
-    const m = memberOf(b.applicant_id); if (!m) return json({ error: 'That person is not on a PRN Team.' }, 404)
+    const m = await ocMemberOf(b.applicant_id); if (!m) return json({ error: 'That person is not on the PRN CNA Team or invited to on call.' }, 404)
     const reason = S(b.reason, 600); if (reason.length < 3) return json({ error: 'Say why they can sign up again.' }, 400)
     const r = await onCallExtras([m.applicant_id])
     if (!blockOf(r.marks, m.applicant_id).blocked) return json({ outcome: 'not_blocked' })
-    const { error } = await sb.from('prn_oncall_marks').insert({ applicant_id: m.applicant_id, kind: 'lifted', note: reason, by_email: who.email, by_name: who.name })
+    const { error } = await sb.from('prn_oncall_marks').insert({ ...personCols(m.applicant_id), kind: 'lifted', note: reason, by_email: who.email, by_name: who.name })
     if (error) return json({ error: 'Not saved: ' + error.message }, 500)
     await opEvent(sb, { verb: 'prn_oncall_lifted', actor_name: who.name, actor_email: who.email, item_id: m.applicant_id, area: 'caregivers', summary: `${who.name} let ${m.name} sign up for on call again: ${reason}` })
     return json({ outcome: 'lifted' })
@@ -535,16 +628,16 @@ Deno.serve(async (req) => {
 
   /* decision 26: open shifts that start during someone's on-call time */
   if (action === 'oncall_now') {
-    const cna = mem.filter((m) => m.team === 'cna'), ids = cna.map((m) => m.applicant_id)
+    const people = await ocMem(), ids = people.map((m) => m.applicant_id)
     const open = list(await readKey(sb, 'coverage_cases')).filter((c: Any) => c?.status === 'open')
     if (!ids.length || !open.length) return json({ ok: true, live: st.prn_oncall_first_live === true, cases: [] })
-    const [{ data: rows }, ocx] = await Promise.all([sb.from('prn_oncall').select('*').in('applicant_id', ids).eq('kind', 'confirmed').is('cancelled_at', null), onCallExtras(ids)])
-    const { data: apps } = await sb.from('job_applicants').select('id, phone').in('id', ids)
+    const [{ data: rows }, ocx] = await Promise.all([sb.from('prn_oncall').select('*').eq('kind', 'confirmed').is('cancelled_at', null), onCallExtras(ids)])
     const out: Any[] = []
     for (const c of open) {
-      const n = onCallNow({ c, rows: rows ?? [], marks: ocx.marks, members: mem }); if (!n) continue
+      const n = onCallNow({ c, rows: withKeys(rows ?? []), marks: ocx.marks, members: people }); if (!n) continue
       const o = outcomeFor(ocx.marks, S(c.id, 80)), h = holdFor({ c, now: n, marks: ocx.marks, nowMs: Date.now() })
-      out.push({ case_id: c.id, ...n, phone: normalisePhone((apps ?? []).find((x: Any) => x.id === n.applicant_id)?.phone) || null,
+      const pm = people.find((m) => m.applicant_id === n.applicant_id)
+      out.push({ case_id: c.id, ...n, caregiver: isCaregiverKey(n.applicant_id), phone: pm ? await phoneOf(pm) : null,
         outcome: o ? { kind: o.kind, word: OUTCOMES[o.kind], by: o.by_name || null, at: o.at } : null, hold_until: st.prn_oncall_first_live === true ? h.until : null })
     }
     return json({ ok: true, live: st.prn_oncall_first_live === true, records_ready: ocx.ok, hold_min: HOLD_MIN, cases: out })

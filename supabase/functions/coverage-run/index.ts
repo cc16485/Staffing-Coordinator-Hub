@@ -70,7 +70,7 @@ import { conflictsFor, readRange, wallMin, workingNow, withWorkingNow } from '..
 import { onBreak } from '../_shared/prn-break.ts'
 import { openCandidates, eligibleOn, openView, interestAsk, interestCardLine, interestOfficeText, isOngoing as prnOngoingCase, keptOff as prnKeptOff } from '../_shared/prn-open.ts'   // PRN step 5b
 import { visitMatches } from '../_shared/shift-offer.ts'
-import { onCallNow, holdFor } from '../_shared/prn-oncall.ts'   // PRN on-call calendar, decision 26
+import { onCallNow, holdFor, withKeys } from '../_shared/prn-oncall.ts'   // PRN on-call calendar, decision 26; caregivers on call (2026-10-30)
 import { lookingState } from '../_shared/prn-page.ts'   // 2026-10-29: the ask list's "Looking for hours" tag
 import { axisReader } from '../_shared/axis-reader.ts'
 
@@ -661,7 +661,7 @@ async function onCallHoldFor(c: any, st: any): Promise<{ hold: boolean; until: s
   try {
     const d = String(c.shift_date).slice(0, 10), back = new Date(Date.parse(d + 'T12:00:00Z') - 7 * 86_400_000).toISOString().slice(0, 10)
     const [oc, mk, tr] = await Promise.all([
-      sb.from('prn_oncall').select('id, applicant_id, kind, start_date, end_date, shift, cancelled_at').eq('kind', 'confirmed').is('cancelled_at', null).gte('end_date', back).lte('start_date', d),
+      sb.from('prn_oncall').select('*').eq('kind', 'confirmed').is('cancelled_at', null).gte('end_date', back).lte('start_date', d),
       sb.from('prn_oncall_marks').select('oncall_id, kind, case_id, at'),
       sb.from('pay_tracks').select('applicant_id, track, team, axiscare_caregiver_id').eq('track', 'prn_team')])
     if (oc.error || mk.error || tr.error || !(oc.data ?? []).length) return none
@@ -672,7 +672,12 @@ async function onCallHoldFor(c: any, st: any): Promise<{ hold: boolean; until: s
     const members = (tr.data ?? []).map((t: any) => { const a = (apps ?? []).find((x: any) => x.id === t.applicant_id) || {}
       return { applicant_id: t.applicant_id, team: t.team === 'caregiver' ? 'caregiver' : 'cna', axiscare_id: t.axiscare_caregiver_id ? String(t.axiscare_caregiver_id) : null,
         name: [a.first_name, a.last_name].filter(Boolean).join(' ') || 'the on-call CNA', first: String(a.first_name || '').split(' ')[0] } })
-    const now = onCallNow({ c, rows: oc.data ?? [], marks: mk.data ?? [], members })
+    /* our Level 3 caregivers on call too (2026-10-30, C1); no invite records yet = none */
+    const inv = await sb.from('oncall_invites').select('caregiver_ax, name')
+    // deno-lint-ignore no-explicit-any
+    for (const r of inv.error ? [] : (inv.data ?? []) as any[]) if (!members.some((m: any) => m.applicant_id === 'ax:' + r.caregiver_ax))
+      members.push({ applicant_id: 'ax:' + r.caregiver_ax, team: 'oncall', axiscare_id: String(r.caregiver_ax), name: String(r.name || 'the on-call caregiver'), first: String(r.name || '').split(' ')[0] })
+    const now = onCallNow({ c, rows: withKeys(oc.data ?? []), marks: mk.data ?? [], members })
     const h = holdFor({ c, now, marks: mk.data ?? [], nowMs: Date.now() })
     return { hold: h.hold, until: h.until, name: now?.name ?? null }
   } catch { return none }

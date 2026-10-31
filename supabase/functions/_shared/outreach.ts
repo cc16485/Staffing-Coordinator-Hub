@@ -234,6 +234,10 @@ export const SENDER_REGISTER: Record<string, { class: OutreachClass; why: string
     why: 'PRN step 6 (Samantha 2026-10-28 decision 7): the monthly PRN Team update, a short text with their own page link, sent '
       + 'when an office person taps Send in PRN Teams (never 9pm to 8am, enforced in prn-week); each member at most once a month. '
       + 'Off until ops_settings.prn_monthly_live, and only while the PRN Team page is open.' },
+  'oncall-invite':      { class: 'routine_internal', scheduled: false,
+    why: 'On call for our caregivers (Samantha 2026-10-30, Krystal\'s idea, Level 3 only): one text inviting a Level 3 caregiver to '
+      + 'sign up for on-call shifts, with their own My on-call link, sent when an office person taps Send invite on the On call tab '
+      + '(never 9pm to 8am, enforced in prn-week). Off until ops_settings.prn_oncall_invite_live.' },
   'family-offer':       { class: 'urgent_internal', scheduled: true,
     why: 'a visit a family booked in the family app is offered to caregivers, each with their own link: the family\'s picks first '
       + '(4 hours), then the team in waves of 5; first yes goes on the schedule (Samantha 2026-10-16). Caregivers only, the '
