@@ -4,8 +4,8 @@
 // =============================================================================
 // Public (no login; deploy with --no-verify-jwt): the caregiver opens it from their own sealed link (_shared/oncall-links.ts,
 // 30 days). Anything forged or expired is refused. Office staff open it read-only with their Hub sign-in (preview {caregiver_ax}).
-//   view      {c, e, t}: what on call is, the On-Call Expectations to sign, the calendar (today plus 4 weeks, daytime 7am to 5pm and
-//             overnight 5pm to 7am) with Just this one / Every week, and their shifts. Never another person's name, never pay.
+//   view      {c, e, t}: what on call is, the On-Call Expectations to sign, the calendar (today plus 4 weeks, daytime 7am to 7pm and
+//             overnight 7pm to 7am) with Just this one / Every week, and their shifts. Never another person's name, never pay.
 //   preview   {caregiver_ax} + a Hub sign-in: the same page, read-only.
 //   sign      {c, e, t, agree: true, typed_name, version}: they read and signed the expectations (the exact words kept).
 //   ask       {c, e, t, slots: [{date, slot, weekly?}]}: asks for open shifts; the office confirms each (an every-week one once).
@@ -19,7 +19,7 @@ import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { checkOncallLink } from '../_shared/oncall-links.ts'
 import { ax } from '../_shared/axiscare-caregiver.ts'
 import { MO_FROM } from '../_shared/office-from.ts'
-import { memberSlots, blockOf, readAsks, readSign, signedCurrent, termsText, termsVersion, seriesView, weekdayOf, withKeys, isLevel3,
+import { memberSlots, blockOf, readAsks, readSign, signedCurrent, termsText, termsVersion, seriesView, weekdayOf, withKeys, isLevel3, offeredOf, offeredWords,
   SLOT_WORD, DAYS_AHEAD, GIVE_BACK_HOURS } from '../_shared/prn-oncall.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
@@ -34,7 +34,7 @@ const digits10 = (p: unknown) => { const d = String(p ?? '').replace(/\D/g, '');
 async function readKey(sb: any, key: string): Promise<Any> { const { data } = await sb.from('app_data').select('data').eq('key', key).maybeSingle(); return data?.data ?? null }
 const officePhone = () => { const d = digits10(MO_FROM); return d ? `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}` : '(417) 234-8494' }
 const rowsOf = (x: Any): Any[] => Array.isArray(x) ? x : (x && typeof x === 'object' ? Object.values(x) : [])
-export const ONCALL_ABOUT = 'On call means keeping your phone close during a daytime (7am to 5pm) or overnight (5pm to 7am) shift. If a caregiver can\'t make it, the office calls you first. You\'re paid for each on-call shift, plus your pay for any shift you cover. Sign up for the shifts that fit your life, one time or every week. Once you\'re on call, families are counting on you.'
+export const ONCALL_ABOUT = 'On call means keeping your phone close during a daytime (7am to 7pm) or overnight (7pm to 7am) shift. If a caregiver can\'t make it, the office calls you first. You\'re paid for each on-call shift, plus your pay for any shift you cover. Sign up for the shifts that fit your life, one time or every week. Once you\'re on call, families are counting on you.'
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
@@ -82,7 +82,7 @@ Deno.serve(async (req) => {
   if (action === 'view' || action === 'preview') {
     return json({ ok: true, preview: action === 'preview', waiting: !live, first, today: t, about: ONCALL_ABOUT, office: officePhone(),
       signup: { ready: true, terms: text, version: ver, signed, signed_before: terms.length > 0, blocked, slot_words: SLOT_WORD, days: DAYS_AHEAD, give_back_hours: GIVE_BACK_HOURS,
-        slots: memberSlots({ rows, aid: key, today: t, nowNaive: nowNaive(), series }), weekly_ready: true, weekly: seriesView(series) } })
+        slots: memberSlots({ rows, aid: key, today: t, nowNaive: nowNaive(), series, offered: offeredOf(st) }), weekly_ready: true, weekly: seriesView(series), offered_words: offeredWords(offeredOf(st)) } })
   }
 
   if (action === 'sign') {
@@ -104,7 +104,7 @@ Deno.serve(async (req) => {
   if (action === 'ask') {
     if (blocked) return json({ error: "On call isn't open to you right now. Call the office with any questions." }, 409)
     if (!signed) return json({ error: 'Please read and sign the On-Call Expectations first.', sign: true }, 409)
-    const r = readAsks(b, { rows, aid: key, today: t, nowNaive: nowNaive(), series }); if (!r.ok) return json({ error: r.error }, 409)
+    const r = readAsks(b, { rows, aid: key, today: t, nowNaive: nowNaive(), series, offered: offeredOf(st) }); if (!r.ok) return json({ error: r.error }, 409)
     let added = 0
     for (const sl of r.slots) {
       let seriesId: number | null = null

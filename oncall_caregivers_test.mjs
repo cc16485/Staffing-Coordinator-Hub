@@ -50,7 +50,7 @@ const AXG = { 501: { id: 501, firstName: 'Maria', lastName: 'Lopez', status: { a
   505: { id: 505, firstName: 'Ned', lastName: 'Optout', status: { active: true }, classes: [{ label: 'Level 3' }], mobilePhone: OPTED },
   11: { id: 11, firstName: 'Grace', lastName: 'Hill', status: { active: true }, classes: [{ label: 'Level 3' }, { label: 'PRN TEAM - CNA' }], mobilePhone: '4175550101' } }
 const reset = (settings = {}) => { EVENTS = []; SENT = []; NID = 100; AXDOWN = false; T = {
-  app_data: [{ key: 'ops_settings', data: { prn_page_live: true, prn_oncall_signup_live: true, ...settings } }, { key: 'coverage_cases', data: [] }, { key: 'caregivers', data: [{ axiscare_id: '501', phone: '4175550501' }] }],
+  app_data: [{ key: 'ops_settings', data: { prn_page_live: true, prn_oncall_signup_live: true, prn_oncall_offered: Object.fromEntries(['sun','mon','tue','wed','thu','fri','sat'].flatMap((d) => [[d + ':day', true], [d + ':overnight', true]])), ...settings } }, { key: 'coverage_cases', data: [] }, { key: 'caregivers', data: [{ axiscare_id: '501', phone: '4175550501' }] }],
   pay_tracks: [{ applicant_id: GRACE, track: 'prn_team', team: 'cna', since: dayN(-60), axiscare_caregiver_id: '11' }],
   job_applicants: [{ id: GRACE, first_name: 'Grace', last_name: 'Hill', phone: '4175550101', prn: {} }],
   prn_shift_log: [], prn_touches: [], prn_oncall: [], prn_oncall_series: [], prn_oncall_marks: [], prn_page_log: [], prn_monthly: [], oncall_invites: [],

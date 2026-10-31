@@ -9,7 +9,7 @@ const PW = await import(path.join(process.cwd(), F, '_shared/prn-week.ts'))
 const R = await import(path.join(process.cwd(), F, '_shared/prn-recognition.ts'))
 
 /* ── 1. the rules ── */
-ck('the three shifts, as the office reads them', JSON.stringify(PW.SHIFTS) === '{"day":"Daytime, 7am to 5pm","overnight":"Overnight, 5pm to 7am","whole":"Whole day, 24 hours"}')
+ck('the three shifts, as the office reads them', JSON.stringify(PW.SHIFTS) === '{"day":"Daytime, 7am to 7pm","overnight":"Overnight, 7pm to 7am","whole":"Whole day, 24 hours"}')   // times since 2026-10-30
 const M = [{ applicant_id: 'g', name: 'Grace Hill', team: 'cna' }, { applicant_id: 'd', name: 'Denise Gough', team: 'cna' }]
 const C = (aid, s, e, shift, o = {}) => ({ kind: 'confirmed', applicant_id: aid, start_date: s, end_date: e, shift, ...o })
 const pay = PW.onCallMonth([C('g', '2026-11-07', '2026-11-08', 'overnight'), C('g', '2026-11-14', '2026-11-14', 'whole'), C('d', '2026-10-31', '2026-11-01', 'day'),
@@ -78,7 +78,7 @@ try {
   ck('...with a shift: kept on the date', r.j.outcome === 'recorded' && T.prn_oncall[0].shift === 'overnight' && EVENTS.some((e) => /\(overnight\)$/.test(e.summary)), [T.prn_oncall, EVENTS])
   reset(); r = await call({ action: 'oncall_confirm', applicant_id: GRACE, start_date: sat, end_date: sun, shift: 'evening' }); ck('...an unknown shift: refused', r.status === 400 && !T.prn_oncall.length)
   reset({ prn_oncall_shift_live: true }); r = await call({ action: 'oncall_confirm', applicant_id: GRACE, start_date: sat, end_date: sun })
-  ck('switch on: a confirm must say which shift', r.status === 400 && /daytime \(7am to 5pm\), overnight \(5pm to 7am\) or the whole day/.test(r.j.error) && !T.prn_oncall.length, r.j)
+  ck('switch on: a confirm must say which shift', r.status === 400 && /daytime \(7am to 7pm\), overnight \(7pm to 7am\) or the whole day/.test(r.j.error) && !T.prn_oncall.length, r.j)
   r = await call({ action: 'oncall_confirm', applicant_id: GRACE, start_date: sat, end_date: sun, shift: 'whole' })
   r = await call({ action: 'week' })
   const wk = r.j.oncall.weekends.find((x) => x.saturday === sat)
