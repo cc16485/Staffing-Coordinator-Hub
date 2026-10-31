@@ -73,6 +73,15 @@ try:
     out = open(rep).read() if os.path.exists(rep) else p.stdout + p.stderr
     ck("runs from a fresh copy against the throwaway Postgres: exit 0, LOOKED, every read worked", p.returncode == 0 and "RESULT: LOOKED · nothing was changed." in out and "✗" not in out, out[-2500:])
     sys.path.insert(0, WT); import oncall_need_1215 as N
+    class Bad(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a): pass
+        def do_POST(self):
+            self.send_response(401); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(b'{"message":"Unauthorized"}')
+    bsrv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Bad); threading.Thread(target=bsrv.serve_forever, daemon=True).start()
+    rep2 = os.path.join(TMP, "r2.txt")
+    p2 = subprocess.run([sys.executable, os.path.join(WT, "oncall_need_1215.py")], cwd=WT, env=dict(env, SB_REPORT=rep2, SB_API_BASE=f"http://127.0.0.1:{bsrv.server_address[1]}"), capture_output=True, text=True, timeout=120)
+    out2 = open(rep2).read() if os.path.exists(rep2) else p2.stdout + p2.stderr
+    ck("a token Supabase won't accept: stops at once and says how to fix it", p2.returncode == 3 and "didn't accept the access token" in out2 and out2.count("✗") == 1, out2[-800:])
     ck("read only: every statement it sent is a single SELECT, and it refuses anything else", SENT and all(N.is_select_only(q) for q in SENT)
        and not N.is_select_only("update public.app_data set data = '[]'") and not N.is_select_only("select 1; delete from public.app_data") and not N.is_select_only("select upsert_app_data_item('x', '{}')"), [q[:80] for q in SENT if not N.is_select_only(q)])
     ck("no names: nobody's name from the cases appears", "Ann Bee" not in out and "Cal Dee" not in out)

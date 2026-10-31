@@ -213,7 +213,13 @@ def main():
 
     start("WHICH ON-CALL SHIFTS ARE NEEDED MOST (READ ONLY)")
     say(f"PART 1 · READ ONLY (nothing changes). Shifts starting {since} to today, Chicago time. 'day' = 7am-5pm start, 'night' = 5pm-7am start.")
-    ex = (read("which records exist", Q_EXISTS) or [{}])[0]
+    okE, exr = sql(REF, Q_EXISTS)
+    if not okE or not exr:
+        w = str(exr).lower()
+        bad("couldn't read the Hub's records. " + ("Supabase didn't accept the access token (it may have expired or been revoked). Make a new one at supabase.com/dashboard/account/tokens and run this again."
+            if ("unauthorized" in w or "jwt" in w or "401" in w or ("invalid" in w and "token" in w)) else "Supabase answered: " + str(exr)[:200]))
+        say("  STOP. Nothing was changed."); done(3)
+    ex = exr[0]
 
     # ---- A. coverage cases ------------------------------------------------------------------------------------------
     cases = read("coverage cases", q_cases(ex.get("prn_log"), ex.get("tracks"), ex.get("vh"))) or []
