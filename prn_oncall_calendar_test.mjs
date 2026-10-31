@@ -91,8 +91,8 @@ const n = O.onCallNow({ c: K({ shift_time: '09:00-13:00' }), rows, marks: [], me
 const opened = Date.parse('2026-11-02T14:00:00Z')
 ck(`...the automatic texts wait until the office records the call, at most ${O.HOLD_MIN} minutes after the case opened`,
   O.holdFor({ c: K({ opened_at: new Date(opened).toISOString() }), now: n, marks: [], nowMs: opened + 5 * 60000 }).hold
-  && O.holdFor({ c: K({ opened_at: new Date(opened).toISOString() }), now: n, marks: [], nowMs: opened + 5 * 60000 }).until === new Date(opened + 20 * 60000).toISOString()
-  && !O.holdFor({ c: K({ opened_at: new Date(opened).toISOString() }), now: n, marks: [], nowMs: opened + 21 * 60000 }).hold
+  && O.holdFor({ c: K({ opened_at: new Date(opened).toISOString() }), now: n, marks: [], nowMs: opened + 5 * 60000 }).until === new Date(opened + O.HOLD_MIN * 60000).toISOString()
+  && !O.holdFor({ c: K({ opened_at: new Date(opened).toISOString() }), now: n, marks: [], nowMs: opened + (O.HOLD_MIN + 1) * 60000 }).hold
   && !O.holdFor({ c: K({ opened_at: new Date(opened).toISOString() }), now: n, marks: [{ case_id: 'cv1', kind: 'no_answer', at: 'x' }], nowMs: opened + 5 * 60000 }).hold
   && !O.holdFor({ c: K({ opened_at: '' }), now: n, marks: [], nowMs: opened }).hold && !O.holdFor({ c: K(), now: null, marks: [], nowMs: opened }).hold)
 ck('...the latest outcome on a case wins (a yes, then a miss)', O.outcomeFor([{ case_id: 'cv1', kind: 'covering', at: '1' }, { case_id: 'cv1', kind: 'not_covered', at: '2' }, { case_id: 'cv2', kind: 'covering', at: '3' }], 'cv1').kind === 'not_covered')
@@ -263,7 +263,7 @@ const cr = fs.readFileSync(path.join(F, 'coverage-run/index.ts'), 'utf8')
 const sweep = cr.slice(cr.indexOf('const onCallHold ='), cr.indexOf('const onCallHold =') + 600)
 ck('coverage-run: the sweep\'s waves wait for the on-call call (never a manual send)', /sendLive && !manualSelect && !planHold && !onCallHold && !hasYes/.test(cr) && /!manualSelect/.test(sweep))
 ck('...Cara\'s waves wait too, logged once', /if \(step\.do === 'wave' && c\) \{\s*\/\*[^*]*\*\/\s*const och = await onCallHoldFor\(c, st\)/.test(cr) && /return 'held_oncall'/.test(cr))
-const fnSrc = cr.slice(cr.indexOf('async function onCallHoldFor'), cr.indexOf('/* CI1 (2026-10-03): the caregiver night rule'))
+const fnSrc = cr.slice(cr.indexOf('async function onCallFor('), cr.indexOf('/* CI1 (2026-10-03): the caregiver night rule'))
 ck('...only with prn_oncall_first_live on; any record it can\'t read = no hold', /prn_oncall_first_live !== true/.test(fnSrc) && /if \(oc\.error \|\| mk\.error \|\| tr\.error/.test(fnSrc) && /catch \{ return none \}/.test(fnSrc))
 ck('no em dashes in anything people read', !/—/.test([fs.readFileSync(path.join(F, '_shared/prn-oncall.ts'), 'utf8'), fs.readFileSync(path.join(F, 'prn-week/index.ts'), 'utf8'), fs.readFileSync(path.join(F, 'prn-page/index.ts'), 'utf8')].join('').replace(/\/\/[^\n]*|\/\*[\s\S]*?\*\//g, '').replace("/—/.test(message)", '')))
 

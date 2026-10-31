@@ -70,7 +70,7 @@ import { conflictsFor, readRange, wallMin, workingNow, withWorkingNow } from '..
 import { onBreak } from '../_shared/prn-break.ts'
 import { openCandidates, eligibleOn, openView, interestAsk, interestCardLine, interestOfficeText, isOngoing as prnOngoingCase, keptOff as prnKeptOff } from '../_shared/prn-open.ts'   // PRN step 5b
 import { visitMatches } from '../_shared/shift-offer.ts'
-import { onCallNow, holdFor, withKeys } from '../_shared/prn-oncall.ts'   // PRN on-call calendar, decision 26; caregivers on call (2026-10-30)
+import { onCallNow, holdFor, noAnswerDue, oncallText, noAnswerText, withKeys } from '../_shared/prn-oncall.ts'   // PRN on-call calendar, decision 26; caregivers on call (2026-10-30)
 import { lookingState } from '../_shared/prn-page.ts'   // 2026-10-29: the ask list's "Looking for hours" tag
 import { axisReader } from '../_shared/axis-reader.ts'
 
@@ -650,13 +650,14 @@ async function appendAskFresh(caseId: string, entry: any): Promise<any | null> {
 /* CI2 (2026-10-03): an office text's board address becomes the admin's own call-in link. A template that already
    says {link} keeps it; one that ends with the board's address (cc.mo-care.com...) has it swapped for {link}. */
 const linkTemplate = (t: string) => /\{link\}/.test(t) ? t : (/(https?:\/\/)?cc\.mo-care\.com\S*\s*$/.test(t) ? t.replace(/(https?:\/\/)?cc\.mo-care\.com\S*\s*$/, '{link}') : t)
-/* PRN ON-CALL FIRST (Samantha 2026-10-29, decision 26): a shift that starts during a PRN CNA's confirmed on-call time is
-   called to them first, by the office. The automatic texts (the sweep's waves and Cara's waves) wait until the office records
-   how the call went (prn-week oncall_mark), at most HOLD_MIN minutes after the case opened. Manual sends are never held.
-   Switch ops_settings.prn_oncall_first_live (off: nothing waits). Any record that can't be read = no hold (the texts go). */
+/* PRN ON-CALL FIRST (Samantha 2026-10-29, decision 26; 2026-10-31 her picks): a shift that falls in someone's confirmed on-call
+   time goes to them first: they get a text at once (the on-call dispatch in the run below) and the office calls them. Cara's
+   waves wait until how it went is recorded or they answer the text, at most HOLD_MIN (15) minutes from the text. Manual sends
+   are never held. Switch ops_settings.prn_oncall_first_live (off: nothing waits, nobody is texted). Any record that can't be
+   read = no on-call person (the normal asks go). */
 // deno-lint-ignore no-explicit-any
-async function onCallHoldFor(c: any, st: any): Promise<{ hold: boolean; until: string | null; name: string | null }> {
-  const none = { hold: false, until: null, name: null }
+async function onCallFor(c: any, st: any): Promise<{ now: any | null; marks: any[]; phone: string | null }> {
+  const none = { now: null, marks: [], phone: null }
   if (st?.prn_oncall_first_live !== true || !c?.shift_date) return none
   try {
     const d = String(c.shift_date).slice(0, 10), back = new Date(Date.parse(d + 'T12:00:00Z') - 7 * 86_400_000).toISOString().slice(0, 10)
@@ -667,20 +668,27 @@ async function onCallHoldFor(c: any, st: any): Promise<{ hold: boolean; until: s
     if (oc.error || mk.error || tr.error || !(oc.data ?? []).length) return none
     // deno-lint-ignore no-explicit-any
     const ids = (tr.data ?? []).map((t: any) => t.applicant_id)
-    const { data: apps } = await sb.from('job_applicants').select('id, first_name, last_name').in('id', ids)
+    const { data: apps } = ids.length ? await sb.from('job_applicants').select('id, first_name, last_name, phone').in('id', ids) : { data: [] }
     // deno-lint-ignore no-explicit-any
     const members = (tr.data ?? []).map((t: any) => { const a = (apps ?? []).find((x: any) => x.id === t.applicant_id) || {}
       return { applicant_id: t.applicant_id, team: t.team === 'caregiver' ? 'caregiver' : 'cna', axiscare_id: t.axiscare_caregiver_id ? String(t.axiscare_caregiver_id) : null,
-        name: [a.first_name, a.last_name].filter(Boolean).join(' ') || 'the on-call CNA', first: String(a.first_name || '').split(' ')[0] } })
+        name: [a.first_name, a.last_name].filter(Boolean).join(' ') || 'the on-call CNA', first: String(a.first_name || '').split(' ')[0], phone: normalisePhone(a.phone) || null } })
     /* our Level 3 caregivers on call too (2026-10-30, C1); no invite records yet = none */
     const inv = await sb.from('oncall_invites').select('caregiver_ax, name')
     // deno-lint-ignore no-explicit-any
     for (const r of inv.error ? [] : (inv.data ?? []) as any[]) if (!members.some((m: any) => m.applicant_id === 'ax:' + r.caregiver_ax))
-      members.push({ applicant_id: 'ax:' + r.caregiver_ax, team: 'oncall', axiscare_id: String(r.caregiver_ax), name: String(r.name || 'the on-call caregiver'), first: String(r.name || '').split(' ')[0] })
+      members.push({ applicant_id: 'ax:' + r.caregiver_ax, team: 'oncall', axiscare_id: String(r.caregiver_ax), name: String(r.name || 'the on-call caregiver'), first: String(r.name || '').split(' ')[0], phone: null })
     const now = onCallNow({ c, rows: withKeys(oc.data ?? []), marks: mk.data ?? [], members })
-    const h = holdFor({ c, now, marks: mk.data ?? [], nowMs: Date.now() })
-    return { hold: h.hold, until: h.until, name: now?.name ?? null }
+    // deno-lint-ignore no-explicit-any
+    const m = now ? members.find((x: any) => x.applicant_id === now.applicant_id) : null
+    return { now, marks: mk.data ?? [], phone: m?.phone ?? null }
   } catch { return none }
+}
+// deno-lint-ignore no-explicit-any
+async function onCallHoldFor(c: any, st: any): Promise<{ hold: boolean; until: string | null; name: string | null }> {
+  const o = await onCallFor(c, st)
+  const h = holdFor({ c, now: o.now, marks: o.marks, nowMs: Date.now() })
+  return { hold: h.hold, until: h.until, name: o.now?.name ?? null }
 }
 /* CI1 (2026-10-03): the caregiver night rule, the same one the automatic waves use (9pm to 8am Chicago, from
    ops_settings.coverage_quiet_from/until), now applied on the server to a coordinator's send too: held at night unless
@@ -1451,7 +1459,7 @@ async function caraAdvance(caseId: string, st: any): Promise<string> {
         const asked0 = Array.isArray(c.asked) ? c.asked : []
         const p2 = await buildCandidatesForCase(c, { v2: true })
         const all2 = [...p2.group0, ...p2.prn_other, ...p2.group1, ...p2.group2, ...p2.prn_ongoing]
-        const judged = judgeForWaves(all2, c, { minsToStart: m, ongoing: isOngoingCase(c), sameTime: st.cara_same_time_live === true, groupFirst: st.prn_order_live === true })
+        const judged = judgeForWaves(all2, c, { minsToStart: m, ongoing: isOngoingCase(c), sameTime: st.cara_same_time_live === true, groupFirst: st.prn_order_live === true, clientLevel: p2.client_level ?? null })
         const since0 = (Number(cur.wave) || 0) - (Number(cur.wave_base) || 0)
         const v2pick = pickWaveV2(judged.ordered, asked0, { size: rules.size, wavesLeft: Math.max(1, rules.maxWaves - since0), urgent: m != null && m <= 1440,
           partSlots: Number.isFinite(Number(st.cara_wave_part_slots)) ? Math.max(0, Math.min(rules.size, Number(st.cara_wave_part_slots))) : 2 })
@@ -1536,7 +1544,7 @@ async function scheduleConflicts(c: any): Promise<{ checked: boolean; held: stri
 async function askListFor(kase: any, st: any): Promise<{ groups: any; meta: any }> {
   const p = await buildCandidatesForCase(kase, { v2: true, includeAsked: true })
   const judged = judgeForWaves([...p.group0, ...p.prn_other, ...p.group1, ...p.group2, ...p.prn_ongoing, ...(p.needs_verification || [])], kase,
-    { minsToStart: minsToStart(kase, chiNowNaive()), ongoing: isOngoingCase(kase), sameTime: st?.cara_same_time_live === true, groupFirst: st?.prn_order_live === true })
+    { minsToStart: minsToStart(kase, chiNowNaive()), ongoing: isOngoingCase(kase), sameTime: st?.cara_same_time_live === true, groupFirst: st?.prn_order_live === true, clientLevel: p.client_level ?? null })
   const groups = threeGroups(kase, judged.ordered, judged.excluded, p.excluded)
   /* 2026-10-29 (plan section 5): PRN members who tapped "I'm looking for hours" on their page carry a "Looking for hours" tag
      in whichever group they are in. It never changes the order or who is asked. A read that fails = no tags. */
@@ -1610,7 +1618,7 @@ function sendableOf(pool: any): any[] {
    asked on this case is never texted again), and the ask taken back if the text fails. Cara's asks are marked auto and with
    their wave; a coordinator's are picked_by_coordinator, as before. */
 // deno-lint-ignore no-explicit-any
-async function sendAsksTo(kase: any, st: any, sendable: any[], extra: { askedBy?: string | null; caraWave?: number; caraRunNo?: number } = {}):
+async function sendAsksTo(kase: any, st: any, sendable: any[], extra: { askedBy?: string | null; caraWave?: number; caraRunNo?: number; oncall?: { oncall_id: unknown; message: string; phone: string | null } } = {}):
   Promise<{ sent: string[]; failed: string[]; already: string[] }> {
   const ghl2 = { token: Deno.env.get('GHL_TOKEN') ?? '', locationId: Deno.env.get('GHL_LOCATION_ID') ?? '' }
   if (!ghl2.token || !ghl2.locationId) return { sent: [], failed: sendable.map((x) => `${x.name} (GHL credentials not set)`), already: [] }
@@ -1673,7 +1681,7 @@ async function sendAsksTo(kase: any, st: any, sendable: any[], extra: { askedBy?
 
   const sent: string[] = [], failed: string[] = [], already: string[] = []
   for (const x of sendable) {
-    const phone = phoneOf(String(x.name))
+    const phone = phoneOf(String(x.name)) || (extra.oncall ? extra.oncall.phone : null)
     if (!phone) { failed.push(`${x.name} (no phone on the roster)`); continue }
     const contact = await contactForOutbound(sb, ghl2,
       { phone, firstName: x.first || x.name }, 'urgent_internal', { audience: 'caregiver', channel: 'sms', sender: 'coverage-run' })
@@ -1681,7 +1689,9 @@ async function sendAsksTo(kase: any, st: any, sendable: any[], extra: { askedBy?
     const askId = uid()
     let message = fillMsg(String(kase.kind) === 'interest' ? tmplInt
       : x.prn_ask ? (st.prn_order_live === true ? prnStep1Template(st, kase, x.history?.visits ? x.history.last : null) : tmplP) : (x.tier === 1 ? tmpl1 : tmplO), x)
-    const lk = linkFor(st, kase, x.axiscare_id, x.name)
+    /* 2026-10-31: the on-call text (its own words, no shift link or bonus) */
+    if (extra.oncall) message = extra.oncall.message
+    const lk = extra.oncall ? null : linkFor(st, kase, x.axiscare_id, x.name)
     let linked: 'live' | 'pilot' | null = null
     if (lk && LINK_SECRET.length >= 32 && linkEnd) {
       const kindT = x.prn_ask ? 'prn' : x.tier === 1 ? 'tier1' : isSameDay ? 'sameday' : 'other'
@@ -1701,7 +1711,7 @@ async function sendAsksTo(kase: any, st: any, sendable: any[], extra: { askedBy?
     }
     /* LAST-MINUTE BONUS (Samantha 2026-10-24: "also give the option of adding a bonus for last minute shifts"): an amount the
        office set on this case goes into every ask from then on (never on an interest check), and is kept on the ask */
-    const bonusAmt = String(kase.kind) !== 'interest' ? bonusOf(kase) : 0
+    const bonusAmt = String(kase.kind) !== 'interest' && !extra.oncall ? bonusOf(kase) : 0
     if (bonusAmt) message = withBonus(message, bonusAmt)
     /* CI1: the ask is recorded BEFORE the text goes, under the case's lock, only if this person (same number or
        AxisCare id) hasn't been asked on this case: two coordinators sending at once text them once. */
@@ -1713,7 +1723,8 @@ async function sendAsksTo(kase: any, st: any, sendable: any[], extra: { askedBy?
       offered_for: `${String(kase.shift_date || '')}|${String(kase.shift_time || '')}`,   /* the hours this ask was sent for (2026-10-24) */
       ...(bonusAmt ? { bonus: bonusAmt } : {}),
       /* CI2: who asked, when the call-in page sent it (server to server, with the owner key) */
-      ...(extra.askedBy ? { asked_by: extra.askedBy } : {}) }
+      ...(extra.askedBy ? { asked_by: extra.askedBy } : {}),
+      ...(extra.oncall ? { from_oncall: true, oncall_id: extra.oncall.oncall_id, prn: true, picked_by_coordinator: false, auto: true } : {}) }
     const { data: held, error: holdErr } = await sb.rpc('coverage_case_add_ask', { p_id: String(kase.id), p_ask: ask })
     if (holdErr || held !== 'added') {
       if (held === 'already_asked') already.push(String(x.name))
@@ -2158,7 +2169,7 @@ Deno.serve(async (req) => {
       const mE = minsToStart(kase, chiNowNaive())
       const p2 = await buildCandidatesForCase(kase, { v2: true })
       const judged = judgeForWaves([...p2.group0, ...p2.prn_other, ...p2.group1, ...p2.group2, ...p2.prn_ongoing, ...(p2.needs_verification || [])], kase,
-        { minsToStart: mE, ongoing: isOngoingCase(kase), sameTime: st.cara_same_time_live === true, groupFirst: st.prn_order_live === true })
+        { minsToStart: mE, ongoing: isOngoingCase(kase), sameTime: st.cara_same_time_live === true, groupFirst: st.prn_order_live === true, clientLevel: p2.client_level ?? null })
       const asked0 = Array.isArray(kase.asked) ? kase.asked : []
       const everyone = pickWaveV2(judged.ordered, asked0, { size: 500, wavesLeft: 1, urgent: false })
       const night = caregiverNightHold(kase, st)
@@ -2180,6 +2191,38 @@ Deno.serve(async (req) => {
       await opEvent(sb, { actor_email: whoEmail, actor_name: whoName, via: 'hub', verb: 'ask_everyone', item_id: String(kase.id), area: 'coverage',
         summary: `${whoName} asked everyone eligible (${sent.length}) for ${caseWhat(kase)}` })
       return jr({ sent, failed, already_asked: already, refused: (Array.isArray(body.names) ? body.names.length : 0) - wanted.length })
+    }
+
+    /* TEXT THE PRN TEAMS (Samantha 2026-10-31: "a clear way to send to PRN CNA team and/or PRN Caregiver team if there isn't
+       an on-call"). {teams: ['cna','caregiver'], preview?, send?}: everyone on those teams the safety rules allow for this shift
+       (the same list and checks as Ask everyone: not working then, not over 40 hours, the level, Do Not Return, already asked,
+       their own days and times), in Cara's order. Preview first; send texts them through the same ask. The night hold
+       applies. The on-call person was already asked, so never twice. */
+    if (body.action === 'send_prn') {
+      const teams = (Array.isArray(body.teams) ? body.teams : []).map((t: unknown) => String(t)).filter((t: string) => t === 'cna' || t === 'caregiver')
+      if (!teams.length) return jr({ error: 'Which team: the PRN CNA Team, the PRN Caregiver Team, or both?' }, 400)
+      const { data: setR } = await sb.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
+      // deno-lint-ignore no-explicit-any
+      const st: any = setR?.data ?? {}
+      if (isOngoingCase(kase)) return jr({ error: 'The PRN teams are asked about one-time shifts, not ongoing openings.' }, 409)
+      const p2 = await buildCandidatesForCase(kase, { v2: true })
+      // deno-lint-ignore no-explicit-any
+      const prnRows = [...p2.group0, ...p2.prn_other].filter((x: any) => x.prn_pref && teams.includes(String(x.prn_pref.team || 'cna')))
+      const judged = judgeForWaves(prnRows, kase, { minsToStart: minsToStart(kase, chiNowNaive()), ongoing: false, sameTime: st.cara_same_time_live === true, groupFirst: true, clientLevel: p2.client_level ?? null })
+      const asked0 = Array.isArray(kase.asked) ? kase.asked : []
+      const askedIds = new Set(asked0.map((a: { axiscare_id?: unknown }) => String(a?.axiscare_id ?? '')).filter(Boolean))
+      const people = judged.ordered.filter((j) => !askedIds.has(String(j.row.axiscare_id ?? '')))
+      const night = caregiverNightHold(kase, st)
+      const view = { teams, client_level: p2.client_level ?? null, names: people.map((j) => ({ name: String(j.row.name), team: String(j.row.prn_pref?.team || 'cna'), note: j.note })),
+        left_out: judged.excluded.slice(0, 40), held_night: night, send_live: st.coverage_send_live === true }
+      if (body.send !== true) return jr(view)
+      if (st.coverage_send_live !== true) return jr({ error: 'sending is switched off (ops_settings.coverage_send_live), nothing sent' }, 409)
+      if (night) return jr({ error: 'held: caregivers are not texted 9pm to 8am unless the shift starts within 3 hours. Nothing was sent; call them.', held_night: true }, 409)
+      if (!people.length) return jr({ ...view, sent: [], failed: [], already_asked: [], note: 'Nobody on those teams can be asked for this shift (see who was left out and why).' })
+      const { sent, failed, already } = await sendAsksTo(kase, st, people.map((j) => ({ ...j.row, tier: 0, prn_ask: true })))
+      await opEvent(sb, { actor_email: whoEmail, actor_name: whoName, via: 'hub', verb: 'ask_prn_teams', item_id: String(kase.id), area: 'coverage',
+        summary: `${whoName} texted the ${teams.length === 2 ? 'PRN CNA and PRN Caregiver Teams' : teams[0] === 'cna' ? 'PRN CNA Team' : 'PRN Caregiver Team'} (${sent.length}) for ${caseWhat(kase)}` })
+      return jr({ ...view, sent, failed, already_asked: already })
     }
 
     if (body.action === 'follow_up') {
@@ -2506,6 +2549,48 @@ Deno.serve(async (req) => {
     if (c?.open_hours === true) continue
     const cands = await candidatesFor(c)
 
+    /* ── ON CALL FIRST (2026-10-31, Samantha: "when there is a call in we need to send it to the on-call person if there is
+       on-call signed up for that day"; her picks: text them at once and the office calls; at 15 minutes with no answer the Hub
+       asks the office to record it with one tap). Once per on-call person per case. Never anyone AxisCare has working then
+       (her top rule): they are skipped with the reason and the normal asks go. AxisCare unreadable = not texted (the office
+       still calls them). Switches ops_settings.prn_oncall_first_live and prn_oncall_text_live (its own, off until she turns it on). */
+    try {
+      if ((caller === 'cron' || commit) && c.kind !== 'interest' && !isOngoingCase(c) && !c.pending_fill && settings.prn_oncall_first_live === true && settings.prn_oncall_text_live === true) {
+        const oc = await onCallFor(c, settings)
+        const d0 = c.oncall_dispatch
+        if (oc.now && (!d0 || String(d0.oncall_id) !== String(oc.now.oncall_id))) {
+          const base = { oncall_id: oc.now.oncall_id, applicant_id: oc.now.applicant_id, name: oc.now.name, first: oc.now.first, slot_word: oc.now.slot_word, at: nowIso() }
+          let rec: Record<string, unknown>
+          const sc = oc.now.axiscare_id ? await scheduleConflicts(c) : { checked: true, held: null, by: new Map(), read_at: nowIso() }
+          // deno-lint-ignore no-explicit-any
+          const busy: any[] = sc.checked ? (sc.by.get(String(oc.now.axiscare_id)) || []) : []
+          if (!sc.checked) rec = { ...base, not_texted: "AxisCare's schedule couldn't be read, so they weren't texted. Call them." }
+          else if (busy.length) rec = { ...base, skipped: `AxisCare has them working then (${String(busy[0].line || 'another visit')})` }
+          else {
+            const clientShort = firstNamesOf(String(c.client || '')) || 'a client'
+            const whenT = [c.shift_date ? friendlyDay(c.shift_date) : '', span12(c.shift_time)].filter(Boolean).join(' ')
+            const msg = oncallText(settings.prn_oncall_text_msg, { first: oc.now.first, client: clientShort, town: String(c.client_city || '').trim(), when: whenT })
+            const r = await sendAsksTo(c, settings, [{ name: oc.now.name, first: oc.now.first, axiscare_id: oc.now.axiscare_id, tier: 0 }], { oncall: { oncall_id: oc.now.oncall_id, message: msg, phone: oc.phone } })
+            rec = r.sent.length ? { ...base, texted_at: nowIso() }
+              : { ...base, not_texted: `The text didn't go (${String(r.failed[0] || r.already[0] || 'unknown').replace(/^[^(]*\(|\)$/g, '')}). Call them.` }
+          }
+          await sb.rpc('coverage_case_patch', { p_id: String(c.id), p_patch: { oncall_dispatch: rec }, p_expect: { status: 'open' } })
+          c.oncall_dispatch = rec
+          await opEvent(sb, { job: 'coverage-run', verb: 'oncall_dispatch', item_id: String(c.id), area: 'coverage',
+            summary: `On call for ${c.client || 'an open shift'}: ${oc.now.name}` + (rec.texted_at ? ', texted' : rec.skipped ? `, skipped: ${rec.skipped}` : `, not texted: ${rec.not_texted}`) })
+        } else if (oc.now && d0 && !d0.nudged_at && !d0.skipped && noAnswerDue({ c, now: oc.now, marks: oc.marks, nowMs: Date.now() })) {
+          /* 15 minutes, no answer and nothing recorded: the case asks the office (oncall-now.js), and the admins get one text */
+          const whenN = [c.shift_date ? friendlyDay(c.shift_date) : '', span12(c.shift_time)].filter(Boolean).join(' ')
+          const plN = await readPlan(sb, c.client_axiscare_id, remPlans)
+          const reachedN = ghl.token && ghl.locationId ? await textCaseAdmins(sb, ghl, settings, c, (link) => withLink(noAnswerText({ name: oc.now.name, client: firstNamesOf(String(c.client || '')), when: whenN }), link),
+            { anyHour: true, emergency: isMustCover(plN.plan) }) : []
+          const recN = { ...d0, nudged_at: nowIso(), nudged_to: reachedN.length }
+          await sb.rpc('coverage_case_patch', { p_id: String(c.id), p_patch: { oncall_dispatch: recN }, p_expect: { status: 'open' } })
+          c.oncall_dispatch = recN
+        }
+      }
+    } catch (e) { console.error('[coverage-run] on-call dispatch failed', e) }
+
     /* ── CI3 (2026-10-04, her decision 1): REMINDERS UNTIL SOMEONE HAS IT. Nobody tapped "I've got it", confirmed or
        closed it: every admin who got the call-in text gets a reminder with their link, every 15 minutes, at most 4. At
        night only for a MUST BE COVERED shift (or one within 3 hours while call-ins may text after hours). OFF until
@@ -2647,6 +2732,9 @@ Deno.serve(async (req) => {
         .replaceAll('{called_at}', calledAt)
         .replace(/\s{2,}/g, ' ').trim()
         .replace(/^/, mustA ? 'MUST BE COVERED (call-in plan). ' : '')
+        /* 2026-10-31: who is on call, first */
+        + (c.oncall_dispatch?.name ? (c.oncall_dispatch.skipped ? ` On call: ${c.oncall_dispatch.name}, but AxisCare has them working then.`
+          : ` On call: ${c.oncall_dispatch.name}${c.oncall_dispatch.texted_at ? ' (texted)' : ''}. Call them first.`) : '')
       const planTxtA = planA.plan ? planLine(planA.plan) : ''
       const { data: stRowA } = await sb.from('app_data').select('data').eq('key', 'coordinator_staff').maybeSingle()
       const staffA: any[] = Array.isArray(stRowA?.data) ? stRowA!.data : []

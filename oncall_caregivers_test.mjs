@@ -198,7 +198,7 @@ const src = ['_shared/prn-oncall.ts', 'prn-week/index.ts', 'oncall-page/index.ts
 ck('no em dashes in anything people read, never pay amounts on their page', !/—/.test(src.replace(/\/\/[^\n]*|\/\*[\s\S]*?\*\//g, '').replace("/—/.test(message)", '')) && !/\$\d/.test(fs.readFileSync(path.join(F, 'oncall-page/index.ts'), 'utf8')))
 const out = fs.readFileSync(path.join(F, '_shared/outreach.ts'), 'utf8'), sp = fs.readFileSync(path.join(F, '_shared/send-problems.ts'), 'utf8')
 ck('the invite sender is registered (outbound gate and "Didn\'t go through" wording)', /'oncall-invite':\s+\{ class: 'routine_internal', scheduled: false/.test(out) && /'oncall-invite': \['on-call invite to a caregiver', 'caregivers'\]/.test(sp))
-const cr = fs.readFileSync(path.join(F, 'coverage-run/index.ts'), 'utf8'), hold = cr.slice(cr.indexOf('async function onCallHoldFor'), cr.indexOf('/* CI1 (2026-10-03)'))
+const cr = fs.readFileSync(path.join(F, 'coverage-run/index.ts'), 'utf8'), hold = cr.slice(cr.indexOf('async function onCallFor('), cr.indexOf('/* CI1 (2026-10-03)'))
 ck('coverage-run: the hold finds an on-call caregiver too (invites read; no invite records = PRN only)', /from\('oncall_invites'\)/.test(hold) && /inv\.error \? \[\]/.test(hold) && /withKeys\(oc\.data/.test(hold) && /team: 'oncall'/.test(hold))
 
 /* ── 3. the SQL ── */

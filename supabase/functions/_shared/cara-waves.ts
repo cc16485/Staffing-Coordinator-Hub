@@ -138,7 +138,7 @@ export type Out = { name: string; axiscare_id: string | null; why: string; code?
 
 /** Hard exclusions and the order, for one case. rows: the list's people (any group); each may carry windows/outside_ok
     (their availability) and prn_pref (PRN Team: notice, interests, days, times, short_notice_ok). */
-export function judgeForWaves(rows: Any[], c: Any, x: { minsToStart: number | null; ongoing: boolean; sameTime?: boolean; groupFirst?: boolean }): { ordered: Judged[]; excluded: Out[]; conflicts: Out[] } {
+export function judgeForWaves(rows: Any[], c: Any, x: { minsToStart: number | null; ongoing: boolean; sameTime?: boolean; groupFirst?: boolean; clientLevel?: number | null }): { ordered: Judged[]; excluded: Out[]; conflicts: Out[] } {
   const ordered: Judged[] = [], excluded: Out[] = [], conflicts: Out[] = []
   const types = shiftTypes(c, x.minsToStart)
   const out = (r: Any, why: string, code = 'other') => excluded.push({ name: S(r?.name, 80), axiscare_id: r?.axiscare_id != null ? S(r.axiscare_id, 20) : null, why, code })
@@ -174,7 +174,10 @@ export function judgeForWaves(rows: Any[], c: Any, x: { minsToStart: number | nu
      1 anyone who has cared for this client (regular or PRN), the client's favorites first; 2 the PRN Caregiver and PRN CNA Teams
      (whose days and times fit, then Unknown, then part of it); 3 everyone else. A familiar caregiver whose availability is
      Unknown is now asked before a stranger whose availability fits. */
-  const groupRank = (j: Judged) => (j.familiar > 0 ? 0 : j.prn ? 1 : 2)
+  /* 2026-10-31 (her decision 4): the PRN group by the client's care level. A Level 3 client: the PRN CNA Team only (a PRN Caregiver
+     Team member who qualifies is asked with everyone else); Level 1 or 2: both teams. */
+  const prnGroup = (j: Judged) => j.prn && !(x.clientLevel === 3 && S(j.row.prn_pref?.team) === 'caregiver')
+  const groupRank = (j: Judged) => (j.familiar > 0 ? 0 : prnGroup(j) ? 1 : 2)
   const favRank = (j: Judged) => (j.familiar > 0 && j.row.this_client?.favorite ? 0 : 1)
   ordered.sort((a, b) => (x.groupFirst ? (groupRank(a) - groupRank(b)) || (favRank(a) - favRank(b)) : 0)
     || (availRank(a) - availRank(b))
