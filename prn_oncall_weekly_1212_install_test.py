@@ -8,7 +8,7 @@ res = []; ck = lambda n, c, note="": res.append((n, bool(c), "" if c else str(no
 S = {}; M = {}
 def reset(**m):
     S.clear(); S.update(sql=[], posts=[], net={}, nid=0, cron=None); M.clear()
-    M.update(dict(signup=None, vault=1, sqlfail=False, fill_ok=True, gate=401, cron_caller="cron"), **m)
+    M.update(dict(signup=None, readfail=None, vault=1, sqlfail=False, fill_ok=True, gate=401, cron_caller="cron"), **m)
 class H(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def _send(self, code, obj):
@@ -26,6 +26,7 @@ class H(http.server.BaseHTTPRequestHandler):
             S["posts"].append((p, self.headers.get("Authorization"), body))
             return self._send(M["gate"], {"error": "not allowed"})
         q = body["query"]; S["sql"].append(q)
+        if q.startswith("select data->'prn_oncall_signup_live'") and M["readfail"]: return self._send(*M["readfail"])
         if q.startswith("select data->'prn_oncall_signup_live'"): return self._send(200, [{"prn_oncall_signup_live": M["signup"], "prn_oncall_first_live": None}])
         if "vault.decrypted_secrets where name = 'hub_job_secret')::int as vault" in q: return self._send(200, [{"vault": M["vault"], "job": 0}])
         if q.startswith("begin;"): return self._send(400, {"message": "boom"}) if M["sqlfail"] else self._send(201, [])
@@ -63,7 +64,7 @@ def run(env_over=None, **mode):
     reset(**mode); rep = os.path.join(TMP, "r.txt")
     for f in (LOG, rep): os.path.exists(f) and os.remove(f)
     env = dict(os.environ, PATH=FAKEBIN + ":/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin", SB_STEP="1212", SB_TOKEN="sbp_test", SB_REPORT=rep, SB_API_BASE=URL, SB_FN_BASE=URL,
-               SB_SUPA_CLI=os.path.join(FAKEBIN, "supabase"), SB_FNROOT=os.path.join(WT, "supabase/functions"), SB_SHAS=json.dumps(PIN), SB_SETTLE="0", SB_POLL="0.05", SB_MAIN_REF="HEAD")
+               SB_SUPA_CLI=os.path.join(FAKEBIN, "supabase"), SB_FNROOT=os.path.join(WT, "supabase/functions"), SB_SHAS=json.dumps(PIN), SB_SETTLE="0", SB_POLL="0.05", SB_MAIN_REF="HEAD", SB_RETRY_SCALE="0")
     env.update(env_over or {})
     p = subprocess.run(["python3", os.path.join(WT, "prn_oncall_weekly_1212.py")], cwd=WT, env=env, capture_output=True, text=True, timeout=900)
     return p.returncode, (open(rep).read() if os.path.exists(rep) else p.stdout + p.stderr)
@@ -86,6 +87,11 @@ try:
     ck("sign-up already on: said so, still runs, left on", c == 0 and "prn_oncall_signup_live ON (members see Every week as soon as this finishes)" in out and "1212: DONE" in out, out[:2000])
     c, out = run(env_over={"SB_SHAS": json.dumps({"prn-week/index.ts": "0" * 64})})
     ck("not the reviewed build: nothing runs", c == 2 and not deploys() and not S["sql"], out[-400:])
+    c, out = run(readfail=(401, {"message": "Unauthorized"}))
+    ck("a token Supabase won't accept: says so and how to fix it, tried 3 times, nothing changed", c == 3 and "didn't accept the access token" in out and "supabase.com/dashboard/account/tokens" in out
+       and sum(1 for q in S["sql"] if q.startswith("select data->'prn_oncall_signup_live'")) == 3 and not deploys() and not writes(), out[-600:])
+    c, out = run(readfail=(503, {"message": "upstream busy"}))
+    ck("any other refusal: shows what Supabase answered", c == 3 and "Supabase answered" in out and "upstream busy" in out, out[-600:])
     c, out = run(vault=0)
     ck("no vault secret: STOPS before any change", c == 4 and not deploys() and not writes(), out[-500:])
     c, out = run(sqlfail=True)
