@@ -27,12 +27,12 @@ const OFFERS = {}
 globalThis.fetch = async (url, o = {}) => { const u = String(url), m = (o.method || 'GET').toUpperCase()
   /* IN TRAINING PLAN v2, PART B: the AxisCare list, one caregiver in full, and the Training Platform's link-only door */
   if (u === 'https://16485.axiscare.com/api/caregivers' && m === 'GET') { AX.calls.push('LIST'); if (AXL.down) return new Response('{"errors":["down"]}', { status: 503 }); return new Response(JSON.stringify({ results: { caregivers: AXL.list } }), { status: 200 }) }
-  if (u.startsWith('https://16485.axiscare.com/api/caregivers/') && m === 'GET' && AXL.full[u.split('/').pop()]) { AX.calls.push('GET ' + u.split('/').pop()); return new Response(JSON.stringify({ results: { caregiver: AXL.full[u.split('/').pop()] } }), { status: 200 }) }
+  if (u.startsWith('https://16485.axiscare.com/api/caregivers/') && m === 'GET' && AXL.full[u.split('/').pop()]) { AX.calls.push('GET ' + u.split('/').pop()); return new Response(JSON.stringify({ results: { data: AXL.full[u.split('/').pop()] } }), { status: 200 }) }
   if (u === 'https://rdqujxiycycwhskyvrwa.supabase.co/functions/v1/job-offer') { const bb = JSON.parse(o.body); TRNLINK.calls.push({ body: bb, secret: (o.headers || {})['x-outreach-secret'] }); if (TRNLINK.fail) return new Response(JSON.stringify({ status: 'not_found', why: 'nobody In Training' }), { status: 200 }); return new Response(JSON.stringify({ status: 'link', url: 'https://training.mo-care.com/#/me/tok-ava' }), { status: 200 }) }
   if (u.startsWith('http://trn/rest/v1/job_offers')) { const id = decodeURIComponent(/id=eq\.([^&]+)/.exec(u)[1]); return new Response(JSON.stringify(OFFERS[id] ? [OFFERS[id]] : []), { status: 200 }) }
   if (u.startsWith('https://16485.axiscare.com/api/caregivers/')) { const id = u.split('/').pop(); AX.calls.push(m + ' ' + id + (o.body ? ' ' + o.body : ''))
-    if (m === 'PATCH') return new Response(AX.patch === 200 ? JSON.stringify({ results: { caregiver: { id: Number(id) } } }) : JSON.stringify({ errors: ['Status not found'] }), { status: AX.patch })
-    return new Response(JSON.stringify({ results: { caregiver: { id: Number(id), status: { active: AX.active, label: AX.label }, hireDate: AX.hireDate } } }), { status: 200 }) }
+    if (m === 'PATCH') return new Response(AX.patch === 200 ? JSON.stringify({ results: { data: { id: Number(id) } } }) : JSON.stringify({ errors: ['Status not found'] }), { status: AX.patch })
+    return new Response(JSON.stringify({ results: { data: { id: Number(id), status: { active: AX.active, label: AX.label }, hireDate: AX.hireDate } } }), { status: 200 }) }
   if (u === 'http://trn/rest/v1/app_settings?key=eq.hub_read_key&select=value') return new Response(JSON.stringify([{ value: { key: 'rk' } }]), { status: 200 })
   if (u === 'http://trn/rest/v1/rpc/hub_training_status') { TRN.calls.push(JSON.parse(o.body)); return new Response(JSON.stringify(TRN.rows), { status: 200 }) }
   if (u === 'http://trn/rest/v1/caregivers?select=id,axiscare_id&active=eq.true') return new Response(JSON.stringify([{ id: 't-ava', axiscare_id: '9001' }, { id: 't-ben', axiscare_id: '9002' }]), { status: 200 })

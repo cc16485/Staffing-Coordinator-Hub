@@ -9,6 +9,7 @@
 //   readCaregiverStatus(id)  read only: { active, label, hire_date }
 // Every outcome is one row in axiscare_change_log (kind caregiver_status). Never a name, never a health detail.
 // deno-lint-ignore-file no-explicit-any
+import { caregiverOf, classesSeen, CLASSES_STOP } from './axis-caregiver-read.ts'
 export const AC_VERSION = '2023-10-01'
 export function axisCreds() {
   let token = ''
@@ -31,7 +32,7 @@ export const errText = (r: { status: number; json: any }) => {
   const s = Array.isArray(e) ? e.map((x) => typeof x === 'string' ? x : JSON.stringify(x)).join('; ') : (typeof e === 'string' ? e : (e ? JSON.stringify(e) : ''))
   return `AxisCare answered ${r?.status || 'nothing'}${s ? ': ' + s.slice(0, 200) : ''}`
 }
-const cgOf = (r: { json: any }) => r?.json?.results?.caregiver ?? r?.json?.caregiver ?? (r?.json && r.json.id != null ? r.json : null)
+const cgOf = (r: { json: any }) => caregiverOf(r?.json)   // 2026-10-31: AxisCare answers results.data
 
 export type StatusRead = { ok: true; active: boolean; label: string; hire_date: string | null } | { ok: false; detail: string }
 export async function readCaregiverStatus(id: string, send: typeof fetch = fetch): Promise<StatusRead> {
@@ -103,6 +104,7 @@ export async function setCaregiverLevel(db: any, id: string, level: number, by: 
   if (!/^\d{1,12}$/.test(cg) || ![1, 2, 3].includes(level)) return { outcome: 'refused', detail: 'not an AxisCare caregiver number or level', recorded: false }
   const g = await ax('GET', `/api/caregivers/${cg}`, undefined, send); const c = cgOf(g)
   if (!ok2(g.status) || !c) return { outcome: 'refused', detail: 'could not read the caregiver in AxisCare: ' + errText(g), recorded: false }
+  if (!classesSeen(c)) return { outcome: 'refused', detail: CLASSES_STOP, recorded: false }   // the safety stop (2026-10-31)
   const have = rowsOf(c.classes); const cur = careLevelOf(have)
   if (cur.level === level && have.filter((x: any) => levelFromLabel(x?.label ?? x?.code) != null).length === 1) return { outcome: 'unchanged', recorded: false, read: cur.from, classes: have.map((x: any) => String(x?.label ?? x?.code ?? '')) }
   const v = await ax('GET', '/api/classes/caregiver', undefined, send)

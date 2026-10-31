@@ -12,6 +12,7 @@
 import { appProfileOn, cleanSuggestion, SUGGEST_OPEN_MAX, SUGGEST_THANKS } from './app-profile.ts'
 import { familyProfileOn, cleanFamilyProfile, rowToProfile, applyFamilySave, allText, isEmpty, QUESTIONS, ABOUT_MAX, ANSWER_MAX, ENJOYS_MAX, photoOn, decodePhoto, PHOTO_CONSENT_WORDS } from './family-profile.ts'
 import { brand, brandFor, brandView } from './brands.ts'
+import { caregiverOf } from './axis-caregiver-read.ts'
 import { planRequest, earliestStart, words as answerWords } from './answer-by.ts'
 import { NOTE_MAX, checkNote, noteBlockWords, helpFillOn, officeCanHelp, HELP_ADD, HELP_LATE, type AiVerdict } from './family-review.ts'
 
@@ -286,7 +287,7 @@ export const overlaps = (s: string, e: string, busy: { start: string; end: strin
 export async function placeCaregiver(ax: Ax, b: any, cg: string, pickedStart: string | null, st: any): Promise<{ ok: true; name: string; vals: Record<string, unknown> } | { ok: false; status: number; why: string }> {
   if (!/^\d+$/.test(cg)) return { ok: false, status: 400, why: 'Pick a caregiver.' }
   const cr = await ax('GET', `/api/caregivers/${cg}`)
-  const c = cr.json?.results?.caregiver ?? cr.json?.results
+  const c = caregiverOf(cr.json)   // 2026-10-31: AxisCare answers results.data (was the { data } wrapper)
   if (cr.status !== 200 || !c) return { ok: false, status: 502, why: `AxisCare didn't find that caregiver (${cr.status}).` }
   const activeNow = typeof c.status === 'object' ? c.status?.active !== false : !/inactive|terminated/i.test(String(c.status ?? ''))
   if (!activeNow) return { ok: false, status: 409, why: `${c.firstName ?? 'That caregiver'} isn't active in AxisCare.` }

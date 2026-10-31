@@ -11,6 +11,7 @@
 // =============================================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
+import { caregiverOf } from '../_shared/axis-caregiver-read.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -78,7 +79,7 @@ Deno.serve(async (req) => {
     const id = t(b.axiscare_caregiver_id)
     if (!/^\d+$/.test(id)) return json({ error: 'axiscare_caregiver_id must be the caregiver\'s AxisCare number (never a name)' }, 400)
     const g = await ax('GET', `/api/caregivers/${id}`)
-    const cg = g.json?.results?.caregiver ?? g.json?.results ?? null
+    const cg = caregiverOf(g.json)   // 2026-10-31: AxisCare answers results.data (was the { data } wrapper: the name came out blank)
     const name = cg ? [t(cg.firstName), t(cg.lastName)].filter(Boolean).join(' ') : ''
     if (g.status === 404 || (ok2(g.status) && !cg)) {
       await record('caregiver_note', 'caregiver', id, 'refused', 'note, ' + note.length + ' characters', 'no AxisCare caregiver with this number', staff.email)

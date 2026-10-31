@@ -8,6 +8,7 @@
 // =============================================================================
 // deno-lint-ignore-file no-explicit-any
 import { ax, errText } from './axiscare-caregiver.ts'
+import { caregiverOf } from './axis-caregiver-read.ts'
 
 const S = (v: unknown, n = 160) => String(v ?? '').trim().slice(0, n)
 export const normPhone = (p: unknown) => { const d = String(p ?? '').replace(/\D/g, ''); return d.length === 11 && d[0] === '1' ? d.slice(1) : d.length === 10 ? d : '' }
@@ -62,5 +63,5 @@ export async function axisCaregiver(id: string, send: typeof fetch = fetch): Pro
   if (!/^\d{1,12}$/.test(id)) return null
   const r = await ax('GET', `/api/caregivers/${id}`, undefined, send)
   if (r.status < 200 || r.status >= 300) return null
-  return r.json?.results?.caregiver ?? r.json?.caregiver ?? (r.json && r.json.id != null ? r.json : null)
+  return caregiverOf(r.json)   // 2026-10-31: AxisCare answers results.data
 }

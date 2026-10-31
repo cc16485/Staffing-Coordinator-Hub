@@ -63,8 +63,8 @@ const ax = async (method, p, body) => {
   }
   const nm = u.pathname.match(/^\/api\/notes\/(client|caregiver)\/(\d+)$/)
   if (method === 'POST' && nm) { if (W.notesFail) return r(500, { errors: ['notes down'] }); W.notes.push({ on: nm[1], id: nm[2], ...body }); return r(201, { results: { id: W.notes.length } }) }
-  if (method === 'GET' && u.pathname === '/api/caregivers/88') return r(200, { results: { caregiver: { id: 88, firstName: 'Maria', lastName: 'Lopez', status: { active: true } } } })
-  if (method === 'GET' && u.pathname === '/api/caregivers/66') return r(200, { results: { caregiver: { id: 66, firstName: 'Gone', status: { active: false, label: 'Inactive' } } } })
+  if (method === 'GET' && u.pathname === '/api/caregivers/88') return r(200, { results: { data: { id: 88, firstName: 'Maria', lastName: 'Lopez', status: { active: true } } } })
+  if (method === 'GET' && u.pathname === '/api/caregivers/66') return r(200, { results: { data: { id: 66, firstName: 'Gone', status: { active: false, label: 'Inactive' } } } })
   const vm = u.pathname.match(/^\/api\/visits\/(.+)$/)
   if (vm) { const id = decodeURIComponent(vm[1]); const x = W.visits[id]
     if (method === 'GET') return x ? r(200, { results: x }) : r(404, { errors: ['not found'] })

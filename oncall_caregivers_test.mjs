@@ -86,7 +86,7 @@ globalThis.__db = { from: q, rpc: async () => ({ data: null, error: null }),
 globalThis.fetch = async (url, o) => { url = String(url); const body = o && o.body ? JSON.parse(o.body) : {}
   if (url.includes('axiscare.com')) {
     if (AXDOWN) return new Response('{}', { status: 500 })
-    const m = url.match(/\/api\/caregivers\/(\d+)$/); if (m) return AXG[m[1]] ? new Response(JSON.stringify({ results: { caregiver: AXG[m[1]] } }), { status: 200 }) : new Response('{}', { status: 404 })
+    const m = url.match(/\/api\/caregivers\/(\d+)$/); if (m) return AXG[m[1]] ? new Response(JSON.stringify({ results: { data: AXG[m[1]] } }), { status: 200 }) : new Response('{}', { status: 404 })
     if (/\/api\/caregivers$/.test(url)) return new Response(JSON.stringify({ results: { caregivers: Object.values(AXG) } }), { status: 200 })
   }
   if (url.includes('/contacts/upsert')) return new Response(JSON.stringify({ contact: { id: 'C:' + body.phone, dnd: false } }), { status: 200 })

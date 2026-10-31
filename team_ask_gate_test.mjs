@@ -51,7 +51,7 @@ globalThis.fetch = async (url, o) => {
   if (url.includes('/conversations/messages')) { if (GHL_FAIL) return new Response('{}', { status: 500 }); SENT.push({ to: body.contactId, text: body.message }); return new Response('{}', { status: 200 }) }
   /* 2026-10-14: the live AxisCare check for one caregiver (her rule: AxisCare is the truth for active) */
   { const m = url.match(/axiscare\.com\/api\/caregivers\/(\d+)$/); if (m) { if (globalThis.AX_DOWN) return new Response('{}', { status: 503 })
-    const off = (globalThis.AX_INACTIVE || new Set()).has(m[1]); return new Response(JSON.stringify({ results: { caregiver: { id: Number(m[1]), status: { active: !off, label: off ? 'Terminated' : 'Active' } } } }), { status: 200 }) } }
+    const off = (globalThis.AX_INACTIVE || new Set()).has(m[1]); return new Response(JSON.stringify({ results: { data: { id: Number(m[1]), status: { active: !off, label: off ? 'Terminated' : 'Active' } } } }), { status: 200 }) } }
   return new Response('{}', { status: 404 })
 }
 const ENV = { SUPABASE_URL: 'https://x.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'k', GHL_TOKEN: 'g', GHL_LOCATION_ID: 'loc', AXISCARE_API_KEY: 'a', AXISCARE_SITE: '16485' }
