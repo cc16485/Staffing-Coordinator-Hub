@@ -37,3 +37,37 @@ export function outsideVerdict(cc: any, cg: { id: unknown; name: string }): Outs
 /* The family text must never say a caregiver is replacing themselves. */
 // deno-lint-ignore no-explicit-any
 export const coversThemselves = (c: any) => !!String(c?.calling_off ?? '').trim() && nameKey(c?.calling_off) === nameKey(c?.covered_by)
+
+/* ── A deleted call-off visit that was REPLACED (Newton-Donati, 2026-10-31) ──
+   The office took Sheryelle off three overnights, then deleted each visit and in the same minute made a NEW visit for the
+   same client and the same hours with Rhonda (or Kyra) on it. The case only watched the deleted visit, so it stayed open
+   and texted "CRITICAL open shift" three hours before a shift that was covered. A deleted visit is covered when that
+   client's other visits, with somebody on them who is not the caregiver who called off, cover its whole time (several
+   visits may share it, 15 minutes either way). Anything less leaves the case for a person, as before. */
+export const REPLACE_SLACK_MS = 15 * 60e3
+
+// deno-lint-ignore no-explicit-any
+type Any = any
+export function replacementCover(cc: Any, gone: Any, visits: Any[], o: { ms: (stamp: unknown, tz?: string) => number; usable: (v: Any) => boolean }):
+  { visits: Any[]; names: string[]; start: string; end: string } | null {
+  const clientId = String(cc?.client_axiscare_id ?? gone?.client?.id ?? '').trim()
+  if (!clientId) return null
+  const stamp = (v: Any, k: 'start' | 'end') => String(k === 'start' ? (v?.scheduledStartDate ?? v?.startDate ?? '') : (v?.scheduledEndDate ?? v?.endDate ?? ''))
+  const gs = o.ms(stamp(gone, 'start'), gone?.timezone), ge = o.ms(stamp(gone, 'end'), gone?.timezone)
+  if (!Number.isFinite(gs) || !Number.isFinite(ge) || ge <= gs) return null
+  const nameOf = (v: Any) => [String(v?.caregiver?.firstName ?? '').trim(), String(v?.caregiver?.lastName ?? '').trim()].filter(Boolean).join(' ') || ('caregiver ' + v?.caregiver?.id)
+  const cands = (visits || []).map((v) => ({ v, s: o.ms(stamp(v, 'start'), v?.timezone), e: o.ms(stamp(v, 'end'), v?.timezone) }))
+    .filter(({ v, s, e }) => String(v?.id ?? '') !== String(gone?.id ?? '') && String(v?.client?.id ?? '') === clientId
+      && v?.caregiver?.id != null && !v?.removed && o.usable(v) && s < ge && e > gs
+      && outsideVerdict(cc, { id: v.caregiver.id, name: nameOf(v) }) === 'covered')
+    .sort((a, b) => a.s - b.s)
+  let reach = gs
+  const used: Any[] = []
+  for (const c of cands) {
+    if (c.s > reach + REPLACE_SLACK_MS) break                 // a gap nobody is on
+    if (c.e > reach) { used.push(c.v); reach = c.e }
+    if (reach >= ge - REPLACE_SLACK_MS) break
+  }
+  if (!used.length || reach < ge - REPLACE_SLACK_MS) return null
+  return { visits: used, names: [...new Set(used.map(nameOf))], start: stamp(used[0], 'start'), end: stamp(used[used.length - 1], 'end') }
+}
