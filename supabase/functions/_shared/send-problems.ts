@@ -45,6 +45,7 @@ export const SENDER_WORDS: Record<string, [string, string]> = {
   'prn-welcome': ['PRN Team welcome text', 'caregivers'],
   'prn-monthly': ['PRN Team monthly update text', 'caregivers'],   // PRN step 6
   'prn-feedback': ['PRN Team twice-yearly questions invite', 'caregivers'],   // PRN step 7
+  'oncall-invite': ['on-call invite to a caregiver', 'caregivers'],   // caregiver on call, 2026-10-30
   'driver-compliance': ['driver document reminder or link', 'caregivers'],
   'hepb': ['hepatitis B vaccine offer link', 'caregivers'],
   'nurse-visit-check': ['nurse license reminder', 'caregivers'],
