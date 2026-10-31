@@ -40,9 +40,19 @@ def keys():
             if isinstance(v, str) and (v.startswith("eyJ") or v.startswith("sb_")) and "·" not in v and "*" not in v: out[k.get("name")] = v
         if out.get("service_role") and out.get("anon"): return out
     return {}
+WHY = {"": ""}
 def switches_on():
-    okS, st = sql(REF, "select " + ", ".join(f"data->'{k}' as {k}" for k in SWITCHES) + " from public.app_data where key='ops_settings'")
-    return None if not okS or not st else [k for k in SWITCHES if st[0].get(k) is True]
+    q = "select " + ", ".join(f"data->'{k}' as {k}" for k in SWITCHES) + " from public.app_data where key='ops_settings'"
+    for i in range(3):   # a busy moment on Supabase's side gets two more tries
+        okS, st = sql(REF, q)
+        if okS and st: return [k for k in SWITCHES if st[0].get(k) is True]
+        WHY[""] = str(st)[:300] if not okS else "no settings row came back"
+        time.sleep(3 * (i + 1) * float(os.environ.get("SB_RETRY_SCALE", "1")))
+    return None
+def why_read():
+    w = WHY[""].lower()
+    if "unauthorized" in w or "jwt" in w or "invalid" in w and "token" in w or "401" in w: return "Supabase didn't accept the access token (it may have expired or been revoked). Make a new one at supabase.com/dashboard/account/tokens and run this again."
+    return "Supabase answered: " + WHY[""]
 def command(url, anon):
     return ("select net.http_post(url := " + lit(url) + ", headers := jsonb_build_object('Content-Type', 'application/json', "
             "'Authorization', " + lit("Bearer " + anon) + ", 'x-cron-secret', (select decrypted_secret from vault.decrypted_secrets where name = " + lit(VAULT_NAME) + ")), "
@@ -77,7 +87,7 @@ if NODE and os.path.exists(PGLITE):
     ok("the every-week, on-call calendar, on-call shift, PRN Team page, This week, open shift, Field Support and more-hours tests pass (fake data and a throwaway Postgres only)")
 else: say("  · node or the throwaway Postgres is not on this Mac, so the tests were not re-run here (they passed when built)")
 on = switches_on()
-if on is None: stop("couldn't read the Hub's switches", 3)
+if on is None: stop("couldn't read the Hub's switches. " + why_read(), 3)
 ok("the on-call switches are left as they are: " + (", ".join(on) + " ON (members see Every week as soon as this finishes)" if on else "both off (members see nothing new yet)"))
 meta = {}
 for fn in FNS:
