@@ -2,7 +2,7 @@
 // PRN CNA ON-CALL CALENDAR (Samantha 2026-10-29: "Yes, build the on-call redo as recommended (decisions 22 to 27) and the
 // expectations wording as drafted.")
 // =============================================================================
-//   22  The office calendar: every day, 4 weeks, two shifts a day: daytime 7am to 5pm and overnight 5pm to 7am the next
+//   22  The office calendar: every day, 4 weeks, two shifts a day: daytime and overnight (7am to 7pm and 7pm to 7am since T1) the next
 //       morning. Each shift shows who is on call (confirmed), who asked (waiting for the office) or Open.
 //   23  Members sign up one shift at a time on their PRN Team page, never as a standing pattern. Each one they tap lands on
 //       the calendar as "asked" and the office confirms it with one tap.
@@ -37,6 +37,16 @@
 //   C6  The On call tab's Invite caregivers box: who is Level 3, with their status. Caregivers carry a "Caregiver" tag on the calendar.
 //   C7  Switch ops_settings.prn_oncall_invite_live, off: owners can look and preview, nothing is texted, their page says not yet.
 //   A person is a key: a PRN member's applicant id, or 'ax:' + an AxisCare caregiver id (personKey / personCols).
+// 7AM TO 7PM (Samantha 2026-10-30, after the 1215 report: "can we build it set for 7am-7pm and 7pm-7am on call, and just show
+// the open shifts being Friday, Saturday, and Sunday 7am-7pm. Allow owners to click to open on-call shifts right on the on-call
+// tab"):
+//   T1  The two shifts are daytime 7am to 7pm and overnight 7pm to 7am the next morning (were 7am to 5pm and 5pm to 7am).
+//   T2  Which shifts are open for sign-up is a setting, ops_settings.prn_oncall_offered: { 'fri:day': true, ... } by weekday and
+//       shift. Unset = Friday, Saturday and Sunday 7am to 7pm. Owners open and close them on the On call tab.
+//   T3  Members see a shift that isn't offered as "Not offered" and can't ask for it (or start an every-week one there). Their own
+//       shifts and asks always show. The office calendar counts open gaps only on offered shifts; the office can still put
+//       someone on any shift by hand. An every-week shift already confirmed keeps filling if its shift is later closed.
+//   T4  Rule 1 of the expectations names the new times (a new version: they sign again).
 // Only decisions here (no reads or writes), so every rule is tested. Pay amounts are never here (her plan has them).
 // =============================================================================
 import { careLevelOf } from './care-level.ts'
@@ -48,7 +58,7 @@ const YMD = /^\d{4}-\d\d-\d\d$/
 export const DAYS_AHEAD = 28, MAX_OPEN_ASKS = 10, HOLD_MIN = 20, ASK_LEAD_MIN = 120, GIVE_BACK_HOURS = 24
 export const SLOTS = ['day', 'overnight'] as const
 export type Slot = typeof SLOTS[number]
-export const SLOT_WORD: Record<string, string> = { day: 'Daytime, 7am to 5pm', overnight: 'Overnight, 5pm to 7am' }
+export const SLOT_WORD: Record<string, string> = { day: 'Daytime, 7am to 7pm', overnight: 'Overnight, 7pm to 7am' }   // T1
 export const MISS_KINDS: Record<string, string> = { no_answer: "Didn't answer our call", not_covered: "Didn't cover the shift" }
 export const OUTCOMES: Record<string, string> = { covering: 'Covering it', ...MISS_KINDS }
 
@@ -57,8 +67,8 @@ export const addDays = (ymd: string, n: number) => new Date(Date.parse(ymd + 'T1
 export const mondayOf = (ymd: string) => addDays(ymd, -((new Date(ymd + 'T12:00:00Z').getUTCDay() + 6) % 7))
 /** A shift's start and end as Central wall-clock strings ('YYYY-MM-DDTHH:MM'). */
 export function slotWindow(date: string, slot: string): [string, string] {
-  if (slot === 'day') return [date + 'T07:00', date + 'T17:00']
-  if (slot === 'overnight') return [date + 'T17:00', addDays(date, 1) + 'T07:00']
+  if (slot === 'day') return [date + 'T07:00', date + 'T19:00']   // T1: 7am to 7pm
+  if (slot === 'overnight') return [date + 'T19:00', addDays(date, 1) + 'T07:00']   // T1: 7pm to 7am the next morning
   return [date + 'T07:00', addDays(date, 1) + 'T07:00']   // whole day
 }
 
@@ -66,7 +76,7 @@ export function slotWindow(date: string, slot: string): [string, string] {
 export const TERMS_DEFAULT = [
   'PRN CNA On-Call Expectations',
   'When you sign up for an on-call shift, families are counting on you.',
-  '1. On call comes in two shifts: daytime, 7am to 5pm, and overnight, 5pm to 7am.',
+  '1. On call comes in two shifts: daytime, 7am to 7pm, and overnight, 7pm to 7am.',
   '2. Keep your phone on and with you. Answer the office, or call back, within 15 minutes.',
   '3. Be ready to start a shift within 1 hour.',
   '4. If the office calls you about an open shift during your on-call time, you cover it.',
@@ -108,8 +118,31 @@ export function slotsOf(r: Any): { date: string; slot: Slot }[] {
 }
 const nameOf = (members: Any[], aid: string) => (members.find((m) => m.applicant_id === aid) || { name: 'Someone no longer on the team' }).name
 
+/* ── T2: which on-call shifts are open for sign-up ── */
+export const WEEKDAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']
+export const OFFERED_DEFAULT: Record<string, boolean> = { 'fri:day': true, 'sat:day': true, 'sun:day': true }
+/** The offered grid: her setting when it is an object, else Friday, Saturday and Sunday 7am to 7pm. */
+export function offeredOf(st: Any): Record<string, boolean> {
+  const o = st?.prn_oncall_offered
+  if (!o || typeof o !== 'object' || Array.isArray(o)) return { ...OFFERED_DEFAULT }
+  const out: Record<string, boolean> = {}
+  for (const d of WEEKDAY_KEYS) for (const sl of SLOTS) if (o[`${d}:${sl}`] === true) out[`${d}:${sl}`] = true
+  return out
+}
+/** Is this date's shift open for sign-up? (an overnight belongs to the date it starts on) */
+export const isOffered = (offered: Record<string, boolean> | null | undefined, date: string, slot: string) =>
+  !offered || offered[`${WEEKDAY_KEYS[new Date(date + 'T12:00:00Z').getUTCDay()]}:${slot}`] === true
+/** "Friday, Saturday and Sunday 7am to 7pm" style words for the grid, for pages and the office. */
+export function offeredWords(offered: Record<string, boolean>): string {
+  const NAMES: Record<string, string> = { sun: 'Sunday', mon: 'Monday', tue: 'Tuesday', wed: 'Wednesday', thu: 'Thursday', fri: 'Friday', sat: 'Saturday' }
+  const order = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
+  const list = (xs: string[]) => xs.length <= 1 ? xs.join('') : xs.slice(0, -1).join(', ') + ' and ' + xs[xs.length - 1]
+  const parts = SLOTS.map((sl) => { const ds = order.filter((d) => offered[`${d}:${sl}`]).map((d) => NAMES[d]); return ds.length ? `${list(ds)} ${sl === 'day' ? '7am to 7pm' : '7pm to 7am'}` : '' }).filter(Boolean)
+  return parts.length ? parts.join('; ') : 'none right now'
+}
+
 /** Decision 22: the office calendar, 4 weeks from Monday of this week. */
-export function calendar(x: { rows: Any[]; marks: Any[]; members: Any[]; today: string; days?: number; series?: Any[] }): Any[] {
+export function calendar(x: { rows: Any[]; marks: Any[]; members: Any[]; today: string; days?: number; series?: Any[]; offered?: Record<string, boolean> }): Any[] {
   const start = mondayOf(x.today), n = x.days ?? DAYS_AHEAD, rows = live(x.rows)
   const days = Array.from({ length: n }, (_, i) => addDays(start, i))
   const cell = () => ({ confirmed: [] as Any[], asked: [] as Any[], skipped: [] as Any[] })
@@ -128,12 +161,12 @@ export function calendar(x: { rows: Any[]; marks: Any[]; members: Any[]; today: 
   for (const k of fillPlan({ series: x.series || [], rows: x.rows, today: x.today, days: n }).skipped) {
     const c = by[k.date]?.[k.slot]; if (c) c.skipped.push({ series_id: k.series_id, applicant_id: k.applicant_id, name: nameOf(x.members, k.applicant_id) })
   }
-  for (const d of days) for (const sl of SLOTS) { const c = by[d][sl]; c.gap = !by[d].past && !c.confirmed.some((p: Any) => !p.missed) }
+  for (const d of days) for (const sl of SLOTS) { const c = by[d][sl]; c.offered = isOffered(x.offered, d, sl); c.gap = c.offered && !by[d].past && !c.confirmed.some((p: Any) => !p.missed) }   // T3
   return days.map((d) => by[d])
 }
 
 /** Decision 23: what a member sees, today plus 4 weeks. Never another person's name. */
-export function memberSlots(x: { rows: Any[]; aid: string; today: string; nowNaive: string; days?: number; series?: Any[] }): Any[] {
+export function memberSlots(x: { rows: Any[]; aid: string; today: string; nowNaive: string; days?: number; series?: Any[]; offered?: Record<string, boolean> }): Any[] {
   const rows = live(x.rows), n = x.days ?? DAYS_AHEAD, out: Any[] = []
   const skip = new Set(fillPlan({ series: (x.series || []).filter((s) => s?.applicant_id === x.aid), rows: x.rows, today: x.today, days: n }).skipped.map((k) => k.date + k.slot))
   const soon = new Date(Date.parse(x.nowNaive + ':00Z') + ASK_LEAD_MIN * 60000).toISOString().slice(0, 16)
@@ -146,6 +179,7 @@ export function memberSlots(x: { rows: Any[]; aid: string; today: string; nowNai
       row[sl] = mine ? { state: 'mine', weekly: mine.series_id != null, can_give_back: Date.parse(st + ':00Z') - Date.parse(x.nowNaive + ':00Z') >= GIVE_BACK_HOURS * 3600000 }
         : ask ? { state: 'asked', id: ask.id, weekly: ask.series_id != null }
         : st <= soon ? { state: 'past' }
+        : !isOffered(x.offered, d, sl) ? { state: 'closed' }   // T3: not open for sign-up
         : here.some((r) => r.kind === 'confirmed') ? { state: 'taken', ...(skip.has(d + sl) ? { skip: true } : {}) } : { state: 'open' }
     }
     out.push(row)
@@ -161,10 +195,10 @@ export function blockOf(marks: Any[], aid: string): { blocked: boolean; miss: An
 }
 
 /** A member's asks, checked: real dates and shifts, open, far enough ahead, within 4 weeks, not too many waiting. */
-export function readAsks(b: Any, x: { rows: Any[]; aid: string; today: string; nowNaive: string; series?: Any[] }): { ok: true; slots: { date: string; slot: Slot; weekly: boolean }[] } | { ok: false; error: string } {
+export function readAsks(b: Any, x: { rows: Any[]; aid: string; today: string; nowNaive: string; series?: Any[]; offered?: Record<string, boolean> }): { ok: true; slots: { date: string; slot: Slot; weekly: boolean }[] } | { ok: false; error: string } {
   const want = Array.isArray(b?.slots) ? b.slots.slice(0, 40) : []
   if (!want.length) return { ok: false, error: 'Tap the shifts you would like first.' }
-  const view = memberSlots({ rows: x.rows, aid: x.aid, today: x.today, nowNaive: x.nowNaive })
+  const view = memberSlots({ rows: x.rows, aid: x.aid, today: x.today, nowNaive: x.nowNaive, offered: x.offered })
   const seen = new Set<string>(), out: { date: string; slot: Slot; weekly: boolean }[] = []
   const mineLive = liveSeries(x.series || []).filter((s) => s.applicant_id === x.aid)
   for (const w of want) {
@@ -173,7 +207,7 @@ export function readAsks(b: Any, x: { rows: Any[]; aid: string; today: string; n
     const k = d + sl; if (seen.has(k)) continue; seen.add(k)
     const v = view.find((r) => r.date === d)?.[sl]
     if (!v) return { ok: false, error: 'You can sign up for the next 4 weeks.' }
-    if (v.state !== 'open') return { ok: false, error: v.state === 'taken' ? 'Someone just took one of those shifts. Please look again.' : v.state === 'past' ? 'One of those shifts starts too soon to sign up for. Call the office instead.' : 'You already have one of those shifts.' }
+    if (v.state !== 'open') return { ok: false, error: v.state === 'closed' ? "One of those shifts isn't open for on-call sign-up. Please look again." : v.state === 'taken' ? 'Someone just took one of those shifts. Please look again.' : v.state === 'past' ? 'One of those shifts starts too soon to sign up for. Call the office instead.' : 'You already have one of those shifts.' }
     const weekly = w?.weekly === true
     if (weekly && mineLive.some((s) => s.slot === sl && weekdayOf(S(s.first_date, 10)) === weekdayOf(d))) return { ok: false, error: `You already have this shift every week, or asked for it (${seriesWord({ first_date: d, slot: sl })}).` }
     if (weekly && out.some((o) => o.weekly && o.slot === sl && weekdayOf(o.date) === weekdayOf(d))) return { ok: false, error: 'Pick each every-week shift once. It repeats on its own.' }
@@ -236,7 +270,7 @@ export const isCaregiverKey = (key: unknown) => String(key ?? '').startsWith('ax
 export const withKeys = (rows: Any[]) => (rows || []).filter(Boolean).map((r) => ({ ...r, applicant_id: personKey(r) }))
 /** C1: AxisCare shows them at Level 3 (the highest level class they hold). */
 export const isLevel3 = (classes: unknown) => careLevelOf(classes).level === 3
-export const INVITE_DEFAULT = "Hi {first_name}! We're inviting a few of our caregivers to sign up for on-call shifts. On call means keeping your phone close during a daytime (7am to 5pm) or overnight (5pm to 7am) shift, so if a caregiver can't make it, we call you first. You're paid for each on-call shift, plus your pay for any shift you cover. Read more and sign up here: {link}"
+export const INVITE_DEFAULT = "Hi {first_name}! We're inviting a few of our caregivers to sign up for on-call shifts. On call means keeping your phone close during a daytime (7am to 7pm) or overnight (7pm to 7am) shift, so if a caregiver can't make it, we call you first. You're paid for each on-call shift, plus your pay for any shift you cover. Read more and sign up here: {link}"
 /** C4: the invite with their first name and link. The link always goes in, even if {link} was edited out. */
 export function inviteText(tmpl: unknown, first: string, link: string): string {
   const t = S(tmpl, 1000) || INVITE_DEFAULT

@@ -58,7 +58,7 @@ import { openLive } from '../_shared/prn-open.ts'
 import { pageUpdate } from '../_shared/prn-monthly.ts'
 import { feedbackRound, feedbackLive, readFeedback, FEEDBACK_QUESTIONS, onCallFor, ONCALL_WORDS } from '../_shared/prn-recognition.ts'
 import { PATTERNS } from '../_shared/prn-week.ts'
-import { memberSlots, blockOf, readAsks, readSign, signedCurrent, termsText, termsVersion, seriesView, weekdayOf, SLOT_WORD, DAYS_AHEAD, GIVE_BACK_HOURS } from '../_shared/prn-oncall.ts'
+import { memberSlots, blockOf, readAsks, readSign, signedCurrent, termsText, termsVersion, seriesView, weekdayOf, offeredOf, offeredWords, SLOT_WORD, DAYS_AHEAD, GIVE_BACK_HOURS } from '../_shared/prn-oncall.ts'
 import { mentorLive, mayOffer, offerView, readReport, landing, fieldsFor, KINDS, SKILLS, MENTOR_RULES } from '../_shared/prn-mentor.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
@@ -168,7 +168,7 @@ Deno.serve(async (req) => {
         oncall.signup = all.error || mk.error || tm.error ? { ready: false } : { ready: true, waiting: st.prn_oncall_signup_live !== true, terms: text, version: ver,
           signed: signedCurrent((tm.data ?? []).map((x: Any) => ({ ...x, applicant_id: aid })), aid, ver), signed_before: (tm.data ?? []).length > 0,
           blocked: blockOf(mk.data ?? [], aid).blocked, slot_words: SLOT_WORD, days: DAYS_AHEAD, give_back_hours: GIVE_BACK_HOURS,
-          slots: memberSlots({ rows: all.data ?? [], aid, today: t, nowNaive: nowNaive(), series: ser }), weekly_ready: !se.error, weekly: seriesView(ser) }
+          slots: memberSlots({ rows: all.data ?? [], aid, today: t, nowNaive: nowNaive(), series: ser, offered: offeredOf(st) }), weekly_ready: !se.error, weekly: seriesView(ser), offered_words: offeredWords(offeredOf(st)) }
       } }
     /* step 8a: Gap Mentor visits offered to them, and their own assigned ones (with the note to fill in) */
     let mentor: Any = null
@@ -316,7 +316,7 @@ Deno.serve(async (req) => {
     const all = await sb.from('prn_oncall').select('id, applicant_id, kind, start_date, end_date, shift, cancelled_at, series_id').in('kind', ['confirmed', 'asked']).gte('end_date', t)
     if (all.error) return json({ error: 'Could not check that just now. Please try again.' }, 500)
     const se = await sb.from('prn_oncall_series').select('*').eq('applicant_id', aid).in('status', ['asked', 'confirmed'])
-    const r = readAsks(b, { rows: all.data ?? [], aid, today: t, nowNaive: nowNaive(), series: se.error ? [] : (se.data ?? []) }); if (!r.ok) return json({ error: r.error }, 409)
+    const r = readAsks(b, { rows: all.data ?? [], aid, today: t, nowNaive: nowNaive(), series: se.error ? [] : (se.data ?? []), offered: offeredOf(st) }); if (!r.ok) return json({ error: r.error }, 409)
     if (se.error && r.slots.some((x) => x.weekly)) return json({ error: "Every week isn't ready yet. Ask for these one time, or call the office." }, 409)
     let added = 0
     for (const sl of r.slots) {

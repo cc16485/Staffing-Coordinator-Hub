@@ -15,8 +15,8 @@ const M = [{ applicant_id: 'g', name: 'Grace Hill', first: 'Grace', team: 'cna',
   { applicant_id: 't', name: 'Tasha Fox', first: 'Tasha', team: 'caregiver', axiscare_id: '33' }]
 const C = (id, aid, date, shift, o = {}) => ({ id, kind: 'confirmed', applicant_id: aid, start_date: date, end_date: o.end || date, shift, cancelled_at: null, ...o })
 const A = (id, aid, date, shift, o = {}) => ({ id, kind: 'asked', applicant_id: aid, start_date: date, end_date: date, shift, cancelled_at: null, ...o })
-ck('the two shifts: daytime 7am to 5pm, overnight 5pm to 7am the next morning', JSON.stringify(O.slotWindow('2026-11-07', 'day')) === '["2026-11-07T07:00","2026-11-07T17:00"]'
-  && JSON.stringify(O.slotWindow('2026-11-07', 'overnight')) === '["2026-11-07T17:00","2026-11-08T07:00"]')
+ck('the two shifts: daytime 7am to 7pm, overnight 7pm to 7am the next morning (since 2026-10-30)', JSON.stringify(O.slotWindow('2026-11-07', 'day')) === '["2026-11-07T07:00","2026-11-07T19:00"]'
+  && JSON.stringify(O.slotWindow('2026-11-07', 'overnight')) === '["2026-11-07T19:00","2026-11-08T07:00"]')
 ck('...a whole day, or an older row with no shift, is both shifts on every date in it', O.slotsOf(C(1, 'g', '2026-11-07', 'whole')).length === 2 && O.slotsOf(C(1, 'g', '2026-11-07', null, { end: '2026-11-08' })).length === 4)
 
 const rows = [C(1, 'g', '2026-11-02', 'day'), C(2, 'd', '2026-11-02', 'overnight'), A(3, 'd', '2026-11-03', 'day'), A(4, 'g', '2026-11-03', 'day'),
@@ -38,8 +38,8 @@ const msd = (d) => ms.find((x) => x.date === d)
 ck('23: their page shows today plus 4 weeks', ms.length === 28 && ms[0].date === TODAY)
 ck('...mine / asked / taken / open, never another person\'s name', msd('2026-11-02').overnight.state === 'mine' && msd('2026-11-03').day.state === 'asked' && msd('2026-11-03').day.id === 3
   && msd('2026-11-02').day.state === 'taken' && msd('2026-11-05').day.state === 'open' && !/Grace|Hill/.test(JSON.stringify(ms)), [msd('2026-11-02'), msd('2026-11-03')])
-ck('...a shift starting within 2 hours (or already started) can\'t be asked for', msd(TODAY).day.state === 'past' && O.memberSlots({ rows: [], aid: 'd', today: TODAY, nowNaive: '2026-10-29T15:30' })[0].overnight.state === 'past'
-  && O.memberSlots({ rows: [], aid: 'd', today: TODAY, nowNaive: '2026-10-29T15:00' })[0].overnight.state === 'past' && O.memberSlots({ rows: [], aid: 'd', today: TODAY, nowNaive: '2026-10-29T14:59' })[0].overnight.state === 'open')
+ck('...a shift starting within 2 hours (or already started) can\'t be asked for', msd(TODAY).day.state === 'past' && O.memberSlots({ rows: [], aid: 'd', today: TODAY, nowNaive: '2026-10-29T17:30' })[0].overnight.state === 'past'
+  && O.memberSlots({ rows: [], aid: 'd', today: TODAY, nowNaive: '2026-10-29T17:00' })[0].overnight.state === 'past' && O.memberSlots({ rows: [], aid: 'd', today: TODAY, nowNaive: '2026-10-29T16:59' })[0].overnight.state === 'open')
 ck('27: their own shift can be given back (by calling) only 24 hours or more ahead', msd('2026-11-02').overnight.can_give_back === true
   && O.memberSlots({ rows: [C(9, 'd', '2026-10-30', 'day')], aid: 'd', today: TODAY, nowNaive: NOW })[1].day.can_give_back === false)
 
@@ -108,7 +108,7 @@ const GRACE = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', DEN = 'bbbbbbbb-bbbb-4bbb-
 let T, EVENTS, RPC, NID
 const dayN = (k) => new Date(Date.now() + k * 86400000).toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })
 const reset = (settings = {}) => { EVENTS = []; RPC = []; NID = 100; T = {
-  app_data: [{ key: 'ops_settings', data: { prn_page_live: true, ...settings } }, { key: 'coverage_cases', data: [{ id: 'cv1', status: 'open', client: 'Ruth Lane', shift_date: dayN(3), shift_time: '09:00-13:00', opened_at: new Date().toISOString(), asked: [] }] }],
+  app_data: [{ key: 'ops_settings', data: { prn_page_live: true, prn_oncall_offered: Object.fromEntries(['sun','mon','tue','wed','thu','fri','sat'].flatMap((d) => [[d + ':day', true], [d + ':overnight', true]])), ...settings } }, { key: 'coverage_cases', data: [{ id: 'cv1', status: 'open', client: 'Ruth Lane', shift_date: dayN(3), shift_time: '09:00-13:00', opened_at: new Date().toISOString(), asked: [] }] }],
   pay_tracks: [{ applicant_id: GRACE, track: 'prn_team', team: 'cna', since: dayN(-60), axiscare_caregiver_id: '11' }, { applicant_id: DEN, track: 'prn_team', team: 'cna', since: dayN(-60), axiscare_caregiver_id: '22' },
     { applicant_id: TASHA, track: 'prn_team', team: 'caregiver', since: dayN(-5), axiscare_caregiver_id: null }],
   job_applicants: [{ id: GRACE, first_name: 'Grace', last_name: 'Hill', phone: '4175550101', prn: {} }, { id: DEN, first_name: 'Denise', last_name: 'Gough', phone: '4175550202', prn: {} }, { id: TASHA, first_name: 'Tasha', last_name: 'Fox', phone: '4175550303', prn: {} }],

@@ -14,7 +14,7 @@
 //   oncall_offer  {applicant_id, pattern, note?}: what a PRN CNA offered (every weekend, every other weekend, one weekend a
 //                 month, a weekday, not right now), usually from the welcome call. An offer never puts anyone on call.
 //   oncall_confirm {applicant_id, start_date, end_date, shift?, note?}: a date the office confirmed with them (up to 7 days),
-//                 and which shift: day (7am to 5pm), overnight (5pm to 7am) or whole (24 hours); needed once
+//                 and which shift: day (7am to 7pm), overnight (7pm to 7am) or whole (24 hours); needed once
 //                 ops_settings.prn_oncall_shift_live is on (2026-10-29), so payroll knows what to pay. Shows on
 //                 their PRN Team page later (step 5).
 //   oncall_cancel {id}: takes a confirmed date back (kept, marked cancelled).
@@ -96,7 +96,7 @@ import { monthFacts, readDraft, lastMonth, isMonth, monthWord, monthlyText, mont
 import { keptMessage } from '../_shared/prn-page-texts.ts'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
 import { readMentor, readAsk, mentorLive, SKILLS, KINDS } from '../_shared/prn-mentor.ts'
-import { withKeys, personCols, isCaregiverKey, inviteList, inviteText, isLevel3, INVITE_DEFAULT, calendar, payMonth, blockOf, signedCurrent, termsText, termsVersion, onCallNow, holdFor, outcomeFor, takeBackOnMiss, onCallAsk, slotsOf, fillPlan, endPlan, seriesView, seriesWord, weekdayOf, SLOT_WORD, MISS_KINDS, OUTCOMES, HOLD_MIN } from '../_shared/prn-oncall.ts'
+import { withKeys, personCols, isCaregiverKey, inviteList, inviteText, isLevel3, INVITE_DEFAULT, offeredOf, offeredWords, calendar, payMonth, blockOf, signedCurrent, termsText, termsVersion, onCallNow, holdFor, outcomeFor, takeBackOnMiss, onCallAsk, slotsOf, fillPlan, endPlan, seriesView, seriesWord, weekdayOf, SLOT_WORD, MISS_KINDS, OUTCOMES, HOLD_MIN } from '../_shared/prn-oncall.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
@@ -275,7 +275,8 @@ Deno.serve(async (req) => {
       oncall: { ...oncall, patterns: PATTERNS, stipend: null, shifts: SHIFTS, shift_live: st.prn_oncall_shift_live === true,
         /* for payroll: this month and last month, by shift (counts only) */
         payroll: [t.slice(0, 7), new Date(Date.parse(t.slice(0, 7) + '-01T12:00:00Z') - 86_400_000).toISOString().slice(0, 7)].map((mo) => ({ month: mo, members: ocx.ok ? payMonth(ocRows, ocx.marks, people, mo) : onCallMonth(oc.data ?? [], mem, mo) })),
-        calendar: calendar({ rows: ocRows, marks: ocx.marks, members: people, today: t, series }), slot_words: SLOT_WORD, miss_kinds: MISS_KINDS,
+        calendar: calendar({ rows: ocRows, marks: ocx.marks, members: people, today: t, series, offered: offeredOf(st) }), slot_words: SLOT_WORD, miss_kinds: MISS_KINDS,
+        offered: offeredOf(st), offered_words: offeredWords(offeredOf(st)), offered_set: !!st.prn_oncall_offered,
         series: seriesView(series, people), invite_live: st.prn_oncall_invite_live === true, weekly_ready: !se.error, fill: filled,
         records_ready: ocx.ok, signup_live: st.prn_oncall_signup_live === true, first_live: st.prn_oncall_first_live === true, hold_min: HOLD_MIN,
         terms_version: tv, terms: termsText(st),
@@ -439,7 +440,7 @@ Deno.serve(async (req) => {
     if (s < today()) return json({ error: 'That date has passed.' }, 400)
     const shift = ask ? S(ask.shift, 10) : S(b.shift, 10)
     if (shift && !SHIFTS[shift]) return json({ error: 'Which shift: daytime, overnight or the whole day?' }, 400)
-    if (!shift && (st.prn_oncall_shift_live === true || one)) return json({ error: 'Which shift: daytime (7am to 5pm), overnight (5pm to 7am) or the whole day?' }, 400)
+    if (!shift && (st.prn_oncall_shift_live === true || one)) return json({ error: 'Which shift: daytime (7am to 7pm), overnight (7pm to 7am) or the whole day?' }, 400)
     /* decision 24/25: with sign-up on, only someone who signed the current expectations and isn't blocked by a miss */
     if (st.prn_oncall_signup_live === true) {
       const r = await onCallExtras([m.applicant_id])

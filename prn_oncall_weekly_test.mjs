@@ -70,7 +70,7 @@ let T, EVENTS, NID
 const dayN = (k) => new Date(Date.now() + k * 86400000).toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })
 const V = O.termsVersion(O.TERMS_DEFAULT)
 const reset = (settings = {}) => { EVENTS = []; NID = 100; T = {
-  app_data: [{ key: 'ops_settings', data: { prn_page_live: true, prn_oncall_signup_live: true, ...settings } }, { key: 'coverage_cases', data: [] }],
+  app_data: [{ key: 'ops_settings', data: { prn_page_live: true, prn_oncall_signup_live: true, prn_oncall_offered: Object.fromEntries(['sun','mon','tue','wed','thu','fri','sat'].flatMap((d) => [[d + ':day', true], [d + ':overnight', true]])), ...settings } }, { key: 'coverage_cases', data: [] }],
   pay_tracks: [{ applicant_id: GRACE, track: 'prn_team', team: 'cna', since: dayN(-60), axiscare_caregiver_id: '11' }, { applicant_id: DEN, track: 'prn_team', team: 'cna', since: dayN(-60), axiscare_caregiver_id: '22' }],
   job_applicants: [{ id: GRACE, first_name: 'Grace', last_name: 'Hill', phone: '4175550101', prn: {} }, { id: DEN, first_name: 'Denise', last_name: 'Gough', phone: '4175550202', prn: {} }],
   prn_shift_log: [], prn_touches: [], prn_oncall: [], prn_oncall_series: [], prn_oncall_marks: [], prn_page_log: [], prn_monthly: [],
