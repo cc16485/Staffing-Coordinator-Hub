@@ -14,6 +14,17 @@
 //   26  A shift that opens during someone's on-call time: the case shows "On call now", the office calls them first, and the
 //       automatic texts wait until the office records how the call went, for at most HOLD_MIN minutes.
 //   27  Giving a shift back: they call the office at least 24 hours ahead; the office takes it back on the calendar.
+// EVERY WEEK (Samantha 2026-10-30, "Yes to all 7"): an open shift can be taken one time or every week (a series,
+// prn_oncall_series; each week is still its own prn_oncall row with series_id, so payroll and decision 26 are unchanged).
+//   W1  The office confirms an every-week shift once; each new week is added already confirmed, 4 weeks ahead (fillPlan;
+//       the daily fill and every office look run it).
+//   W2  A week someone else already holds is skipped, that week only; the series keeps going.
+//   W3  No end date. Their 60-day check-in (My hours on their page) lists their every-week shifts.
+//   W4  They stop it by calling the office at least 24 hours ahead; the office ends it, and a shift starting within 24 hours
+//       stays theirs (endPlan). The page has no Stop button.
+//   W5  A miss ends every series of theirs (with decision 25's take-back).
+//   W6  Rule 6 of the expectations gains one sentence (a new version: they sign again).
+//   W7  An every-week ask is one of the 10 waiting asks; no cap on how many every-week shifts someone holds.
 // Only decisions here (no reads or writes), so every rule is tested. Pay amounts are never here (her plan has them).
 // =============================================================================
 // deno-lint-ignore no-explicit-any
@@ -47,7 +58,7 @@ export const TERMS_DEFAULT = [
   '3. Be ready to start a shift within 1 hour.',
   '4. If the office calls you about an open shift during your on-call time, you cover it.',
   "5. If you don't answer the office within 15 minutes, or you don't cover the shift, you won't be paid for that on-call shift, and you won't be able to sign up for on call again.",
-  '6. If something comes up, call the office at least 24 hours before your on-call shift starts.',
+  '6. If something comes up, call the office at least 24 hours before your on-call shift starts. To stop an every-week on-call shift, call the office at least 24 hours before the next one starts.',
 ].join('\n')
 export const termsText = (st: Any) => S(st?.prn_oncall_terms, 4000) || TERMS_DEFAULT
 /** A short fingerprint of the exact words: any change to them is a new version, signed again. */
@@ -85,28 +96,33 @@ export function slotsOf(r: Any): { date: string; slot: Slot }[] {
 const nameOf = (members: Any[], aid: string) => (members.find((m) => m.applicant_id === aid) || { name: 'Someone no longer on the team' }).name
 
 /** Decision 22: the office calendar, 4 weeks from Monday of this week. */
-export function calendar(x: { rows: Any[]; marks: Any[]; members: Any[]; today: string; days?: number }): Any[] {
+export function calendar(x: { rows: Any[]; marks: Any[]; members: Any[]; today: string; days?: number; series?: Any[] }): Any[] {
   const start = mondayOf(x.today), n = x.days ?? DAYS_AHEAD, rows = live(x.rows)
   const days = Array.from({ length: n }, (_, i) => addDays(start, i))
-  const cell = () => ({ confirmed: [] as Any[], asked: [] as Any[] })
+  const cell = () => ({ confirmed: [] as Any[], asked: [] as Any[], skipped: [] as Any[] })
   const by: Record<string, Any> = {}
   for (const d of days) by[d] = { date: d, past: d < x.today, day: cell(), overnight: cell() }
   for (const r of rows) {
     if (r.kind !== 'confirmed' && r.kind !== 'asked') continue
     for (const sl of slotsOf(r)) {
       const c = by[sl.date]?.[sl.slot]; if (!c) continue
-      const who = { id: r.id, applicant_id: r.applicant_id, name: nameOf(x.members, r.applicant_id) }
+      const who = { id: r.id, applicant_id: r.applicant_id, name: nameOf(x.members, r.applicant_id), weekly: r.series_id != null }
       if (r.kind === 'asked') c.asked.push({ ...who, at: r.at || null })
       else { const m = missOf(x.marks, r.id); c.confirmed.push({ ...who, whole: S(r.shift, 10) !== 'day' && S(r.shift, 10) !== 'overnight', shift_recorded: !!S(r.shift, 10), missed: m ? m.kind : null }) }
     }
+  }
+  /* W2: an every-week shift someone else holds that week */
+  for (const k of fillPlan({ series: x.series || [], rows: x.rows, today: x.today, days: n }).skipped) {
+    const c = by[k.date]?.[k.slot]; if (c) c.skipped.push({ series_id: k.series_id, applicant_id: k.applicant_id, name: nameOf(x.members, k.applicant_id) })
   }
   for (const d of days) for (const sl of SLOTS) { const c = by[d][sl]; c.gap = !by[d].past && !c.confirmed.some((p: Any) => !p.missed) }
   return days.map((d) => by[d])
 }
 
 /** Decision 23: what a member sees, today plus 4 weeks. Never another person's name. */
-export function memberSlots(x: { rows: Any[]; aid: string; today: string; nowNaive: string; days?: number }): Any[] {
+export function memberSlots(x: { rows: Any[]; aid: string; today: string; nowNaive: string; days?: number; series?: Any[] }): Any[] {
   const rows = live(x.rows), n = x.days ?? DAYS_AHEAD, out: Any[] = []
+  const skip = new Set(fillPlan({ series: (x.series || []).filter((s) => s?.applicant_id === x.aid), rows: x.rows, today: x.today, days: n }).skipped.map((k) => k.date + k.slot))
   const soon = new Date(Date.parse(x.nowNaive + ':00Z') + ASK_LEAD_MIN * 60000).toISOString().slice(0, 16)
   for (let i = 0; i < n; i++) {
     const d = addDays(x.today, i), row: Any = { date: d }
@@ -114,10 +130,10 @@ export function memberSlots(x: { rows: Any[]; aid: string; today: string; nowNai
       const here = rows.filter((r) => (r.kind === 'confirmed' || r.kind === 'asked') && slotsOf(r).some((s) => s.date === d && s.slot === sl))
       const mine = here.find((r) => r.kind === 'confirmed' && r.applicant_id === x.aid), ask = here.find((r) => r.kind === 'asked' && r.applicant_id === x.aid)
       const [st] = slotWindow(d, sl)
-      row[sl] = mine ? { state: 'mine', can_give_back: Date.parse(st + ':00Z') - Date.parse(x.nowNaive + ':00Z') >= GIVE_BACK_HOURS * 3600000 }
-        : ask ? { state: 'asked', id: ask.id }
+      row[sl] = mine ? { state: 'mine', weekly: mine.series_id != null, can_give_back: Date.parse(st + ':00Z') - Date.parse(x.nowNaive + ':00Z') >= GIVE_BACK_HOURS * 3600000 }
+        : ask ? { state: 'asked', id: ask.id, weekly: ask.series_id != null }
         : st <= soon ? { state: 'past' }
-        : here.some((r) => r.kind === 'confirmed') ? { state: 'taken' } : { state: 'open' }
+        : here.some((r) => r.kind === 'confirmed') ? { state: 'taken', ...(skip.has(d + sl) ? { skip: true } : {}) } : { state: 'open' }
     }
     out.push(row)
   }
@@ -132,11 +148,12 @@ export function blockOf(marks: Any[], aid: string): { blocked: boolean; miss: An
 }
 
 /** A member's asks, checked: real dates and shifts, open, far enough ahead, within 4 weeks, not too many waiting. */
-export function readAsks(b: Any, x: { rows: Any[]; aid: string; today: string; nowNaive: string }): { ok: true; slots: { date: string; slot: Slot }[] } | { ok: false; error: string } {
+export function readAsks(b: Any, x: { rows: Any[]; aid: string; today: string; nowNaive: string; series?: Any[] }): { ok: true; slots: { date: string; slot: Slot; weekly: boolean }[] } | { ok: false; error: string } {
   const want = Array.isArray(b?.slots) ? b.slots.slice(0, 40) : []
   if (!want.length) return { ok: false, error: 'Tap the shifts you would like first.' }
   const view = memberSlots({ rows: x.rows, aid: x.aid, today: x.today, nowNaive: x.nowNaive })
-  const seen = new Set<string>(), out: { date: string; slot: Slot }[] = []
+  const seen = new Set<string>(), out: { date: string; slot: Slot; weekly: boolean }[] = []
+  const mineLive = liveSeries(x.series || []).filter((s) => s.applicant_id === x.aid)
   for (const w of want) {
     const d = S(w?.date, 10), sl = S(w?.slot, 12)
     if (!YMD.test(d) || (sl !== 'day' && sl !== 'overnight')) return { ok: false, error: 'One of those shifts could not be read. Please try again.' }
@@ -144,12 +161,57 @@ export function readAsks(b: Any, x: { rows: Any[]; aid: string; today: string; n
     const v = view.find((r) => r.date === d)?.[sl]
     if (!v) return { ok: false, error: 'You can sign up for the next 4 weeks.' }
     if (v.state !== 'open') return { ok: false, error: v.state === 'taken' ? 'Someone just took one of those shifts. Please look again.' : v.state === 'past' ? 'One of those shifts starts too soon to sign up for. Call the office instead.' : 'You already have one of those shifts.' }
-    out.push({ date: d, slot: sl })
+    const weekly = w?.weekly === true
+    if (weekly && mineLive.some((s) => s.slot === sl && weekdayOf(S(s.first_date, 10)) === weekdayOf(d))) return { ok: false, error: `You already have this shift every week, or asked for it (${seriesWord({ first_date: d, slot: sl })}).` }
+    if (weekly && out.some((o) => o.weekly && o.slot === sl && weekdayOf(o.date) === weekdayOf(d))) return { ok: false, error: 'Pick each every-week shift once. It repeats on its own.' }
+    out.push({ date: d, slot: sl, weekly })
   }
   const waiting = live(x.rows).filter((r) => r.kind === 'asked' && r.applicant_id === x.aid).length
   if (waiting + out.length > MAX_OPEN_ASKS) return { ok: false, error: `You can have up to ${MAX_OPEN_ASKS} shifts waiting for the office at a time.` }
   return { ok: true, slots: out }
 }
+
+/* ── EVERY WEEK (W1 to W7, 2026-10-30) ── */
+export const WEEKDAY_PL = ['Sundays', 'Mondays', 'Tuesdays', 'Wednesdays', 'Thursdays', 'Fridays', 'Saturdays']
+export const weekdayOf = (ymd: string) => new Date(ymd + 'T12:00:00Z').getUTCDay()
+/** "Saturdays, daytime" */
+export const seriesWord = (s: Any) => `${WEEKDAY_PL[weekdayOf(S(s?.first_date, 10))] || 'Every week'}, ${S(s?.slot, 10) === 'day' ? 'daytime' : 'overnight'}`
+export const liveSeries = (series: Any[]) => series.filter((s) => s && (s.status === 'asked' || s.status === 'confirmed'))
+/** The dates an every-week shift falls on, from today for `days` days (never before it started). */
+export function seriesDates(s: Any, today: string, days = DAYS_AHEAD): string[] {
+  let d = S(s?.first_date, 10); if (!YMD.test(d)) return []
+  const end = addDays(today, days - 1), out: string[] = []
+  while (d < today) d = addDays(d, 7)
+  for (; d <= end; d = addDays(d, 7)) out.push(d)
+  return out
+}
+/** W1/W2: the weeks to add to each confirmed every-week shift, and the weeks someone else holds. A week the series already has a
+    row for (even one taken back or given back) is never added again; a week they hold some other way is left as it is. With
+    nowNaive, a week that has already started is not added. */
+export function fillPlan(x: { series: Any[]; rows: Any[]; today: string; nowNaive?: string; days?: number }): { add: Any[]; skipped: Any[] } {
+  const add: Any[] = [], skipped: Any[] = [], rows = x.rows.filter(Boolean)
+  for (const s of x.series.filter((s) => s?.status === 'confirmed' && (s.slot === 'day' || s.slot === 'overnight'))) {
+    for (const d of seriesDates(s, x.today, x.days)) {
+      if (x.nowNaive && slotWindow(d, s.slot)[0] <= x.nowNaive) continue
+      if (rows.some((r) => r.series_id != null && Number(r.series_id) === Number(s.id) && S(r.start_date, 10) === d)) continue
+      const here = live(rows).filter((r) => r.kind === 'confirmed' && slotsOf(r).some((z) => z.date === d && z.slot === s.slot))
+      if (here.some((r) => r.applicant_id === s.applicant_id)) continue
+      const k = { series_id: s.id, applicant_id: s.applicant_id, date: d, slot: s.slot as Slot }
+      if (here.length) skipped.push({ ...k, held_by: here[0].applicant_id }); else add.push(k)
+    }
+  }
+  return { add, skipped }
+}
+/** W4: ending an every-week shift takes back its weeks that start at least 24 hours from now; sooner ones stay theirs. */
+export function endPlan(x: { seriesId: unknown; rows: Any[]; nowNaive: string }): { cancel: Any[]; kept: Any[] } {
+  const mine = live(x.rows).filter((r) => r.kind === 'confirmed' && r.series_id != null && Number(r.series_id) === Number(x.seriesId))
+  const late = (r: Any) => Date.parse(slotWindow(S(r.start_date, 10), S(r.shift, 10))[0] + ':00Z') - Date.parse(x.nowNaive + ':00Z') >= GIVE_BACK_HOURS * 3600000
+  return { cancel: mine.filter(late), kept: mine.filter((r) => !late(r) && slotWindow(S(r.start_date, 10), S(r.shift, 10))[1] > x.nowNaive) }
+}
+/** A person's live every-week shifts, for their page, their check-in and the office. */
+export const seriesView = (series: Any[], members: Any[] = []) => liveSeries(series).sort((a, b) => weekdayOf(S(a.first_date, 10)) - weekdayOf(S(b.first_date, 10)) || S(a.slot).localeCompare(S(b.slot)))
+  .map((s) => ({ id: s.id, applicant_id: s.applicant_id, name: members.length ? nameOf(members, s.applicant_id) : undefined, word: seriesWord(s), slot: s.slot, weekday: weekdayOf(S(s.first_date, 10)),
+    status: s.status, since: S(s.first_date, 10), confirmed_by: s.confirmed_by || null }))
 
 /* ── decision 26: on call when a shift opens ── */
 /** The start of a coverage case's shift ('YYYY-MM-DDTHH:MM'), or null. */
