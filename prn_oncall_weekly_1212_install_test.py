@@ -74,7 +74,7 @@ try:
     c, out = run()
     ck("clean run from a fresh copy: exit 0, DONE", c == 0 and "1212: DONE" in out, out[-1500:])
     ck("Part 1: the reviewed build, the tests (all eight), switches left as they are, gateway settings kept, the vault secret", "the reviewed build is what is on GitHub's main" in out
-       and ("tests pass" in out or "tests were not re-run" in out) and "both off (members see nothing new yet)" in out and "prn-week on, prn-page off" in out and "the jobs' secret is there" in out, out[:2500])
+       and "more-hours tests pass" in out and "both off (members see nothing new yet)" in out and "prn-week on, prn-page off" in out and "the jobs' secret is there" in out, out[:2500])
     ck("Part 2: the SQL in one transaction, both functions deployed keeping their gateway setting", any("create table if not exists public.prn_oncall_series" in q for q in S["sql"] if q.startswith("begin;"))
        and deploys() == ["prn-week", "prn-page"] and cli().count("--no-verify-jwt") == 1 and re.search(r"deploy prn-page .*--no-verify-jwt", cli()), cli())
     cmd = S["cron"].group(2).replace("''", "'") if S["cron"] else ""
