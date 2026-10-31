@@ -22,6 +22,7 @@
 // Switch ops_settings.prn_mentor_live (off), and the PRN Team page must be open.
 // Only decisions here (no reads or writes).
 // =============================================================================
+import { visitWindow, wallMin } from './overlap.ts'
 // deno-lint-ignore no-explicit-any
 type Any = any
 const S = (v: unknown, n = 200) => String(v ?? '').trim().slice(0, n)
@@ -132,4 +133,38 @@ export function landing(v: Any, mentorName: string, report: Record<string, strin
     report, guide: v.guide === true, va: v.va === true,
     reminder: v.guide === true ? 'GUIDE client: share this with their GUIDE care navigator through Continuum. Their care plan changes only together with them.'
       : v.va === true ? 'VA client: check the VA authorization before changing services.' : null }
+}
+
+/* ── 2026-10-31 · THE TEXT (Samantha: "manually put in a field Support request that will show up on the PRNs little hub and
+   will text them just like an open shift") ──
+   A request texts each PRN CNA it could go to (mayOffer, the same check as their page) with their own page link, where they
+   answer "I can do it" or "Not this time". Never anyone working a Caring Companions shift right now, never 9pm to 8am (prn-week),
+   each person once per visit. Switch ops_settings.prn_mentor_text_live, and Field Support Visits on. */
+export const MENTOR_TEXT_DEFAULT = "Hi {first_name}, it's Caring Companions. A Field Support Visit is open: {what}, {when}. Can you do it? Tap to say yes or not this time: {link} No pressure either way."
+export const mentorTextLive = (st: Any) => st?.prn_mentor_text_live === true && mentorLive(st)
+const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'], MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+const t12 = (t: string) => { const h = Number(t.slice(0, 2)), m = t.slice(3, 5); return `${h % 12 || 12}${m === '00' ? '' : ':' + m}${h >= 12 ? 'pm' : 'am'}` }
+/** "Thu Nov 5, 10am to 11am" */
+export function whenWords(date: string, time: string): string {
+  if (!/^\d{4}-\d\d-\d\d$/.test(date) || !/^\d\d:\d\d-\d\d:\d\d$/.test(time)) return ''
+  const d = new Date(date + 'T12:00:00Z')
+  return `${DOW[d.getUTCDay()]} ${MON[d.getUTCMonth()]} ${d.getUTCDate()}, ${t12(time.slice(0, 5))} to ${t12(time.slice(6, 11))}`
+}
+/** What the visit is, in a few words, first names only: "a Hoyer lift transfers refresher with Amy at Ruth's home". */
+export function whatWords(v: Any): string {
+  const client = S(v?.client_name, 80).split(/\s+/)[0] || 'a client'
+  if (v?.kind === 'refresher') return `a ${(SKILLS[v.skill] || 'skills')} refresher with ${S(v.caregiver_name, 80).split(/\s+/)[0] || 'their caregiver'} at ${client}'s home`
+  if (v?.kind === 'care_update') return `a care update visit with ${client}`
+  return `a supervisory visit with ${client}`
+}
+/** The text, from her wording (ops_settings.prn_mentor_text_msg) or the default. */
+export function mentorText(tmpl: unknown, first: string, v: Any, link: string): string {
+  const t = S(tmpl, 700) || MENTOR_TEXT_DEFAULT
+  return t.replace(/\{first_name\}/g, first || 'there').replace(/\{what\}/g, whatWords(v)).replace(/\{when\}/g, whenWords(S(v?.visit_date, 10), S(v?.visit_time, 11))).replace(/\{link\}/g, link)
+}
+/** Working a Caring Companions shift right now (clocked in, not out)? rows: their AxisCare visits today. nowNaive: Central
+    wall time "YYYY-MM-DDTHH:MM". Her rule: nobody working right now is texted, even if the visit doesn't overlap. */
+export function workingNow(rows: Any[], nowNaive: string): boolean {
+  const now = wallMin(nowNaive); if (now == null) return false
+  return (rows || []).some((v) => { const w = visitWindow(v, now); return !!w && (w.clockedIn || (w.start <= now && now < w.end)) })
 }

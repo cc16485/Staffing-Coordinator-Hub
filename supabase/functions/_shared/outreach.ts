@@ -234,6 +234,12 @@ export const SENDER_REGISTER: Record<string, { class: OutreachClass; why: string
     why: 'PRN step 6 (Samantha 2026-10-28 decision 7): the monthly PRN Team update, a short text with their own page link, sent '
       + 'when an office person taps Send in PRN Teams (never 9pm to 8am, enforced in prn-week); each member at most once a month. '
       + 'Off until ops_settings.prn_monthly_live, and only while the PRN Team page is open.' },
+  'prn-field-support':  { class: 'routine_internal', scheduled: false,
+    why: 'Field Support Visits (Samantha 2026-10-31: a request "will text them just like an open shift"): one text to each PRN CNA '
+      + 'approved for Field Support Visits the request could go to (skill, break, Do Not Return, free in AxisCare then), with their own '
+      + 'PRN Team page link to answer; sent when an office person requests the visit or taps Text them in PRN Teams. Never anyone '
+      + 'working a shift right now, never 9pm to 8am, once per person per visit (enforced in prn-week). Off until '
+      + 'ops_settings.prn_mentor_text_live.' },
   'oncall-invite':      { class: 'routine_internal', scheduled: false,
     why: 'On call for our caregivers (Samantha 2026-10-30, Krystal\'s idea, Level 3 only): one text inviting a Level 3 caregiver to '
       + 'sign up for on-call shifts, with their own My on-call link, sent when an office person taps Send invite on the On call tab '

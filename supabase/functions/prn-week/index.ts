@@ -70,6 +70,13 @@
 //   mentor_list   {client_ax?}: the asks (for one client, or every open one), with each mentor's answer.
 //   mentor_assign {id, applicant_id}: the coordinator put it in AxisCare for this mentor (recorded here; nothing is sent).
 //   mentor_cancel {id}: an ask that is no longer needed (kept, marked cancelled).
+//   (2026-10-31, Samantha: Field Support Visits get their own PRN Teams tab, and a request "will text them just like an open
+//   shift") mentor_ask {..., text: true} also texts each PRN CNA it could go to (the same check as their page: approved, the
+//   skill, not on a break, not Do Not Return, free in AxisCare then) with their own page link; never anyone working a shift right
+//   now, never 9pm to 8am, each person once per visit (prn_mentor_texts). mentor_text {id}: text the ones not texted yet (after
+//   9pm, or someone was working). A refused or failed text is listed back and raises "Didn't go through". Switch
+//   ops_settings.prn_mentor_text_live (off: the request still shows on their pages, nothing is texted).
+//   mentor_list with no client: every open and assigned request from today on (the Field Support Visits tab).
 //   monthly_send  {month}: one tap texts every PRN member a short line with their own page link (the full update is on their
 //                 page). Switch ops_settings.prn_monthly_live, and the page must be open. Never 9pm to 8am. Through the same
 //                 gates as every caregiver text; each member at most once a month; a refused or failed text is listed back and
@@ -95,7 +102,7 @@ import { familiarClients, noBackup, weekLines, GOBACK_DEFAULT, FAMILIAR_DAYS, ty
 import { monthFacts, readDraft, lastMonth, isMonth, monthWord, monthlyText, monthlyRef, monthlyLive, sendHour, MONTHLY_TEXT_DEFAULT, STEADY_LINE } from '../_shared/prn-monthly.ts'
 import { keptMessage } from '../_shared/prn-page-texts.ts'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
-import { readMentor, readAsk, mentorLive, SKILLS, KINDS } from '../_shared/prn-mentor.ts'
+import { readMentor, readAsk, mentorLive, mayOffer, mentorTextLive, mentorText, workingNow, MENTOR_TEXT_DEFAULT, SKILLS, KINDS } from '../_shared/prn-mentor.ts'
 import { withKeys, personCols, isCaregiverKey, inviteList, inviteText, isLevel3, INVITE_DEFAULT, offeredOf, offeredWords, calendar, payMonth, blockOf, signedCurrent, termsText, termsVersion, onCallNow, holdFor, outcomeFor, takeBackOnMiss, onCallAsk, slotsOf, fillPlan, endPlan, seriesView, seriesWord, weekdayOf, SLOT_WORD, MISS_KINDS, OUTCOMES, HOLD_MIN } from '../_shared/prn-oncall.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
@@ -659,6 +666,53 @@ Deno.serve(async (req) => {
       summary: rec.on ? `${who.name} approved ${m.name} for Field Support Visits (${rec.skills.map((k: string) => SKILLS[k]).join(', ')})` : `${who.name}: ${m.name} is no longer approved for Field Support Visits` })
     return json({ outcome: 'saved', gap_mentor: rec })
   }
+  /* 2026-10-31: text a request to each PRN CNA it could go to. Never throws; says who was texted and why not the others. */
+  const textMentors = async (v: Any) => {
+    const out = { sent: [] as string[], not: [] as { name: string; why: string }[], failed: [] as string[], refused: [] as string[], no_phone: [] as string[], held: null as string | null, error: null as string | null }
+    if (!mentorTextLive(st)) { out.held = 'Texting Field Support Visits is switched off (Settings, PRN Teams). It shows on their PRN Team pages; nothing was texted.'; return out }
+    const hour = Number(new Date().toLocaleString('en-US', { timeZone: 'America/Chicago', hour: '2-digit', hour12: false })) % 24
+    if (!sendHour(hour)) { out.held = 'Caregivers are not texted between 9pm and 8am. It shows on their PRN Team pages now; tap Text them in the morning.'; return out }
+    const secret = Deno.env.get('HUB_JOB_SECRET') ?? ''
+    const ghl = { token: Deno.env.get('GHL_TOKEN') || Deno.env.get('GHL_API_KEY') || '', locationId: Deno.env.get('GHL_LOCATION_ID') ?? '' }
+    if (secret.length < 32) { out.error = 'Page links are not set up on this project. Nothing was texted.'; return out }
+    if (!ghl.token || !ghl.locationId) { out.error = 'GoHighLevel is not configured. Nothing was texted.'; return out }
+    const tx = await sb.from('prn_mentor_texts').select('applicant_id').eq('visit_id', v.id)
+    if (tx.error) { out.error = 'Field Support Visit texts are not set up yet (prn_fsv_texts.sql). Nothing was texted.'; return out }
+    const { data: ans } = await sb.from('prn_mentor_answers').select('applicant_id').eq('visit_id', v.id)
+    const done = new Set([...(tx.data ?? []), ...(ans ?? [])].map((x: Any) => x.applicant_id))
+    const cna = mem.filter((m) => m.team === 'cna')
+    const { data: apps } = cna.length ? await sb.from('job_applicants').select('id, prn, phone, first_name, last_name').in('id', cna.map((m) => m.applicant_id)) : { data: [] }
+    const dnr = list(await readKey(sb, 'dnr_log')), roster = list(await readKey(sb, 'caregivers'))
+    const d = S(v.visit_date, 10), t = today()
+    for (const m of cna) {
+      const app = (apps ?? []).find((a: Any) => a.id === m.applicant_id) || {}
+      const prn = app.prn && typeof app.prn === 'object' ? app.prn : {}
+      if (prn.gap_mentor?.on !== true || done.has(m.applicant_id)) continue
+      const r = m.axiscare_id ? await visitsOf(m.axiscare_id, d, d) : { rows: [], why: 'not on the schedule' }
+      const ok = mayOffer({ mentor: { name: m.name, team: m.team, prn, axiscare_id: m.axiscare_id }, visit: v, dnr, rows: r.why ? null : r.rows })
+      if (!ok.ok) { out.not.push({ name: m.name, why: ok.why || 'not a fit' }); continue }
+      const nowR = d === t ? r : await visitsOf(m.axiscare_id!, t, t)
+      if (nowR.why) { out.not.push({ name: m.name, why: "AxisCare couldn't be read" }); continue }
+      if (workingNow(nowR.rows, chicagoNow())) { out.not.push({ name: m.name, why: 'working a shift right now (text them later)' }); continue }
+      const cg = roster.find((c: Any) => String(c?.axiscare_id ?? '') === m.axiscare_id)
+      const phone = normalisePhone(cg?.phone) || normalisePhone(app.phone)
+      if (!phone) { out.no_phone.push(m.name); continue }
+      let refusal: string[] = []
+      const contact = await contactForOutbound(sb, ghl, { phone, firstName: cg?.first || app.first_name, lastName: cg?.last || app.last_name }, 'routine_internal',
+        { audience: 'caregiver', channel: 'sms', sender: 'prn-field-support', humanInitiated: true, onOptOut: (x: string[]) => { refusal = x } })
+      if (!contact) { out.refused.push(`${m.name}${refusal.length ? ' (asked not to get texts)' : ''}`); continue }
+      const link = (await makePageLink(secret, m.applicant_id, pageExpiry())) + '#mentor'
+      const message = mentorText(st.prn_mentor_text_msg, m.first, v, link)
+      const sent = await ghlSendChecked(sb, { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' }, 'prn-field-support',
+        { channel: 'sms', contactId: contact.contactId, address: phone, who: m.name }, { message, fromNumber: MO_FROM })
+      if (!sent) { out.failed.push(m.name); continue }
+      out.sent.push(m.name)
+      await sb.from('prn_mentor_texts').insert({ visit_id: v.id, applicant_id: m.applicant_id, message: keptMessage(message, link), by_email: who.email, by_name: who.name })
+    }
+    if (out.sent.length || out.failed.length || out.refused.length) await opEvent(sb, { verb: 'prn_mentor_texted', actor_name: who.name, actor_email: who.email, item_id: String(v.id), area: 'caregivers',
+      summary: `${who.name} texted the Field Support Visit for ${v.client_name} to ${out.sent.length} PRN CNA${out.sent.length === 1 ? '' : 's'}` + (out.failed.length + out.refused.length + out.no_phone.length ? ` (${out.failed.length + out.refused.length + out.no_phone.length} not reached)` : ''), data: out })
+    return out
+  }
   if (action === 'mentor_ask') {
     if (!mentorLive(st)) return json({ outcome: 'off', error: st.prn_page_live !== true ? "The PRN Team page isn't open yet, so PRN CNAs can't see the ask. Nothing was saved."
       : 'Field Support Visits are switched off (Settings, PRN Teams). Nothing was saved.' }, 409)
@@ -667,19 +721,35 @@ Deno.serve(async (req) => {
     if (error) return json({ error: 'Could not save it: ' + error.message }, 500)
     await opEvent(sb, { verb: 'prn_mentor_asked', actor_name: who.name, actor_email: who.email, item_id: String(data?.id ?? ''), area: 'caregivers',
       summary: `${who.name} asked for a Field Support Visit: ${KINDS[r.ask.kind].label} for ${r.ask.client_name}, ${r.ask.visit_date} ${r.ask.visit_time}` })
-    return json({ outcome: 'asked', id: data?.id ?? null })
+    const texts = b.text === true && data?.id ? await textMentors({ ...r.ask, id: data.id }) : null
+    return json({ outcome: 'asked', id: data?.id ?? null, texts })
+  }
+  if (action === 'mentor_text') {
+    const id = Number(b.id); if (!Number.isInteger(id) || id <= 0) return json({ error: 'Which visit?' }, 400)
+    const { data: v } = await sb.from('prn_mentor_visits').select('*').eq('id', id).maybeSingle()
+    if (!v) return json({ error: 'No such visit.' }, 404)
+    if (v.status !== 'open' || S(v.visit_date, 10) < today()) return json({ error: 'This request is no longer open.' }, 409)
+    if (!mentorLive(st)) return json({ error: 'Field Support Visits are switched off (Settings, PRN Teams). Nothing was texted.' }, 409)
+    const texts = await textMentors(v)
+    return json({ outcome: texts.error ? 'error' : texts.held ? 'held' : 'texted', texts }, texts.error ? 500 : 200)
   }
   if (action === 'mentor_list') {
     const ax = S(b.client_ax, 20).replace(/\D/g, '')
     const base = sb.from('prn_mentor_visits').select('*')
-    const { data: vs, error } = await (ax ? base.eq('client_ax', ax) : base.eq('status', 'open')).order('visit_date', { ascending: false }).limit(40)
+    const { data: vs, error } = await (ax ? base.eq('client_ax', ax) : base.in('status', ['open', 'assigned']).gte('visit_date', today())).order('visit_date', { ascending: false }).limit(40)
     if (error) return json({ error: 'Field Support Visits are not set up yet (prn_mentor.sql).' }, 500)
     const ids = (vs ?? []).map((v: Any) => v.id)
     const { data: ans } = ids.length ? await sb.from('prn_mentor_answers').select('visit_id, applicant_id, answer, at').in('visit_id', ids) : { data: [] }
     const nameOf = (aid: string) => memberOf(aid)?.name || 'A PRN member'
-    return json({ ok: true, live: mentorLive(st), switch_on: st.prn_mentor_live === true, page_live: st.prn_page_live === true, skills: SKILLS, kinds: Object.fromEntries(Object.entries(KINDS).map(([k, v]) => [k, v.label])),
+    const approvedCount = async () => { const ids2 = mem.filter((m) => m.team === 'cna').map((m) => m.applicant_id); if (!ids2.length) return 0
+      const { data } = await sb.from('job_applicants').select('id, prn').in('id', ids2); return (data ?? []).filter((a: Any) => a?.prn?.gap_mentor?.on === true).length }
+    const tx = ids.length ? await sb.from('prn_mentor_texts').select('visit_id, applicant_id, at').in('visit_id', ids) : { data: [], error: null }
+    return json({ ok: true, live: mentorLive(st), switch_on: st.prn_mentor_live === true, page_live: st.prn_page_live === true, text_live: mentorTextLive(st), texts_ready: !tx.error,
+      text_default: MENTOR_TEXT_DEFAULT, text_tmpl: S(st.prn_mentor_text_msg, 700) || null, skills: SKILLS, kinds: Object.fromEntries(Object.entries(KINDS).map(([k, v]) => [k, v.label])),
+      approved: await approvedCount(),
       visits: (vs ?? []).map((v: Any) => ({ ...v, assigned_name: v.assigned_to ? nameOf(v.assigned_to) : null,
-        answers: (ans ?? []).filter((a: Any) => a.visit_id === v.id).map((a: Any) => ({ applicant_id: a.applicant_id, name: nameOf(a.applicant_id), answer: a.answer, at: a.at })) })) })
+        answers: (ans ?? []).filter((a: Any) => a.visit_id === v.id).map((a: Any) => ({ applicant_id: a.applicant_id, name: nameOf(a.applicant_id), answer: a.answer, at: a.at })),
+        texted: (tx.error ? [] : tx.data ?? []).filter((x: Any) => x.visit_id === v.id).map((x: Any) => nameOf(x.applicant_id)) })) })
   }
   if (action === 'mentor_assign' || action === 'mentor_cancel') {
     const id = Number(b.id); if (!Number.isInteger(id) || id <= 0) return json({ error: 'Which visit?' }, 400)
