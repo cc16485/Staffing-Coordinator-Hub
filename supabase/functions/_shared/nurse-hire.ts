@@ -15,6 +15,7 @@
 // Nothing here sends a message. The Approve to Work steps run only with the Admin switch nurse_hire_live on; off = practice.
 // deno-lint-ignore-file no-explicit-any
 import { ax, errText, recordAxisChange } from './axiscare-caregiver.ts'
+import { caregiverOf, classesSeen, CLASSES_STOP } from './axis-caregiver-read.ts'
 import { validKey } from './positions.ts'
 import { BrandPdf, COMPANY_RIGHT, FOOTER, MUTED } from './brand-pdf.ts'
 export const NURSE_SWITCH = 'nurse_hire_live'
@@ -144,8 +145,9 @@ export type ClassOutcome = { outcome: 'confirmed' | 'unchanged' | 'practice' | '
 export async function setCaregiverNurseClass(db: any, id: string, cred: 'LPN' | 'RN', by: string, via: string, live: boolean, send: typeof fetch = fetch): Promise<ClassOutcome> {
   const cg = String(id)
   if (!/^\d{1,12}$/.test(cg)) return { outcome: 'refused', detail: 'no AxisCare caregiver number on their roster record yet', recorded: false }
-  const g = await ax('GET', `/api/caregivers/${cg}`, undefined, send); const c = g?.json?.results?.caregiver ?? g?.json?.caregiver ?? (g?.json && g.json.id != null ? g.json : null)
+  const g = await ax('GET', `/api/caregivers/${cg}`, undefined, send); const c = caregiverOf(g?.json)   // 2026-10-31: AxisCare answers results.data
   if (!(g.status >= 200 && g.status < 300) || !c) return { outcome: 'refused', detail: 'could not read the caregiver in AxisCare: ' + errText(g), recorded: false }
+  if (!classesSeen(c)) return { outcome: 'refused', detail: CLASSES_STOP, recorded: false }   // the safety stop
   const have = rowsOf(c.classes)
   if (have.some((x: any) => nurseClassMatch(x?.label ?? x?.code, cred))) return { outcome: 'unchanged', recorded: false, classes: have.map((x: any) => String(x?.label ?? x?.code ?? '')) }
   const v = await ax('GET', '/api/classes/caregiver', undefined, send)
@@ -157,7 +159,7 @@ export async function setCaregiverNurseClass(db: any, id: string, cred: 'LPN' | 
   const next = [...have.map(slim), slim(want[0])]
   const p = await ax('PATCH', `/api/caregivers/${cg}`, { classes: next }, send)
   if (!(p.status >= 200 && p.status < 300)) { const recorded = await recordAxisChange(db, { kind: 'caregiver_class', caregiver: cg, outcome: 'refused', summary, detail: errText(p), by, via }); return { outcome: 'refused', detail: errText(p), recorded } }
-  const g2 = await ax('GET', `/api/caregivers/${cg}`, undefined, send); const c2 = g2?.json?.results?.caregiver ?? g2?.json?.caregiver ?? (g2?.json && g2.json.id != null ? g2.json : null); const after = rowsOf(c2?.classes)
+  const g2 = await ax('GET', `/api/caregivers/${cg}`, undefined, send); const c2 = caregiverOf(g2?.json); const after = rowsOf(c2?.classes)
   const good = after.some((x: any) => nurseClassMatch(x?.label ?? x?.code, cred)) && have.every((x: any) => after.some((y: any) => String(y?.label ?? y?.code) === String(x?.label ?? x?.code)))
   const recorded = await recordAxisChange(db, { kind: 'caregiver_class', caregiver: cg, outcome: good ? 'sent_confirmed' : 'sent', summary, detail: good ? 'read back: ' + after.map((x: any) => String(x?.label ?? x?.code)).join(', ') : 'the read-back did not show it exactly', by, via })
   return good ? { outcome: 'confirmed', recorded, classes: after.map((x: any) => String(x?.label ?? x?.code ?? '')) } : { outcome: 'sent', detail: 'AxisCare accepted the change but the read-back did not show it exactly', recorded }

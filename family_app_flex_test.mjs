@@ -83,7 +83,7 @@ const ax = async (method, p, body) => {
     return r(201, { visit: { ...W.visits[id] } })
   }
   const cm = u.pathname.match(/^\/api\/caregivers\/(\d+)$/)
-  if (method === 'GET' && cm) return CG[cm[1]] ? r(200, { results: { caregiver: CG[cm[1]] } }) : r(404, { errors: ['no'] })
+  if (method === 'GET' && cm) return CG[cm[1]] ? r(200, { results: { data: CG[cm[1]] } }) : r(404, { errors: ['no'] })
   const vm = u.pathname.match(/^\/api\/visits\/(.+)$/)
   if (vm) { const id = decodeURIComponent(vm[1]); const x = W.visits[id]
     if (method === 'GET') return x ? r(200, { results: x }) : r(404, { errors: ['not found'] })

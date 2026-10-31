@@ -63,7 +63,7 @@ globalThis.fetch = async (url, o) => {
   url = String(url); const m = o?.method || 'GET'
   if (url.endsWith('/api/classes/caregiver')) return new Response(JSON.stringify({ results: { classes: VOCAB } }), { status: 200 })
   const g = url.match(/\/api\/caregivers\/(\d+)$/)
-  if (g && m === 'GET') { const c = AXCG[g[1]]; return new Response(JSON.stringify(c ? { results: { caregiver: c } } : {}), { status: c ? 200 : 404 }) }
+  if (g && m === 'GET') { const c = AXCG[g[1]]; return new Response(JSON.stringify(c ? { results: { data: c } } : {}), { status: c ? 200 : 404 }) }
   if (g && m === 'PATCH') { const body = JSON.parse(o.body); PATCHES.push({ id: g[1], classes: body.classes }); if (PATCH_STATUS !== 200) return new Response('{"errors":["no"]}', { status: PATCH_STATUS })
     AXCG[g[1]].classes = body.classes.map((c) => VOCAB.find((v) => v.code === c.code || v.label === c.label) || c); return new Response('{}', { status: 200 }) }
   return new Response('{}', { status: 404 })

@@ -63,7 +63,7 @@ globalThis.fetch = async (url, o) => {
   url = String(url); const m = o?.method || 'GET'
   if (url.endsWith('/api/classes/caregiver')) return new Response(JSON.stringify({ results: { classes: VOCAB } }), { status: 200 })
   const g = url.match(/\/api\/caregivers\/(\d+)$/)
-  if (g && m === 'GET') { const c = AXCG[g[1]]; return new Response(JSON.stringify(c ? { results: { caregiver: c } } : {}), { status: c ? 200 : 404 }) }
+  if (g && m === 'GET') { const c = AXCG[g[1]]; return new Response(JSON.stringify(c ? { results: { data: c } } : {}), { status: c ? 200 : 404 }) }
   if (g && m === 'PATCH') { const body = JSON.parse(o.body); PATCHES.push({ id: g[1], classes: body.classes }); if (PATCH_STATUS !== 200) return new Response('{"errors":["no"]}', { status: PATCH_STATUS })
     AXCG[g[1]].classes = body.classes.map((c) => VOCAB.find((v) => v.code === c.code || v.label === c.label) || c); return new Response('{}', { status: 200 }) }
   return new Response('{}', { status: 404 })
@@ -169,6 +169,13 @@ VOCAB = [{ code: 'CNA', label: 'CNA' }]; reset(); ENV.SUPABASE_SERVICE_ROLE_KEY 
 await call({ action: 'start', applicant_id: A1 }); trk(A1).axiscare_caregiver_id = '9001'
 r = await call({ action: 'mark', applicant_id: A1 })
 ck('no PRN Team class at all: refused, nothing changed', r.j.outcome === 'classes_missing' && !PATCHES.length, r)
+/* 2026-10-31 the safety stop: AxisCare's answer without their class list never leads to a class change (it would erase their Level) */
+VOCAB = [{ code: 'PRN', label: 'PRN TEAM - CNA' }, { code: 'L3', label: 'LEVEL 3 ADVANCED CARE' }]; PATCHES = []
+AXCG[9001].classes = [{ code: 'L3', label: 'LEVEL 3 ADVANCED CARE' }]; const keepCls = AXCG[9001].classes; delete AXCG[9001].classes
+r = await call({ action: 'mark', applicant_id: A1 })
+ck('safety stop: a read without their classes = refused, nothing sent to AxisCare, says why', r.j.outcome === 'refused' && /didn't include their classes/.test(r.j.detail) && !PATCHES.length, r)
+AXCG[9001].classes = keepCls; r = await call({ action: 'mark', applicant_id: A1 })
+ck('...with their classes read: the PRN class is added and their Level is kept', r.j.outcome === 'updated' && labels(9001).sort().join('|') === 'LEVEL 3 ADVANCED CARE|PRN TEAM - CNA', [r, labels(9001)])
 
 /* PRN3: the shift record */
 reset(); globalThis.__ownerKey = 'nobody-has-this'; ENV.SUPABASE_SERVICE_ROLE_KEY = 'k'

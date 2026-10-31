@@ -20,7 +20,7 @@ globalThis.__fakeCreateClient = () => ({
 const AX = { posts: [], cfg: {} };
 globalThis.fetch = async (u, o = {}) => { const url = new URL(String(u)), m = (o.method || 'GET').toUpperCase(); let x;
   const R = (s, b) => new Response(JSON.stringify(b), { status: s });
-  if ((x = /^\/api\/caregivers\/(\d+)$/.exec(url.pathname)) && m === 'GET') return x[1] === '1234' ? R(200, { results: { caregiver: { id: 1234, firstName: 'Jane', lastName: 'Doe' } } }) : R(404, {});
+  if ((x = /^\/api\/caregivers\/(\d+)$/.exec(url.pathname)) && m === 'GET') return x[1] === '1234' ? R(200, { results: { data: { id: 1234, firstName: 'Jane', lastName: 'Doe' } } }) : R(404, {});
   if ((x = /^\/api\/notes\/(client|caregiver)\/(\d+)$/.exec(url.pathname)) && m === 'POST') { if (AX.cfg.forbid) return R(403, { errors: ['forbidden'] }); AX.posts.push({ to: x[1], id: x[2], body: JSON.parse(o.body) }); return R(200, { results: { id: 9 } }); }
   throw new Error('unexpected ' + m + ' ' + url); };
 await import(tmp); fs.unlinkSync(tmp);

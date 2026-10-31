@@ -18,6 +18,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { checkOncallLink } from '../_shared/oncall-links.ts'
 import { ax } from '../_shared/axiscare-caregiver.ts'
+import { caregiverOf } from '../_shared/axis-caregiver-read.ts'
 import { MO_FROM } from '../_shared/office-from.ts'
 import { memberSlots, blockOf, readAsks, readSign, signedCurrent, termsText, termsVersion, seriesView, weekdayOf, withKeys, isLevel3, offeredOf, offeredWords,
   SLOT_WORD, DAYS_AHEAD, GIVE_BACK_HOURS } from '../_shared/prn-oncall.ts'
@@ -65,7 +66,7 @@ Deno.serve(async (req) => {
   if ((prnT ?? []).some((x: Any) => x.team !== 'caregiver')) return json({ prn: true, message: 'You sign up for on call on your PRN Team page. Text us if you need a fresh link to it.', office: officePhone() })
   /* C1: active at Level 3 in AxisCare, read live */
   const g = await ax('GET', `/api/caregivers/${encodeURIComponent(cax)}`)
-  const cg = g.json?.results?.caregiver ?? g.json?.caregiver ?? (g.json && g.json.id != null ? g.json : null)
+  const cg = caregiverOf(g.json)   // 2026-10-31: AxisCare answers results.data
   if (g.status !== 200 || !cg) return json({ error: "We couldn't check your record just now. Please try again in a few minutes.", office: officePhone() }, 503)
   if (cg?.status?.active !== true || !isLevel3(rowsOf(cg?.classes))) return json({ notlevel: true, message: 'On call is for our caregivers at Level 3 (Advanced Care). Call the office with any questions.', office: officePhone() }, 403)
   const first = S(cg.goesBy, 40) || S(cg.firstName, 40).split(/\s+/)[0] || 'there'

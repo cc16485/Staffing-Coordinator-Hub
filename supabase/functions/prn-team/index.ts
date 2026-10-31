@@ -41,6 +41,7 @@ import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { ownerCaller, jobCaller } from '../_shared/job-auth.ts'
 import { planLinks, type Hire, type AxRow } from '../_shared/prn-autolink.ts'
 import { readCensus } from '../_shared/axis-census.ts'
+import { caregiverOf, classesSeen, CLASSES_STOP } from '../_shared/axis-caregiver-read.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -114,7 +115,7 @@ const errText = (r: { status: number; json: any }) => {
   return (r.status === 403 ? 'AxisCare refused: this connection may not change caregivers' : 'AxisCare answered ' + r.status) + (m ? ' (' + String(m).slice(0, 240) + ')' : '')
 }
 // deno-lint-ignore no-explicit-any
-const cgOf = (r: { json: any }) => r.json?.results?.caregiver ?? r.json?.results
+const cgOf = (r: { json: any }) => caregiverOf(r.json)   // 2026-10-31: AxisCare answers results.data (was the { data } wrapper)
 async function vocab(team: Team = 'cna') {
   const v = await ax('GET', '/api/classes/caregiver')
   if (!ok2(v.status)) return { error: 'could not read AxisCare\'s caregiver class list: ' + errText(v) }
@@ -132,6 +133,7 @@ function axisClasses(db: any, cgId: string, by: string) {
   const readClasses = async () => {
     const g = await ax('GET', `/api/caregivers/${cgId}`)
     const c = cgOf(g)
+    if (ok2(g.status) && c && !classesSeen(c)) return { ok: false as const, detail: CLASSES_STOP }   // the safety stop (2026-10-31)
     return ok2(g.status) && c ? { ok: true as const, classes: rows(c.classes) } : { ok: false as const, detail: 'could not read the caregiver in AxisCare: ' + errText(g) }
   }
   // deno-lint-ignore no-explicit-any
