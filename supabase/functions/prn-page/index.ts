@@ -27,7 +27,10 @@
 //               kept with the version and time). Needed before their first sign-up, and again whenever the words change.
 //   oncall_ask  {p, e, t, slots: [{date, slot: day|overnight}]}: one-time asks for open shifts in the next 4 weeks. Each lands
 //               on the office calendar as "asked"; the office confirms. Never while blocked by a missed on-call shift.
-//   oncall_withdraw {p, e, t, id}: takes back their own ask the office hasn't answered. A confirmed shift is given back by
+//               EVERY WEEK (2026-10-30, W1 to W7): a slot with weekly: true is an every-week ask (prn_oncall_series, asked) plus
+//               its first week as an ask; the office's one OK confirms the series and later weeks are added already confirmed.
+//               view returns oncall.signup.weekly (their every-week shifts; My hours shows them too, for the 60-day check-in).
+//   oncall_withdraw {p, e, t, id}: takes back their own ask the office hasn't answered (an every-week ask ends with it). A confirmed shift is given back by
 //               calling the office at least 24 hours ahead (decision 27), never from the page.
 //   mentor_answer {p, e, t, id, answer: yes|no} (step 8a, Gap Mentors only): "I can do it" / "Not this time" on a Gap Mentor
 //               visit, checked again first (skill, break, Do Not Return, AxisCare at that time). Switch prn_mentor_live.
@@ -55,7 +58,7 @@ import { openLive } from '../_shared/prn-open.ts'
 import { pageUpdate } from '../_shared/prn-monthly.ts'
 import { feedbackRound, feedbackLive, readFeedback, FEEDBACK_QUESTIONS, onCallFor, ONCALL_WORDS } from '../_shared/prn-recognition.ts'
 import { PATTERNS } from '../_shared/prn-week.ts'
-import { memberSlots, blockOf, readAsks, readSign, signedCurrent, termsText, termsVersion, SLOT_WORD, DAYS_AHEAD, GIVE_BACK_HOURS } from '../_shared/prn-oncall.ts'
+import { memberSlots, blockOf, readAsks, readSign, signedCurrent, termsText, termsVersion, seriesView, weekdayOf, SLOT_WORD, DAYS_AHEAD, GIVE_BACK_HOURS } from '../_shared/prn-oncall.ts'
 import { mentorLive, mayOffer, offerView, readReport, landing, fieldsFor, KINDS, SKILLS, MENTOR_RULES } from '../_shared/prn-mentor.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
@@ -156,13 +159,16 @@ Deno.serve(async (req) => {
       oncall = { ...onCallFor(oc.error ? [] : (oc.data ?? []), t, PATTERNS), patterns: PATTERNS, words: ONCALL_WORDS }
       /* the calendar sign-up (her decisions 23, 24, 27): only while it's switched on, or in the office preview */
       if (st.prn_oncall_signup_live === true || action === 'preview') {
-        const all = await sb.from('prn_oncall').select('id, applicant_id, kind, start_date, end_date, shift, cancelled_at, at').in('kind', ['confirmed', 'asked']).is('cancelled_at', null).gte('end_date', t)
+        const all = await sb.from('prn_oncall').select('id, applicant_id, kind, start_date, end_date, shift, cancelled_at, at, series_id').in('kind', ['confirmed', 'asked']).gte('end_date', t)
         const [mk, tm] = await Promise.all([sb.from('prn_oncall_marks').select('applicant_id, kind, oncall_id, at, by_name').eq('applicant_id', aid), sb.from('prn_oncall_terms').select('version, agreed_at').eq('applicant_id', aid)])
         const text = termsText(st), ver = termsVersion(text)
+        /* every week (2026-10-30): their series; a missing table (prn_oncall_weekly.sql not run) = none, and no every-week asks */
+        const se = await sb.from('prn_oncall_series').select('*').eq('applicant_id', aid).in('status', ['asked', 'confirmed'])
+        const ser: Any[] = se.error ? [] : (se.data ?? [])
         oncall.signup = all.error || mk.error || tm.error ? { ready: false } : { ready: true, waiting: st.prn_oncall_signup_live !== true, terms: text, version: ver,
           signed: signedCurrent((tm.data ?? []).map((x: Any) => ({ ...x, applicant_id: aid })), aid, ver), signed_before: (tm.data ?? []).length > 0,
           blocked: blockOf(mk.data ?? [], aid).blocked, slot_words: SLOT_WORD, days: DAYS_AHEAD, give_back_hours: GIVE_BACK_HOURS,
-          slots: memberSlots({ rows: all.data ?? [], aid, today: t, nowNaive: nowNaive() }) }
+          slots: memberSlots({ rows: all.data ?? [], aid, today: t, nowNaive: nowNaive(), series: ser }), weekly_ready: !se.error, weekly: seriesView(ser) }
       } }
     /* step 8a: Gap Mentor visits offered to them, and their own assigned ones (with the note to fill in) */
     let mentor: Any = null
@@ -302,21 +308,33 @@ Deno.serve(async (req) => {
       if (row.cancelled_at) return json({ ok: true, message: 'That one was already answered. Look again.' })
       const { error } = await sb.from('prn_oncall').update({ cancelled_at: new Date().toISOString(), cancelled_by: `${first} took it back on their page` }).eq('id', id).is('cancelled_at', null)
       if (error) return json({ error: 'Could not save, please try again.' }, 500)
+      if (row.series_id != null) await sb.from('prn_oncall_series').update({ status: 'ended', ended_at: new Date().toISOString(), ended_by: first, end_why: 'They took the ask back on their page' }).eq('id', row.series_id).eq('status', 'asked')
       return json({ ok: true, message: 'Taken back.' })
     }
     if (blockOf(mk.data ?? [], aid).blocked) return json({ error: "On call isn't open to you right now. Call the office with any questions." }, 409)
     if (!signedCurrent((tm.data ?? []).map((x: Any) => ({ ...x, applicant_id: aid })), aid, ver)) return json({ error: 'Please read and sign the On-Call Expectations first.', sign: true }, 409)
-    const all = await sb.from('prn_oncall').select('id, applicant_id, kind, start_date, end_date, shift, cancelled_at').in('kind', ['confirmed', 'asked']).is('cancelled_at', null).gte('end_date', t)
+    const all = await sb.from('prn_oncall').select('id, applicant_id, kind, start_date, end_date, shift, cancelled_at, series_id').in('kind', ['confirmed', 'asked']).gte('end_date', t)
     if (all.error) return json({ error: 'Could not check that just now. Please try again.' }, 500)
-    const r = readAsks(b, { rows: all.data ?? [], aid, today: t, nowNaive: nowNaive() }); if (!r.ok) return json({ error: r.error }, 409)
+    const se = await sb.from('prn_oncall_series').select('*').eq('applicant_id', aid).in('status', ['asked', 'confirmed'])
+    const r = readAsks(b, { rows: all.data ?? [], aid, today: t, nowNaive: nowNaive(), series: se.error ? [] : (se.data ?? []) }); if (!r.ok) return json({ error: r.error }, 409)
+    if (se.error && r.slots.some((x) => x.weekly)) return json({ error: "Every week isn't ready yet. Ask for these one time, or call the office." }, 409)
     let added = 0
     for (const sl of r.slots) {
-      const { error } = await sb.from('prn_oncall').insert({ applicant_id: aid, kind: 'asked', start_date: sl.date, end_date: sl.date, shift: sl.slot, note: 'Their PRN Team page', by_email: 'prn-page', by_name: first })
-      if (!error) added++
-      else if (!/duplicate|unique/i.test(error.message)) return json({ error: added ? `${added} saved, then something went wrong. Look again and try the rest.` : 'Could not save, please try again.' }, 500)
+      /* every week: the series first (waiting for the office), then its first week as an ask that points to it */
+      let seriesId: number | null = null
+      if (sl.weekly) {
+        const { data: sr, error: se2 } = await sb.from('prn_oncall_series').insert({ applicant_id: aid, slot: sl.slot, weekday: weekdayOf(sl.date), first_date: sl.date, status: 'asked', note: 'Their PRN Team page', by_email: 'prn-page', by_name: first }).select('id').maybeSingle()
+        if (se2 || !sr) { if (/duplicate|unique/i.test(se2?.message || '')) continue; return json({ error: added ? `${added} saved, then something went wrong. Look again and try the rest.` : 'Could not save, please try again.' }, 500) }
+        seriesId = Number(sr.id)
+      }
+      const { error } = await sb.from('prn_oncall').insert({ applicant_id: aid, kind: 'asked', start_date: sl.date, end_date: sl.date, shift: sl.slot, note: 'Their PRN Team page', by_email: 'prn-page', by_name: first, ...(seriesId ? { series_id: seriesId } : {}) })
+      if (!error) { added++; continue }
+      if (seriesId) await sb.from('prn_oncall_series').update({ status: 'ended', ended_at: new Date().toISOString(), ended_by: 'prn-page', end_why: 'Its first week could not be saved' }).eq('id', seriesId)
+      if (!/duplicate|unique/i.test(error.message)) return json({ error: added ? `${added} saved, then something went wrong. Look again and try the rest.` : 'Could not save, please try again.' }, 500)
     }
-    await log('oncall_ask', r.slots.map((x) => `${x.date} ${x.slot}`).join(', '))
-    return json({ ok: true, message: `Thank you, ${first}! The office will confirm ${added === 1 ? 'it' : 'them'} with you. Nothing is set until they do.` })
+    await log('oncall_ask', r.slots.map((x) => `${x.date} ${x.slot}${x.weekly ? ' every week' : ''}`).join(', '))
+    const wk = r.slots.some((x) => x.weekly)
+    return json({ ok: true, message: `Thank you, ${first}! The office will confirm ${added === 1 ? 'it' : 'them'} with you. Nothing is set until they do.` + (wk ? ' Once they confirm an every-week shift, it repeats on its own. To stop one, call the office at least 24 hours before the next one starts.' : '') })
   }
 
   /* everything below changes something: the member only, never the office preview */

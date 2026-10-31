@@ -32,6 +32,16 @@
 //   oncall_lift   {applicant_id, reason}: an owner lets them sign up again (owner_admin only, reason required).
 //   oncall_now    {}: the open shifts that start during someone's on-call time, with who, their phone, how the call went,
 //                 and until when the automatic texts wait (switch ops_settings.prn_oncall_first_live; owners see it as practice).
+// EVERY WEEK (2026-10-30, her "yes to all 7"; rules W1 to W7 in _shared/prn-oncall.ts):
+//   oncall_confirm on an every-week ask confirms the whole series once (W1); {applicant_id, date, shift: day | overnight,
+//                 every_week: true} puts someone on a shift every week from that date. Each new week is added already
+//                 confirmed (fillOnCall), 4 weeks ahead; a week someone else holds is skipped (W2).
+//   oncall_series_end {series_id, note?}: they called to stop it (W4). Weeks starting 24 hours or more from now are taken
+//                 back; a sooner one stays theirs. oncall_decline on an every-week ask ends it too ("Not this one").
+//   oncall_mark   a miss also ends every every-week shift of theirs (W5).
+//   ?fill=1       the daily fill (its schedule, prn-oncall-fill; oncall_fill for office staff): adds the next weeks of every confirmed
+//                 every-week shift. week and oncall_confirm run the same fill first, so the calendar is never behind.
+//   week          also returns oncall.series (every live every-week shift) and each calendar shift's skipped weeks.
 //   goback_mark   {applicant_id, ref, answer: yes | no}: the office read an answer to "Would you be glad to go back?" (step 3).
 //   client_mark   {ref, kind: intro_planned | not_this_one}: a "no PRN backup who knows them" line, planned or set aside for
 //                 the month. Planning only records it: a person gets the family's OK and schedules it in AxisCare.
@@ -61,7 +71,7 @@
 // owners only, as a practice view. No pay anywhere: the on-call stipend amount is not set (her call).
 // =============================================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
+import { requireStaff, serverSecretOk, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { contactForOutbound, maySendTo, normalisePhone } from '../_shared/outreach.ts'
 import { opEvent } from '../_shared/events.ts'
 import { MO_FROM } from '../_shared/office-from.ts'   // every text goes out from (417) 234-8494
@@ -75,7 +85,7 @@ import { monthFacts, readDraft, lastMonth, isMonth, monthWord, monthlyText, mont
 import { keptMessage } from '../_shared/prn-page-texts.ts'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
 import { readMentor, readAsk, mentorLive, SKILLS, KINDS } from '../_shared/prn-mentor.ts'
-import { calendar, payMonth, blockOf, signedCurrent, termsText, termsVersion, onCallNow, holdFor, outcomeFor, takeBackOnMiss, onCallAsk, slotsOf, SLOT_WORD, MISS_KINDS, OUTCOMES, HOLD_MIN } from '../_shared/prn-oncall.ts'
+import { calendar, payMonth, blockOf, signedCurrent, termsText, termsVersion, onCallNow, holdFor, outcomeFor, takeBackOnMiss, onCallAsk, slotsOf, fillPlan, endPlan, seriesView, seriesWord, weekdayOf, SLOT_WORD, MISS_KINDS, OUTCOMES, HOLD_MIN } from '../_shared/prn-oncall.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
@@ -110,10 +120,45 @@ async function onCallRecords(sb: any, ids: string[]): Promise<{ ok: boolean; mar
   return { ok: !mk.error && !tm.error, marks: mk.error ? [] : (mk.data ?? []), terms: tm.error ? [] : (tm.data ?? []) }
 }
 
+/* W1/W2: add the next weeks of every confirmed every-week shift (4 weeks ahead). Missing table = the every-week SQL isn't in
+   yet: nothing to fill. Never throws; says what it did. */
+const chicagoNow = () => new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).replace(' ', 'T').slice(0, 16)   // as prn-page's nowNaive
+// deno-lint-ignore no-explicit-any
+async function fillOnCall(sb: any, by: string): Promise<{ ok: boolean; added: number; skipped: number; failed: number; why?: string }> {
+  try {
+    const t = today()
+    const se = await sb.from('prn_oncall_series').select('*').eq('status', 'confirmed')
+    if (se.error) return { ok: false, added: 0, skipped: 0, failed: 0, why: 'the every-week records are not set up yet (prn_oncall_weekly.sql)' }
+    if (!(se.data ?? []).length) return { ok: true, added: 0, skipped: 0, failed: 0 }
+    const rows = await sb.from('prn_oncall').select('*').in('kind', ['confirmed', 'asked']).gte('end_date', t)
+    if (rows.error) return { ok: false, added: 0, skipped: 0, failed: 0, why: 'could not read the on-call shifts' }
+    const plan = fillPlan({ series: se.data ?? [], rows: rows.data ?? [], today: t, nowNaive: chicagoNow() })
+    let added = 0, failed = 0
+    for (const k of plan.add) {
+      const { error } = await sb.from('prn_oncall').insert({ applicant_id: k.applicant_id, kind: 'confirmed', start_date: k.date, end_date: k.date, shift: k.slot, series_id: k.series_id, note: 'Every week', by_email: 'every-week', by_name: by })
+      if (!error) added++; else if (!/duplicate|unique/i.test(error.message)) failed++
+    }
+    return { ok: failed === 0, added, skipped: plan.skipped.length, failed }
+  } catch (x) { return { ok: false, added: 0, skipped: 0, failed: 0, why: String((x as Error)?.message || x).slice(0, 200) } }
+}
+// deno-lint-ignore no-explicit-any
+async function endSeries(sb: any, id: unknown, by: string, why: string, status = ['asked', 'confirmed']): Promise<boolean> {
+  const { error } = await sb.from('prn_oncall_series').update({ status: 'ended', ended_at: new Date().toISOString(), ended_by: by, end_why: why }).eq('id', id).in('status', status)
+  return !error
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
   if (req.method !== 'POST') return json({ error: 'POST only' }, 405)
   const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+  /* the daily every-week fill: its own schedule only (the vault secret, x-cron-secret). Office staff run the same fill with
+     action oncall_fill, and every week / oncall_confirm runs it too. */
+  const qs = new URL(req.url).searchParams
+  if (qs.get('fill') === '1' || qs.get('auth_check') === '1') {
+    if (!serverSecretOk(req, 'HUB_JOB_SECRET')) return json({ error: 'not allowed' }, 401)
+    if (qs.get('auth_check') === '1') return json({ ok: true, caller: 'cron' })
+    return json({ caller: 'cron', ...(await fillOnCall(sb, 'The daily fill')) })
+  }
   const who = await requireStaff(sb, req, OFFICE_ROLES)
   if (!who.ok) return json({ error: who.error }, who.status)
   let b: Any = {}
@@ -126,6 +171,7 @@ Deno.serve(async (req) => {
 
   if (action === 'week') {
     const ids = mem.map((m) => m.applicant_id)
+    const filled = await fillOnCall(sb, who.name || who.email)   // W1: the calendar is never behind the every-week shifts
     const [sh, tc, oc] = ids.length ? await Promise.all([
       sb.from('prn_shift_log').select('*').in('applicant_id', ids),
       sb.from('prn_touches').select('*').in('applicant_id', ids),
@@ -181,6 +227,8 @@ Deno.serve(async (req) => {
     /* the on-call calendar (her decisions 22 to 27): missing tables = the calendar SQL isn't in yet; the calendar still shows */
     const ocx = await onCallExtras(ids)
     const tv = termsVersion(termsText(st))
+    const se = ids.length ? await sb.from('prn_oncall_series').select('*').in('applicant_id', ids).in('status', ['asked', 'confirmed']) : { data: [], error: null }
+    const series: Any[] = se.error ? [] : (se.data ?? [])
     return json({ ok: true, today: t, live: st.prn_week_live === true, thanks_live: st.prn_thanks_live === true, owner: S(st.prn_week_owner, 80) || 'Krystal',
       thanks_default: THANKS_DEFAULT, items: wk.items, more: wk.more,
       members: mem.map((m) => ({ applicant_id: m.applicant_id, name: m.name, team: m.team, axiscare_id: m.axiscare_id, familiar: familiar[m.applicant_id] || { clients: [], why: null }, page: page[m.applicant_id] || null })),
@@ -191,7 +239,8 @@ Deno.serve(async (req) => {
       oncall: { ...oncall, patterns: PATTERNS, stipend: null, shifts: SHIFTS, shift_live: st.prn_oncall_shift_live === true,
         /* for payroll: this month and last month, by shift (counts only) */
         payroll: [t.slice(0, 7), new Date(Date.parse(t.slice(0, 7) + '-01T12:00:00Z') - 86_400_000).toISOString().slice(0, 7)].map((mo) => ({ month: mo, members: ocx.ok ? payMonth(oc.data ?? [], ocx.marks, mem, mo) : onCallMonth(oc.data ?? [], mem, mo) })),
-        calendar: calendar({ rows: oc.data ?? [], marks: ocx.marks, members: mem, today: t }), slot_words: SLOT_WORD, miss_kinds: MISS_KINDS,
+        calendar: calendar({ rows: oc.data ?? [], marks: ocx.marks, members: mem, today: t, series }), slot_words: SLOT_WORD, miss_kinds: MISS_KINDS,
+        series: seriesView(series, mem), weekly_ready: !se.error, fill: filled,
         records_ready: ocx.ok, signup_live: st.prn_oncall_signup_live === true, first_live: st.prn_oncall_first_live === true, hold_min: HOLD_MIN,
         terms_version: tv, terms: termsText(st),
         people: mem.filter((m) => m.team === 'cna').map((m) => { const sig = ocx.terms.filter((x: Any) => x.applicant_id === m.applicant_id).sort((a: Any, b: Any) => S(a.agreed_at).localeCompare(S(b.agreed_at))).pop()
@@ -336,6 +385,15 @@ Deno.serve(async (req) => {
     const m = memberOf(ask ? ask.applicant_id : b.applicant_id); if (!m) return json({ error: 'That person is not on a PRN Team.' }, 404)
     if (m.team !== 'cna') return json({ error: 'On call is for the PRN CNA Team only.' }, 422)
     const note = S(b.note, 300) || null
+    /* every week (W1): an every-week ask, or the office putting someone on a shift every week */
+    let series: Any = null
+    if (ask && ask.series_id != null) {
+      const { data } = await sb.from('prn_oncall_series').select('*').eq('id', ask.series_id).maybeSingle()
+      if (!data || data.status === 'ended') return json({ error: 'That every-week ask was already ended.' }, 409)
+      series = data
+    }
+    const everyWeek = !ask && b.every_week === true
+    if (everyWeek && !['day', 'overnight'].includes(S(b.shift, 10))) return json({ error: 'Every week is one shift: daytime or overnight. For both, put them on each one.' }, 400)
     const one = ask ? S(ask.start_date, 10) : ymd(b.date)
     const s = one || ymd(b.start_date), e = one || ymd(b.end_date) || s
     if (!s || e < s) return json({ error: 'Which dates?' }, 400)
@@ -357,11 +415,26 @@ Deno.serve(async (req) => {
     const clash = (near ?? []).find((r: Any) => slotsOf(r).some((x) => want.some((w) => w.date === x.date && w.slot === x.slot)))
     if (clash && clash.applicant_id === m.applicant_id) return json({ outcome: 'already' })
     if (clash) return json({ error: `${memberOf(clash.applicant_id)?.name || 'Someone else'} is already on call then. Take theirs back first if it should change.` }, 409)
-    const { error } = await sb.from('prn_oncall').insert({ applicant_id: m.applicant_id, kind: 'confirmed', start_date: s, end_date: e, note, by_email: who.email, by_name: who.name, ...(shift ? { shift } : {}), ...(ask ? { ask_id: ask.id } : {}) })
-    if (error) return json(/duplicate|unique/i.test(error.message) ? { outcome: 'already' } : { error: 'Could not record it: ' + error.message }, /duplicate|unique/i.test(error.message) ? 200 : 500)
-    if (ask) await sb.from('prn_oncall').update({ cancelled_at: new Date().toISOString(), cancelled_by: `Confirmed by ${who.name || who.email}` }).eq('id', ask.id).is('cancelled_at', null)
-    await opEvent(sb, { verb: 'prn_oncall_confirmed', actor_name: who.name, actor_email: who.email, item_id: m.applicant_id, area: 'caregivers', summary: `${m.name} confirmed on call ${s}${e !== s ? ' to ' + e : ''}${shift ? ' (' + SHIFT_SHORT[shift] + ')' : ''}${ask ? ', as they asked' : ''}` })
-    return json({ outcome: 'recorded' })
+    const nowIso = new Date().toISOString()
+    if (everyWeek) {
+      const { data: sr, error: se } = await sb.from('prn_oncall_series').insert({ applicant_id: m.applicant_id, slot: shift, weekday: weekdayOf(s), first_date: s, status: 'confirmed', note,
+        by_email: who.email, by_name: who.name, confirmed_at: nowIso, confirmed_by: who.name || who.email }).select('*').maybeSingle()
+      if (se || !sr) return json(/duplicate|unique/i.test(se?.message || '') ? { error: `${m.first || m.name} already has ${seriesWord({ first_date: s, slot: shift })} every week.` } : { error: 'Could not record it: ' + (se?.message || 'no record') }, /duplicate|unique/i.test(se?.message || '') ? 409 : 500)
+      series = sr
+    }
+    const { error } = await sb.from('prn_oncall').insert({ applicant_id: m.applicant_id, kind: 'confirmed', start_date: s, end_date: e, note, by_email: who.email, by_name: who.name, ...(shift ? { shift } : {}), ...(ask ? { ask_id: ask.id } : {}), ...(series ? { series_id: series.id } : {}) })
+    if (error) {
+      if (everyWeek && series) await endSeries(sb, series.id, who.name || who.email, 'Its first week could not be saved')
+      return json(/duplicate|unique/i.test(error.message) ? { outcome: 'already' } : { error: 'Could not record it: ' + error.message }, /duplicate|unique/i.test(error.message) ? 200 : 500)
+    }
+    if (ask) await sb.from('prn_oncall').update({ cancelled_at: nowIso, cancelled_by: `Confirmed by ${who.name || who.email}` }).eq('id', ask.id).is('cancelled_at', null)
+    let filled: Any = null
+    if (series) {
+      if (series.status === 'asked') await sb.from('prn_oncall_series').update({ status: 'confirmed', confirmed_at: nowIso, confirmed_by: who.name || who.email }).eq('id', series.id).eq('status', 'asked')
+      filled = await fillOnCall(sb, who.name || who.email)
+    }
+    await opEvent(sb, { verb: 'prn_oncall_confirmed', actor_name: who.name, actor_email: who.email, item_id: m.applicant_id, area: 'caregivers', summary: `${m.name} confirmed on call ${s}${e !== s ? ' to ' + e : ''}${shift ? ' (' + SHIFT_SHORT[shift] + ')' : ''}${series ? ', every week (' + seriesWord({ first_date: s, slot: shift }) + ')' : ''}${ask ? ', as they asked' : ''}` })
+    return json({ outcome: 'recorded', every_week: !!series, filled })
   }
 
   if (action === 'oncall_cancel' || action === 'oncall_decline') {
@@ -372,6 +445,8 @@ Deno.serve(async (req) => {
     const by = action === 'oncall_decline' || row.kind === 'asked' ? `Not this one (${who.name || who.email})` : who.name || who.email
     const { error } = await sb.from('prn_oncall').update({ cancelled_at: new Date().toISOString(), cancelled_by: by }).eq('id', id).is('cancelled_at', null)
     if (error) return json({ error: 'Could not take it back: ' + error.message }, 500)
+    /* an every-week ask: "Not this one" ends it. A confirmed week taken back is that week only (the series goes on). */
+    if (row.kind === 'asked' && row.series_id != null) await endSeries(sb, row.series_id, who.name || who.email, 'Not this one', ['asked'])
     const m = memberOf(row.applicant_id)
     await opEvent(sb, { verb: row.kind === 'asked' ? 'prn_oncall_declined' : 'prn_oncall_cancelled', actor_name: who.name, actor_email: who.email, item_id: row.applicant_id, area: 'caregivers',
       summary: row.kind === 'asked' ? `${m?.name || 'A PRN member'}'s on-call ask ${row.start_date} (${SHIFT_SHORT[row.shift] || row.shift}): not this one` : `On call ${row.start_date} to ${row.end_date} taken back for ${m?.name || 'a PRN member'}` })
@@ -401,6 +476,9 @@ Deno.serve(async (req) => {
         const { error: ce } = await sb.from('prn_oncall').update({ cancelled_at: new Date().toISOString(), cancelled_by: `Taken back after a missed on-call shift (${who.name || who.email})` }).eq('id', r.id).is('cancelled_at', null)
         if (ce) failed.push(`${r.start_date} ${SHIFT_SHORT[r.shift] || ''}`.trim())
       }
+      /* W5: a miss ends every every-week shift of theirs (its future weeks were just taken back above) */
+      const { data: theirSeries } = await sb.from('prn_oncall_series').select('id').eq('applicant_id', m.applicant_id).in('status', ['asked', 'confirmed'])
+      for (const x of theirSeries ?? []) await endSeries(sb, x.id, who.name || who.email, 'Ended after a missed on-call shift')
       await opEvent(sb, { verb: 'prn_oncall_missed', actor_name: who.name, actor_email: who.email, item_id: m.applicant_id, area: 'caregivers',
         summary: `${m.name}: ${MISS_KINDS[kind].toLowerCase()} on call ${when}. Not paid for it; can't sign up again; ${back.length} future on-call shift${back.length === 1 ? '' : 's'} taken back`, data: { case_id: caseId } })
       const { data: app } = await sb.from('job_applicants').select('phone').eq('id', m.applicant_id).maybeSingle()
@@ -417,6 +495,30 @@ Deno.serve(async (req) => {
       onCase = he ? 'failed' : String(held || 'failed')
     }
     return json({ outcome: 'covering', on_case: onCase, linked: !!m.axiscare_id })
+  }
+
+  if (action === 'oncall_fill') return json(await fillOnCall(sb, who.name || who.email))
+
+  /* W4: they called to stop an every-week shift. Weeks starting 24 hours or more from now are taken back; a sooner one stays. */
+  if (action === 'oncall_series_end') {
+    const id = Number(b.series_id); if (!Number.isInteger(id) || id <= 0) return json({ error: 'Which every-week shift?' }, 400)
+    const { data: sr } = await sb.from('prn_oncall_series').select('*').eq('id', id).maybeSingle()
+    if (!sr) return json({ error: 'No such every-week shift.' }, 404)
+    if (sr.status === 'ended') return json({ outcome: 'already' })
+    const m = memberOf(sr.applicant_id), note = S(b.note, 300)
+    const { data: rows } = await sb.from('prn_oncall').select('*').eq('series_id', id)
+    const plan = endPlan({ seriesId: id, rows: rows ?? [], nowNaive: chicagoNow() })
+    if (!(await endSeries(sb, id, who.name || who.email, note ? 'They called to stop it: ' + note : 'They called to stop it'))) return json({ error: 'Not saved. Please try again.' }, 500)
+    const failed: string[] = []
+    for (const r of plan.cancel) {
+      const { error } = await sb.from('prn_oncall').update({ cancelled_at: new Date().toISOString(), cancelled_by: `Every week ended (${who.name || who.email})` }).eq('id', r.id).is('cancelled_at', null)
+      if (error) failed.push(r.start_date)
+    }
+    /* its waiting first-week ask, if the office never confirmed it */
+    for (const r of (rows ?? []).filter((r: Any) => r.kind === 'asked' && !r.cancelled_at)) await sb.from('prn_oncall').update({ cancelled_at: new Date().toISOString(), cancelled_by: `Every week ended (${who.name || who.email})` }).eq('id', r.id).is('cancelled_at', null)
+    await opEvent(sb, { verb: 'prn_oncall_series_ended', actor_name: who.name, actor_email: who.email, item_id: sr.applicant_id, area: 'caregivers',
+      summary: `${m?.name || 'A PRN member'}: every week ended (${seriesWord(sr)}). ${plan.cancel.length} week${plan.cancel.length === 1 ? '' : 's'} taken back${plan.kept.length ? ', ' + plan.kept.length + ' within 24 hours stays theirs' : ''}` })
+    return json({ outcome: 'ended', taken_back: plan.cancel.map((r: Any) => r.start_date).filter((d: string) => !failed.includes(d)), kept: plan.kept.map((r: Any) => ({ date: r.start_date, shift: r.shift })), failed })
   }
 
   if (action === 'oncall_lift') {

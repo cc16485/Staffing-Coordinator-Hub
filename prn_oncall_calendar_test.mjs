@@ -55,7 +55,7 @@ ck(`...at most ${O.MAX_OPEN_ASKS} waiting for the office at a time`, /up to 10/.
 
 ck('24: the expectations are her approved words, all six points', O.TERMS_DEFAULT.startsWith('PRN CNA On-Call Expectations\nWhen you sign up for an on-call shift, families are counting on you.')
   && /5\. If you don't answer the office within 15 minutes, or you don't cover the shift, you won't be paid for that on-call shift, and you won't be able to sign up for on call again\./.test(O.TERMS_DEFAULT)
-  && /6\. If something comes up, call the office at least 24 hours before your on-call shift starts\.$/.test(O.TERMS_DEFAULT) && O.TERMS_DEFAULT.split('\n').length === 8 && !/—/.test(O.TERMS_DEFAULT))
+  && /6\. If something comes up, call the office at least 24 hours before your on-call shift starts\. To stop an every-week on-call shift, call the office at least 24 hours before the next one starts\.$/.test(O.TERMS_DEFAULT) && O.TERMS_DEFAULT.split('\n').length === 8 && !/—/.test(O.TERMS_DEFAULT))
 const V = O.termsVersion(O.TERMS_DEFAULT)
 ck('...a version from the exact words: the same words, the same version; any change, a new one', /^v[0-9a-f]{8}$/.test(V) && O.termsVersion(O.TERMS_DEFAULT + '\n') === V && O.termsVersion(O.TERMS_DEFAULT.replace('15 minutes', '10 minutes')) !== V
   && O.termsVersion(O.termsText({ prn_oncall_terms: 'Different words for the expectations.' })) !== V && O.termsText({}) === O.TERMS_DEFAULT)
