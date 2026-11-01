@@ -464,7 +464,24 @@ function axisCreds() {
 }
 
 /** Paginated visit fetch; returns rows or an error string, never throws. */
-async function fetchVisits(params: string): Promise<{ rows: any[]; error: string | null }> {
+/* SHARED READS (2026-10-31, Samantha: the ask lists "share the caregiver list and past 14 days"): the cron's ask-list
+   prebuild passes one share map for the whole run, so cases asking AxisCare the same question (the same date range, the
+   caregiver census) read it once, not once per case. A failed read is never shared: the next case reads it again.
+   Without a share map (a coordinator's click) every read is fresh, exactly as before. */
+type ReadShare = Map<string, Promise<{ rows: any[]; error: string | null }>>
+function shared(share: ReadShare | undefined, key: string,
+  read: () => Promise<{ rows: any[]; error: string | null }>): Promise<{ rows: any[]; error: string | null }> {
+  if (!share) return read()
+  const hit = share.get(key); if (hit) return hit
+  const p = read().then(r => { if (r.error) share.delete(key); return r })
+  share.set(key, p); return p
+}
+
+async function fetchVisits(params: string, share?: ReadShare): Promise<{ rows: any[]; error: string | null }> {
+  return shared(share, 'visits?' + params, () => fetchVisitsRead(params))
+}
+
+async function fetchVisitsRead(params: string): Promise<{ rows: any[]; error: string | null }> {
   const { token, site } = axisCreds()
   if (!token || !site) return { rows: [], error: 'AxisCare credentials not set on this project' }
   const rows: any[] = []
@@ -755,7 +772,7 @@ async function dnrSetFor(clientName: string): Promise<Set<string>> {
    (re-derived server-side before sending, so a stale or tampered browser
    list can never text somebody the rules exclude). */
 // deno-lint-ignore no-explicit-any
-async function buildCandidatesForCase(c: any, opts: { v2?: boolean; includeAsked?: boolean } = {}):
+async function buildCandidatesForCase(c: any, opts: { v2?: boolean; includeAsked?: boolean; share?: ReadShare } = {}):
   // deno-lint-ignore no-explicit-any
   // deno-lint-ignore no-explicit-any
   Promise<{ group0: any[]; group1: any[]; group2: any[]; prn_other: any[]; prn_ongoing: any[]; excluded: any[]; needs_verification?: any[]; meta: Record<string, unknown> }> {
@@ -770,6 +787,7 @@ async function buildCandidatesForCase(c: any, opts: { v2?: boolean; includeAsked
     excluded.push({ name: x.name, why, code, axiscare_id: x.axiscare_id ?? null,
       ax_active: censusUsable ? !!(x.axiscare_id && axisActive.has(String(x.axiscare_id))) : null, ...extra })
 
+  const fetchVisits_ = (params: string) => fetchVisits(params, opts.share)
   const cands = await candidatesFor(c)
   /* CARA PHASE 1: on when the switch cara_list_live is on, or for the office's side-by-side preview (action candidates_v2) */
   let v2 = opts.v2 === true
@@ -818,7 +836,7 @@ async function buildCandidatesForCase(c: any, opts: { v2?: boolean; includeAsked
   let patternCheck = ''
   if (wantDays.length && /^\d\d:\d\d$/.test(wStart) && /^\d\d:\d\d$/.test(wEnd) && wEnd > wStart) {
     const mins = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5))
-    const fwd14 = await fetchVisits(`startDate=${dISO(0)}&endDate=${dISO(-14)}`)
+    const fwd14 = await fetchVisits_(`startDate=${dISO(0)}&endDate=${dISO(-14)}`)
     for (const v of fwd14.rows) {
       const id = v?.caregiver?.id; if (id == null) continue
       const s = String(v?.scheduledStartDate ?? v?.startDate ?? '')
@@ -867,18 +885,29 @@ async function buildCandidatesForCase(c: any, opts: { v2?: boolean; includeAsked
     const { token, site } = axisCreds()
     if (!token || !site) censusError = 'AxisCare credentials not set'
     else try {
-      let url: string | null = `https://${site}.axiscare.com/api/caregivers`
-      for (let page = 0; url && page < 12; page++) {
-        const r: Response = await axFetch(url, { headers: {
-          Authorization: `Bearer ${token}`, Accept: 'application/json',
-          'X-AxisCare-Api-Version': AC_VERSION } })
-        if (!r.ok) { censusError = `AxisCare responded ${r.status}`; break }
+      const census = await shared(opts.share, 'caregivers', async () => {
         // deno-lint-ignore no-explicit-any
-        const j: any = await r.json().catch(() => ({}))
-        // deno-lint-ignore no-explicit-any
-        const gRows: any[] = Array.isArray(j?.results?.caregivers ?? j?.caregivers)
-          ? (j?.results?.caregivers ?? j?.caregivers)
-          : Object.values(j?.results?.caregivers ?? j?.caregivers ?? {})
+        const all: any[] = []
+        let url: string | null = `https://${site}.axiscare.com/api/caregivers`
+        for (let page = 0; url && page < 12; page++) {
+          const r: Response = await axFetch(url, { headers: {
+            Authorization: `Bearer ${token}`, Accept: 'application/json',
+            'X-AxisCare-Api-Version': AC_VERSION } })
+          if (!r.ok) return { rows: all, error: `AxisCare responded ${r.status}` }
+          // deno-lint-ignore no-explicit-any
+          const j: any = await r.json().catch(() => ({}))
+          // deno-lint-ignore no-explicit-any
+          const gRows: any[] = Array.isArray(j?.results?.caregivers ?? j?.caregivers)
+            ? (j?.results?.caregivers ?? j?.caregivers)
+            : Object.values(j?.results?.caregivers ?? j?.caregivers ?? {})
+          all.push(...gRows)
+          url = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
+        }
+        return { rows: all, error: null }
+      })
+      if (census.error) censusError = census.error
+      {
+        const gRows = census.rows
         for (const g of gRows)
           if (g?.status?.active === true && g?.id != null) {
             axisActive.add(String(g.id)); axCgRaw.push(g)
@@ -898,7 +927,6 @@ async function buildCandidatesForCase(c: any, opts: { v2?: boolean; includeAsked
             if (clsArr.some((k: any) => /nurse|\bRN\b|\bLPN\b/i.test(String(k?.label ?? k?.code ?? ''))))
               nurseAxis.add(String(g.id))
           }
-        url = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
       }
     } catch (err) { censusError = String(err) }
   }
@@ -919,7 +947,7 @@ async function buildCandidatesForCase(c: any, opts: { v2?: boolean; includeAsked
     const [shStart, shEnd] = String(c.shift_time).split('-')
     if (shEnd > shStart) {
       const mins = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5))
-      const day = await fetchVisits(`startDate=${c.shift_date}&endDate=${c.shift_date}`)
+      const day = await fetchVisits_(`startDate=${c.shift_date}&endDate=${c.shift_date}`)
       for (const v of day.rows) {
         const cg = v?.caregiver?.id; if (cg == null) continue
         const vs = String(v?.scheduledStartDate ?? v?.startDate ?? '').slice(11, 16)
@@ -982,7 +1010,7 @@ async function buildCandidatesForCase(c: any, opts: { v2?: boolean; includeAsked
   let sameTimeLive = false
   try { const { data: stS } = await sb.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle(); sameTimeLive = stS?.data?.cara_same_time_live === true } catch { /* off */ }
   if (clientRes.id) {
-    const h = await fetchVisits(
+    const h = await fetchVisits_(
       `startDate=${dISO(180)}&endDate=${dISO(0)}&clientIds=${encodeURIComponent(clientRes.id)}`)
     for (const v of h.rows) {
       const cg = v?.caregiver?.id; if (cg == null) continue
@@ -996,7 +1024,7 @@ async function buildCandidatesForCase(c: any, opts: { v2?: boolean; includeAsked
     }
   }
   const bandWord = cBands.includes('overnight') ? 'overnight' : cBands.length === 1 ? ({ morning: 'morning', afternoon: 'daytime', evening: 'evening' } as Record<string, string>)[cBands[0]] : 'at this time of day'
-  const recent = await fetchVisits(`startDate=${dISO(14)}&endDate=${dISO(0)}`)
+  const recent = await fetchVisits_(`startDate=${dISO(14)}&endDate=${dISO(0)}`)
   const recentlyActive = new Set(recent.rows.map(v => String(v?.caregiver?.id ?? '')).filter(Boolean))
   const wantGap = new Map<string, number>()
   try {
@@ -1004,7 +1032,7 @@ async function buildCandidatesForCase(c: any, opts: { v2?: boolean; includeAsked
     // deno-lint-ignore no-explicit-any
     const av: any[] = Array.isArray(avRow?.data) ? avRow!.data : []
     if (av.length) {
-      const fwd = await fetchVisits(`startDate=${dISO(0)}&endDate=${dISO(-7)}`)
+      const fwd = await fetchVisits_(`startDate=${dISO(0)}&endDate=${dISO(-7)}`)
       const sched = new Map<string, number>()
       for (const v of fwd.rows) {
         const id = v?.caregiver?.id; if (id == null) continue
@@ -1030,7 +1058,7 @@ async function buildCandidatesForCase(c: any, opts: { v2?: boolean; includeAsked
     const todayC = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
     const recent = [...cgHire.entries()].filter(([, d]) => newHireNeed(d, todayC, 0, null))
     if (recent.length) {
-      const f14 = await fetchVisits(`startDate=${dISO(0)}&endDate=${dISO(-13)}`)
+      const f14 = await fetchVisits_(`startDate=${dISO(0)}&endDate=${dISO(-13)}`)
       const h14 = new Map<string, number>()
       for (const v of f14.rows) {
         const id = v?.caregiver?.id; if (id == null || v?.removed) continue
@@ -1099,7 +1127,7 @@ async function buildCandidatesForCase(c: any, opts: { v2?: boolean; includeAsked
       let wkStart = 'mon'   // her payroll week: Monday to Sunday (2026-10-23)
       try { const { data: s1 } = await sb.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle(); if (/^(sun|mon|tue|wed|thu|fri|sat)$/.test(String(s1?.data?.payroll_week_start || ''))) wkStart = String(s1!.data.payroll_week_start) } catch { /* mon */ }
       const [a, z] = weekOf(String(c.shift_date), wkStart)
-      const wk = await fetchVisits(`startDate=${a}&endDate=${z}`)
+      const wk = await fetchVisits_(`startDate=${a}&endDate=${z}`)
       if (wk.error) weekNote = 'weekly hours not checked: ' + wk.error
       else { weekHrs = weekHoursBy(wk.rows); weekNote = `weekly hours counted ${a} to ${z} from the AxisCare schedule` }
     }
@@ -1110,7 +1138,7 @@ async function buildCandidatesForCase(c: any, opts: { v2?: boolean; includeAsked
     const { data: rosterRow2 } = await sb.from('app_data').select('data').eq('key', 'caregivers').maybeSingle()
     skills = await loadSkillJudge(sb, { clientAxId: clientRes.id, axClient: axClientRaw, axCaregivers: axCgRaw, roster: Array.isArray(rosterRow2?.data) ? rosterRow2!.data : [], lock, driveGate: driveLive, today: driveToday })
   }
-  const sched = await scheduleConflicts(c)
+  const sched = await scheduleConflicts(c, opts.share)
   for (const x of cands) {
     if (x.skipped && !x.may_autosend) { const sk = String(x.skipped); cut(x, sk, /no phone/i.test(sk) ? 'no_phone' : /no longer active/i.test(sk) ? 'inactive' : /^nurse/i.test(sk) ? 'nurse' : /office domain/i.test(sk) ? 'office' : /do-not-offer/i.test(sk) ? 'do_not_offer' : 'skipped'); continue }
     if (dnr.has(nameKeyOf(String(x.name)))) { cut(x, 'Do-Not-Return for this client, never suggested', 'dnr'); continue }
@@ -1517,10 +1545,10 @@ async function caraAdvance(caseId: string, st: any): Promise<string> {
 /** ALREADY WORKING THEN (2026-10-25): AxisCare read now, the day before to the day after, every caregiver's visits that overlap
     the whole shift (scheduled or clocked in). held = AxisCare could not be read: nobody may be texted (fail closed). */
 // deno-lint-ignore no-explicit-any
-async function scheduleConflicts(c: any): Promise<{ checked: boolean; held: string | null; by: Map<string, any[]>; read_at: string }> {
+async function scheduleConflicts(c: any, share?: ReadShare): Promise<{ checked: boolean; held: string | null; by: Map<string, any[]>; read_at: string }> {
   const range = readRange(c)
   if (!range || !/^\d\d:\d\d-\d\d:\d\d$/.test(String(c?.shift_time || ''))) return { checked: false, held: null, by: new Map(), read_at: nowIso() }
-  const r = await fetchVisits(`startDate=${range[0]}&endDate=${range[1]}`)
+  const r = await fetchVisits(`startDate=${range[0]}&endDate=${range[1]}`, share)
   if (r.error) return { checked: false, held: `AxisCare's schedule could not be read (${r.error})`, by: new Map(), read_at: nowIso() }
   let ph = '618', nowLive = false
   try { const { data } = await sb.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle(); if (/^\d+$/.test(String(data?.data?.placeholder_caregiver_id || ''))) ph = String(data!.data.placeholder_caregiver_id); nowLive = data?.data?.working_now_live === true } catch { /* default */ }
@@ -1532,7 +1560,7 @@ async function scheduleConflicts(c: any): Promise<{ checked: boolean; held: stri
   const today = chiNowNaive().slice(0, 10)
   let nowRows = r.rows
   if (!(today >= range[0] && today <= range[1])) {
-    const r2 = await fetchVisits(`startDate=${today}&endDate=${today}`)
+    const r2 = await fetchVisits(`startDate=${today}&endDate=${today}`, share)
     if (r2.error) return { checked: false, held: `AxisCare's schedule for today could not be read (${r2.error})`, by: new Map(), read_at: nowIso() }
     nowRows = r2.rows
   }
@@ -2548,6 +2576,7 @@ Deno.serve(async (req) => {
     return boardClaims.has(id)
   }
   const remPlans = new Map()
+  const prebuildShare: ReadShare = new Map()   // one AxisCare read per question for every case's prebuild this run
   for (const c of open) {
     /* Open hours (2026-10-12): only a person sends that ask, from Team Builder. The tick never texts, reminds or
        closes it. */
@@ -2848,12 +2877,17 @@ Deno.serve(async (req) => {
        so opening the case shows a ranked, sensibly-checked list instantly —
        the 6am decision becomes review-and-send, not build-and-wait. Only
        while the case has no asks yet, refreshed when older than 30 minutes;
-       once texting starts the picker's live rebuild takes over. */
+       once texting starts the picker's live rebuild takes over.
+       SLOWER FOR FAR SHIFTS (2026-10-31, Samantha: "ask lists for shifts more than 2 days out refresh every 2 hours"):
+       a shift more than 2 days away is refreshed every 2 hours; within 2 days (or no readable start) every 30 minutes.
+       Opening the case still builds a fresh list on the spot. */
+    const pbStart = c.shift_date ? new Date(`${c.shift_date}T${String(c.shift_time || '00:00').slice(0, 5)}:00-05:00`).getTime() : NaN
+    const pbEveryMin = Number.isFinite(pbStart) && pbStart - Date.now() > 48 * 3600000 ? 120 : 30
     if (commit && manualSelect && !(Array.isArray(c.asked) && c.asked.length)
         && c.kind !== 'interest'
-        && (!c.prebuilt_at || (Date.now() - new Date(String(c.prebuilt_at)).getTime()) > 30 * 60000)) {
+        && (!c.prebuilt_at || (Date.now() - new Date(String(c.prebuilt_at)).getTime()) > pbEveryMin * 60000)) {
       try {
-        const pb = await buildCandidatesForCase(c)
+        const pb = await buildCandidatesForCase(c, { share: prebuildShare })
         const fresh = await readCaseFresh(c.id)
         if (fresh && !(Array.isArray(fresh.asked) && fresh.asked.length)) {
           fresh.prebuilt = { group1: pb.group1, group2: pb.group2,
