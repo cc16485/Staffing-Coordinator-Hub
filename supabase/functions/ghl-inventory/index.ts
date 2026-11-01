@@ -8,7 +8,7 @@
 // -----------------------------------------------------------------------------
 const OUR_TAGS = ['lead', 'coverage-asked', 'confirm-asked', 'timekeeper-asked', 'active client', 'inactive client',
   'active employee', 'inactive employee', 'client', 'client-contact', 'caregiver', 'referral-partner',
-  'HomeTogether Hire - Caregiver', 'HomeTogether Hire - Family']
+  'HomeTogether Hire - Caregiver', 'HomeTogether Hire - Family', 'sent to cds']
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } })
 
 Deno.serve(async (req) => {
@@ -26,7 +26,7 @@ Deno.serve(async (req) => {
     const r = await fetch(`https://services.leadconnectorhq.com/workflows/?locationId=${encodeURIComponent(location)}`, { headers: h })
     const j = await r.json().catch(() => ({}))
     // deno-lint-ignore no-explicit-any
-    out.workflows = r.ok ? (j?.workflows ?? []).map((w: any) => ({ name: String(w.name ?? ''), status: String(w.status ?? ''), updated: String(w.updatedAt ?? w.updated_at ?? '').slice(0, 10) }))
+    out.workflows = r.ok ? (j?.workflows ?? []).map((w: any) => ({ id: String(w.id ?? ''), name: String(w.name ?? ''), status: String(w.status ?? ''), updated: String(w.updatedAt ?? w.updated_at ?? '').slice(0, 10) }))
                          : { error: `GoHighLevel answered ${r.status}` + (r.status === 401 || r.status === 403 ? ' (this key may not be allowed to read workflows)' : '') }
   } catch { out.workflows = { error: 'could not reach GoHighLevel' } }
   try {
