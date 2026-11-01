@@ -2349,6 +2349,11 @@ Deno.serve(async (req) => {
      ready-made list, the alerts and every closing text stay. */
   const AUTO_WAVES_RETIRED = true
   const manualSelect = AUTO_WAVES_RETIRED || settings.coverage_manual_select === true
+  /* WAVE READS (2026-10-31, Samantha: "remove the call-off job", her pick: just the wasted reads). The 14-day
+     history, the 7-day schedule, the caregiver census and each case's busy check and 180-day client history fed
+     only the automatic waves: about 29 AxisCare reads every 3 minutes for texts that never go. With the waves
+     retired they are not read. The ask lists, the Text button, alerts and closing texts read their own. */
+  const WAVE_READS = !AUTO_WAVES_RETIRED
   const fuseMin = Number(settings.coverage_wave_fuse_min) > 0 ? Number(settings.coverage_wave_fuse_min) : 10
   const ghl = { token: Deno.env.get('GHL_TOKEN') ?? '', locationId: Deno.env.get('GHL_LOCATION_ID') ?? '' }
 
@@ -2417,7 +2422,7 @@ Deno.serve(async (req) => {
                   closure_notified: 0, escalated: 0, admin_alerts: 0 }
 
   /* Recently-active caregivers (tier 2), fetched ONCE for the whole run. */
-  const recent = open.length ? await fetchVisits(`startDate=${dISO(14)}&endDate=${dISO(0)}`)
+  const recent = open.length && WAVE_READS ? await fetchVisits(`startDate=${dISO(14)}&endDate=${dISO(0)}`)
                              : { rows: [], error: null }
   const recentlyActive = new Set(recent.rows.map(v => String(v?.caregiver?.id ?? '')).filter(Boolean))
 
@@ -2436,7 +2441,7 @@ Deno.serve(async (req) => {
   const trainLiveW = await inTrainingLive(settings)
   const nurseAxis = new Set<string>()                // nurse-classed in AxisCare
   let censusError: string | null = null
-  if (open.length) {
+  if (open.length && WAVE_READS) {
     const { token, site } = axisCreds()
     if (!token || !site) censusError = 'AxisCare credentials not set'
     else try {
@@ -2472,7 +2477,7 @@ Deno.serve(async (req) => {
   /* Fail closed LOUDLY: with open cases and no readable census, every wave
      holds — and a person is told, because a silent hold is a lost shift.
      One item per Chicago day, so an hours-long outage nags once. */
-  if (open.length && !censusUsable && commit) {
+  if (open.length && WAVE_READS && !censusUsable && commit) {
     const chiDayC = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
     try {
       await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
@@ -2507,7 +2512,7 @@ Deno.serve(async (req) => {
   /* PRN3: the PRN CNA Team, once per run. */
   const prnTeamW = open.length ? await prnTeamLoad() : new Map<string, PrnMember>()
   const wantGap = new Map<string, number>()   // axiscare id → wanted-minus-scheduled
-  if (open.length) {
+  if (open.length && WAVE_READS) {
     try {
       const { data: avRow } = await sb.from('app_data').select('data').eq('key', 'caregiver_availability').maybeSingle()
       const av: any[] = Array.isArray(avRow?.data) ? avRow!.data : []
@@ -3036,14 +3041,15 @@ Deno.serve(async (req) => {
        same-day visits fetch; overlap on the naive HH:MM window. Overnight
        windows (end before start) skip the check rather than guess. */
     /* ALREADY WORKING THEN (2026-10-25): the same check as every other send (overnights, clocked in now, fail closed) */
-    const schedW = await scheduleConflicts(c)
+    const schedW = WAVE_READS ? await scheduleConflicts(c)
+      : { checked: false, held: 'not read: the automatic waves are retired', by: new Map<string, any[]>(), read_at: nowIso() }
     const busyThen = new Set<string>([...schedW.by.keys()])
     const busyCheck = schedW.held ? schedW.held + ': nobody is texted (fail closed)' : !schedW.checked ? 'no shift date/time on the case, busy check off'
       : `${busyThen.size} caregiver(s) already working during this shift (AxisCare read ${schedW.read_at})`
     const history = new Map<string, { visits: number; last: string; same_time: number }>()
     let historyError: string | null = null
     const cBandsW = caseBands(c)   /* her ask (2026-10-24): same time of day first, with cara_same_time_live on */
-    if (clientRes.id) {
+    if (clientRes.id && WAVE_READS) {
       const h = await fetchVisits(
         `startDate=${dISO(180)}&endDate=${dISO(0)}&clientIds=${encodeURIComponent(clientRes.id)}`)
       historyError = h.error
@@ -3436,7 +3442,7 @@ Deno.serve(async (req) => {
         : `${clientRes.status}: ${clientRes.detail}; waves fall back to tier 2/3 ranking`,
       history_error: historyError,
       recent_activity_error: recent.error,
-      axiscare_census: censusUsable
+      axiscare_census: !WAVE_READS ? 'not read: the automatic waves are retired' : censusUsable
         ? `${axisActive.size} active caregivers; ${inactiveSkipped} roster candidate(s) skipped as not active in AxisCare`
         : `census unavailable (${censusError || 'empty'}). ALL WAVES HELD this run (${censusHeld} candidate(s) held), nothing sends on roster data alone`,
       /* Who has already been texted on this case but is NOT in the active
@@ -3729,7 +3735,7 @@ Deno.serve(async (req) => {
     await sb.rpc('upsert_app_data_item', { target_key: 'automation_heartbeats', item: {
       id: 'hb_coverage-run', automation: 'coverage-run', at: nowIso(), ok: true,
       note: `open:${open.length} sent:${stats.sent} escalated:${stats.escalated} closure:${stats.closure_notified}`
-        + (open.length ? (censusUsable ? ` census:${axisActive.size}` : ' census:DOWN-HELD') : ''),
+        + (open.length && WAVE_READS ? (censusUsable ? ` census:${axisActive.size}` : ' census:DOWN-HELD') : ''),
     } })
     if (commit && (stats.sent || stats.escalated || stats.closure_notified || stats.prompts_created)) {
       await sb.rpc('upsert_app_data_item', { target_key: 'automation_log', item: {
