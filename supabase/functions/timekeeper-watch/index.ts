@@ -851,13 +851,18 @@ Deno.serve(async (req) => {
   try {
     const oldest = new Date(Date.now() - 14 * 864e5).toISOString().slice(0, 10)
     // deno-lint-ignore no-explicit-any
-    /* every 10 minutes is plenty (the watcher runs every 2): fewer AxisCare reads */
+    /* every 10 minutes is plenty (the watcher runs every 2): fewer AxisCare reads.
+       HOURLY READS (2026-10-31, Samantha: "the timekeeper re-checks the confirm-times cards every hour"): a card for a
+       past day costs one AxisCare read, so those are re-read once an hour (the run in the first 2 minutes of the hour).
+       A card for today is checked every 10 minutes still, from today's visits already read, at no extra read. */
+    const cftHourly = new Date().getMinutes() < 2
     const cards = new Date().getMinutes() % 10 >= 2 ? [] : [...opsByIdC.values()].filter((x: any) => x?.kind === 'confirm_times' && x?.status === 'open' && String(x?.shift_date || '') >= oldest && x?.visit_id).slice(0, 20)
     for (const c of cards) {
       const draft = noteDraft(c)
       if (cftAutoLive && c.note_draft !== draft) { c.note_draft = draft; await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: c }) }
       let v = byVisitId.get(String(c.visit_id))
       if (!v || String(c.shift_date) !== day) {
+        if (!cftHourly) continue
         try {
           const r = await axFetch(`https://${site}.axiscare.com/api/visits/${encodeURIComponent(String(c.visit_id))}`, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'X-AxisCare-Api-Version': AC_VERSION } })
           // deno-lint-ignore no-explicit-any
