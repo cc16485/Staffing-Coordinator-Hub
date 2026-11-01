@@ -16,6 +16,7 @@ SHAS = json.loads(os.environ.get("SB_SHAS", "{}"))
 NODE = os.environ.get("SB_NODE", "") or shutil.which("node") or ""
 FNB = os.environ.get("SB_FN_BASE", f"https://{HUB}.supabase.co")
 FNS = ["care-packet", "caregiver-profile", "step1-look"]
+TEMP = {"step1-look"}   # a temporary helper: 457 puts it up for one look and deletes it, so it is normally not on the server
 ok = lambda s: say("  ✓ " + s)
 def chk(good, msg, badmsg=None): (ok(msg) if good else bad(badmsg or msg))
 def run(args, cwd=None): p = subprocess.run(args, cwd=cwd, capture_output=True, text=True); return p.returncode, (p.stdout or "") + (p.stderr or "")
@@ -43,17 +44,18 @@ else: say("  · node is not on this Mac, so the tests were not re-run here (they
 metas = {}
 for fn in FNS:
     s, m = fmeta(HUB, fn)
+    if s == 404 and fn in TEMP: say(f"  · {fn} is not on the server (a temporary helper, put up only for one look); its fix is in the code for next time"); continue
     if s != 200 or not m or "verify_jwt" not in m: stop(f"couldn't read how {fn} is set up live ({s})", 3)
     metas[fn] = bool(m["verify_jwt"]); say(f"  · {fn} is live as version {m.get('version', '?')}, gateway sign-in check {'on' if metas[fn] else 'off'} (kept)")
 
 say(); say("PART 2 · CHANGE")
-for fn in FNS:
+for fn in metas:
     if not deploy(HUB, FNROOT, fn, metas[fn]): say("  STOP. Tell Claude. (Functions before this one are deployed; nothing else was changed.)"); done(5)
 say(); say("PART 3 · PROOF (deploy above already proved each live copy is the reviewed build)")
-for fn in FNS:
+for fn in metas:
     s, b = http("POST", f"{FNB}/functions/v1/{fn}", {})
     chk(s in (400, 401, 403), f"{fn}: a caller with no key gets nothing ({s})", f"{fn} answered a stranger ({s})")
 say()
-say("  1130: " + ("DONE. Suggest topics, the caregiver profile AI draft and suggestions, and the Step 1 form look read the AI's answer even when it thinks first, and say how the reply stopped if there is none." if not L.fails else "NOT COMPLETE. See the ✗ lines above (each says why)."))
+say("  1130: " + ("DONE. Suggest topics and the caregiver profile AI draft and suggestions read the AI's answer even when it thinks first, and say how the reply stopped if there is none." if not L.fails else "NOT COMPLETE. See the ✗ lines above (each says why)."))
 say("  The real check is the next time someone asks for topic suggestions or a profile draft. Nobody was texted.")
 done(0 if not L.fails else 1)
