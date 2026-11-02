@@ -40,7 +40,7 @@ import { requireStaff, OFFICE_ROLES, serverSecretOk } from '../_shared/staff-aut
 import { jobCaller } from '../_shared/job-auth.ts'
 import { PERM_KEY, normalizePerms, mayApprove } from '../_shared/onboarding-permissions.ts'
 import { R, facts, verifyRows, rightsState, type Facts } from '../_shared/caregiver-journey.ts'
-import { setCaregiverActive, setCaregiverHireDate, setCaregiverLevel } from '../_shared/axiscare-caregiver.ts'
+import { setCaregiverActive, setCaregiverHireDate, setCaregiverLevel, readCaregiverStatus } from '../_shared/axiscare-caregiver.ts'
 import { dueNextBusinessDay } from '../_shared/business-days.ts'
 import { saveSweepFields } from '../_shared/sweep-patch.ts'
 import { ghlContactIfAllowed } from '../_shared/optout.ts'
@@ -53,6 +53,7 @@ import { autoAskSlots, requestRow } from '../_shared/ref-auto-ask.ts'   /* 2026-
 import { LEAVE_REASONS, LEFT_TAG, leaveFields, comeBackFields, cardsFor } from '../_shared/onboarding-leave.ts'   /* 2026-10-21 leaving onboarding */
 import { DUTIES, validateEvidence, verifiedLevel, claimedFrom, evidenceFromReference } from '../_shared/care-level-verify.ts'   /* 2026-10-21 Level of Care */
 import { readTraining, certificateRef, syncPatch } from '../_shared/training-sync.ts'
+import { gateVerdict } from '../_shared/orientation-proof.ts'   /* 2026-11-01 Active at orientation: the same proof rule as the card */
 import { testPerson } from '../_shared/test-people.ts'
 /* LPN HIRING (Samantha approved the LPN nurse visit plan, 2026-10-14): the nurse rows, the nurse forms, the nurse setup at Approve to Work */
 import { NURSE_SWITCH, NURSE_RECORDED, NURSE_DOC_KINDS, ORIENTATION_TOPICS, SUPERVISING_RN_NAME, WAIVED_COURSES, KEPT_COURSES, licenseVerdict, orientationVerdict, section2Verdict, section2Statement, orientationChecklist, nurseDocPdf, nurseStaffRecord, setCaregiverNurseClass, waiverReason, nurseDocOk, packetLine } from '../_shared/nurse-hire.ts'
@@ -467,6 +468,50 @@ async function autoApprove(db: Any, j: Any, f: Facts, st: Any, dfs: Any[]): Prom
   } catch (e) { console.warn('[caregiver-journey] auto approve: ' + String((e as Error)?.message ?? e).slice(0, 160)); return 'failed' }
 }
 
+/* ACTIVE AT ORIENTATION (Samantha 2026-11-01: "Switch them to Active in AxisCare as soon as orientation is complete, even if
+   other readiness steps are still open"; a new hire finished orientation and sat In Training for two weeks behind open steps).
+   The moment the orientation row is done: AxisCare Active, read back, then the hire date and level class (prepAxis). This is
+   NOT Approve to Work: the work lock (work-lock.ts) still needs the stamp, so no shift offers, no cleared text and no check-in
+   card until then. Switch axiscare_active_at_orientation_live, and AxisCare writes need approve_work_axiscare_live as always;
+   either off = nothing happens (the old way: Active only at Approve to Work). A failure raises one card; while it stands the
+   sweep only READS AxisCare, so a person setting them Active by hand clears it within the hour. */
+export const ORIENT_ACTOR = { email: 'hub', name: 'The Hub (orientation finished)' }
+export async function activeAtOrientation(db: Any, j: Any, steps: Any[], f: Facts, st: Any, send: typeof fetch = fetch, reported = false): Promise<'off' | 'not_yet' | 'already' | 'no_axiscare' | 'confirmed' | 'failed'> {
+  if (st?.axiscare_active_at_orientation_live !== true || st?.approve_work_axiscare_live !== true) return 'off'
+  const row = (k: string) => (steps || []).find((x: Any) => x.step_key === k)
+  const or = row('cg.training.orientation'), ax = row(AX_KEY)
+  /* "orientation is complete" is the record itself, not the card's row: the card holds that row until the Orientation Video
+     Call is done (the go-live gate), and that hold is exactly the open step this rule must not wait for. Done = the row, or
+     the Training Platform just reported it, or the roster's orientation date (with its proof when orientation_gate_live). */
+  const r0 = f.roster || {}
+  const onFile = !!r0.orient_date && (f.orientation_gate !== true || gateVerdict(r0).ok)
+  if (!reported && !onFile && !(or && DONE.includes(or.state))) return 'not_yet'
+  if (ax && DONE.includes(ax.state)) return 'already'
+  const axId = digits(f.roster?.axiscare_id || j.axiscare_caregiver_id)
+  if (!axId) return 'no_axiscare'   /* not hired in AxisCare yet: the Orientation Video Call card already chases that */
+  const now = new Date().toISOString(), cardId = 'cj_orientax_' + j.journey_id
+  const done = async (label: string, how: string) => {
+    await putStep(db, j.journey_id, AX_KEY, { state: 'complete', evidence: { verified: { at: now, by: 'hub' }, axiscare_id: axId, label, read_back_at: now, by: 'hub', at_orientation: true, how }, completed_by: 'hub', completed_by_name: 'The Hub (AxisCare read back, orientation finished)', completed_at: now, blocked_reason: null })
+    await event(db, j.journey_id, AX_KEY, ORIENT_ACTOR, 'axiscare_active_at_orientation', { axiscare_id: axId, label, how })
+    await rosterPatch(db, f.roster, { axiscare_status_active: true, axiscare_status_label: label || 'Active', axiscare_status_at: now })   /* work_lock untouched: the stamp still opens it */
+    await closeCard(db, cardId, 'AxisCare reads back Active.')
+    await prepAxis(db, j, f, st, ORIENT_ACTOR, axId, send)
+    return 'confirmed' as const
+  }
+  if (ax?.state === 'blocked') {
+    const back = await readCaregiverStatus(axId, send)
+    return back.ok && back.active && /^active$/i.test(back.label) ? await done(back.label, 'read back after it was set by hand') : 'failed'
+  }
+  const r = await setCaregiverActive(db, axId, 'hub', 'caregiver-journey', true, send, 'Orientation finished')
+  if (r.outcome === 'confirmed') return await done(r.label || 'Active', 'set by the Hub')
+  const detail = r.detail || r.outcome
+  await putStep(db, j.journey_id, AX_KEY, { state: 'blocked', blocked_reason: 'Orientation finished, AxisCare not switched to Active: ' + detail })
+  await event(db, j.journey_id, AX_KEY, ORIENT_ACTOR, 'axiscare_failed', { detail, at_orientation: true }, detail)
+  await raiseCard(db, { id: cardId, kind: 'axiscare_active_failed', urgency: 'today', who: j.client_name, offer_id: j.offer_id, title: 'Orientation finished, AxisCare still In Training: ' + j.client_name,
+    detail: detail + ' Set them Active in AxisCare by hand; the Hub reads it back within the hour and closes this card. They still get no shifts until Approve to Work.' }, { domain: 'recruiting_orientation' })
+  return 'failed'
+}
+
 /** the person who owns an Admin domain (Admin page, Domains), as an email and a name; empty when unowned */
 async function domainOwner(db: Any, code: string): Promise<{ email: string; name: string }> {
   try {
@@ -781,6 +826,13 @@ Deno.serve(async (req) => {
         /* IN TRAINING PLAN v2 (2026-10-22): every required step done = Approve to Work by itself (auto_approve_work_live); off = the card as before */
         if (a.ready_for_final && st.auto_approve_work_live === true) { const r = await autoApprove(db, j, f, st, dfs); out.auto_approved = ((out.auto_approved as number) || 0) + (r === 'approved' ? 1 : 0); if (r !== 'approved') { await raiseCard(db, { id: 'cj_final_' + j.journey_id, kind: 'final_approval', urgency: 'today', who: j.client_name, offer_id: j.offer_id, title: 'Ready for final approval: ' + j.client_name, detail: 'Every required row on their readiness card is complete (checks with their proof, Step 2, the Orientation Video Call, orientation, dementia, the profile, AxisCare entries). An owner on the Approve to Work list opens the card and presses Approve to Work; the server checks every row again at the press.' }); (out.cards as number)++ } }
         else if (a.ready_for_final) { await autoApprove(db, j, f, st, dfs); await raiseCard(db, { id: 'cj_final_' + j.journey_id, kind: 'final_approval', urgency: 'today', who: j.client_name, offer_id: j.offer_id, title: 'Ready for final approval: ' + j.client_name, detail: 'Every required row on their readiness card is complete (checks with their proof, Step 2, the Orientation Video Call, orientation, dementia, the profile, AxisCare entries). An owner on the Approve to Work list opens the card and presses Approve to Work; the server checks every row again at the press.' }); (out.cards as number)++ }
+        /* ACTIVE AT ORIENTATION (2026-11-01): orientation done = Active in AxisCare now, even with other steps open; Approve to Work
+           (above) does it the old way when it comes first. Re-read the rows: the approval above may have just set it. */
+        if (!a.approved && st.axiscare_active_at_orientation_live === true) {
+          const { data: now2 } = await db.from('client_journey_step').select('*').eq('journey_id', j.journey_id)
+          const r = await activeAtOrientation(db, j, now2 ?? [], f, st)
+          if (r === 'confirmed' || r === 'failed') { const o = (out.active_at_orientation as Any) || (out.active_at_orientation = { confirmed: 0, failed: 0 }); o[r]++ }
+        }
         /* a cleared text held after hours goes now, in hours, with the switch on */
         if (a.approved && a.axiscare.state === 'confirmed' && a.text?.state === 'due' && (st.approve_work_text_live === true || testPerson(st, { phone: f.roster?.phone || f.offer?.phone, email: f.roster?.email || f.offer?.email })) && inTextHours()) { const t = await clearedTextStep(db, j, f, st, {}); if (t.state === 'sent') (out.texts_sent as number)++ }
         if (view.complete && j.status === 'open' && !a.checkin?.open) {   /* 2026-10-22: the card stays open (and the lock holds) until the check-in call is done */ await db.from('client_journey').update({ status: 'active', updated_at: now }).eq('journey_id', j.journey_id); await event(db, j.journey_id, null, {}, 'complete', { all: true }); (out.completed as number)++ }
@@ -823,8 +875,9 @@ Deno.serve(async (req) => {
       if (!got.j.axiscare_caregiver_id) await db.from('client_journey').update({ axiscare_caregiver_id: axId, updated_at: now }).eq('journey_id', got.j.journey_id)
       /* IN TRAINING PLAN v2 (2026-10-22): orientation just finished and every required step is done = Approve to Work now, by the
          Hub (auto_approve_work_live; off = one practice event). Anything still missing waits for the hourly sweep. */
-      let auto: string | null = null
-      if (applied.length) {
+      let auto: string | null = null, active: string | null = null
+      const reportedOrientation = courses.some((c: Any) => S(c?.slug, 60) === 'agency-orientation' && ['complete', 'completed', 'waived'].includes(S(c?.status, 20).toLowerCase()))
+      if (applied.length || reportedOrientation) {
         try {
           const st = await settings(db), f = await facts(db, got.j, trn())
           const { data: fresh } = await db.from('client_journey_step').select('*').eq('journey_id', got.j.journey_id)
@@ -832,9 +885,14 @@ Deno.serve(async (req) => {
           const again = await load(db, { journey_id: got.j.journey_id })
           const a = approveState(R.compute(dfs, again!.j, again!.steps, ctxFor(f, st)), f, st, null, {}, dfs, got.j)
           auto = a.ready_for_final ? await autoApprove(db, got.j, f, st, dfs) : (a.approved ? 'already' : 'not_ready')
+          /* ACTIVE AT ORIENTATION (2026-11-01): not approved yet = still Active in AxisCare the moment orientation is done */
+          if (auto !== 'approved' && auto !== 'already') {
+            const { data: now2 } = await db.from('client_journey_step').select('*').eq('journey_id', got.j.journey_id)
+            active = await activeAtOrientation(db, got.j, now2 ?? [], f, st, fetch, reportedOrientation)
+          }
         } catch (e) { auto = 'failed: ' + String((e as Error)?.message ?? e).slice(0, 120) }
       }
-      return json({ ok: true, journey: true, applied, held, auto_approve: auto })
+      return json({ ok: true, journey: true, applied, held, auto_approve: auto, active_at_orientation: active })
     }
     const who = await requireStaff(db, req, OFFICE_ROLES)
     if (!who.ok) return json({ error: who.error }, who.status)

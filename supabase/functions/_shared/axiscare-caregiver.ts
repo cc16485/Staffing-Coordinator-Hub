@@ -53,23 +53,23 @@ export async function recordAxisChange(db: any, c: { kind: string; caregiver: st
 
 export type Activate = { outcome: 'confirmed' | 'sent' | 'refused' | 'practice' | 'no_credentials'; label?: string; active?: boolean; hire_date?: string | null; detail?: string; recorded: boolean }
 /** Set this caregiver Active in AxisCare (live) or record what would have been done (practice). One change-log row either way. */
-export async function setCaregiverActive(db: any, id: string, by: string, via: string, live: boolean, send: typeof fetch = fetch): Promise<Activate> {
+export async function setCaregiverActive(db: any, id: string, by: string, via: string, live: boolean, send: typeof fetch = fetch, why = 'Approve to Work'): Promise<Activate> {
   const cg = String(id)
   if (!/^\d{1,12}$/.test(cg)) return { outcome: 'refused', detail: 'not an AxisCare caregiver number', recorded: false }
   if (!live) {
-    const recorded = await recordAxisChange(db, { kind: 'caregiver_status', caregiver: cg, outcome: 'practice', summary: 'Approve to Work: would set the caregiver Active (practice, switch off)', by, via })
+    const recorded = await recordAxisChange(db, { kind: 'caregiver_status', caregiver: cg, outcome: 'practice', summary: why + ': would set the caregiver Active (practice, switch off)', by, via })
     return { outcome: 'practice', recorded }
   }
   const { token, site } = axisCreds()
   if (!token || !site) return { outcome: 'no_credentials', detail: 'AxisCare credentials are not set on this project', recorded: false }
   const p = await ax('PATCH', `/api/caregivers/${cg}`, { status: 'Active' }, send)
   if (!ok2(p.status)) {
-    const recorded = await recordAxisChange(db, { kind: 'caregiver_status', caregiver: cg, outcome: 'refused', summary: 'Approve to Work: set the caregiver Active', detail: errText(p), by, via })
+    const recorded = await recordAxisChange(db, { kind: 'caregiver_status', caregiver: cg, outcome: 'refused', summary: why + ': set the caregiver Active', detail: errText(p), by, via })
     return { outcome: 'refused', detail: errText(p), recorded }
   }
   const back = await readCaregiverStatus(cg, send)
   const good = back.ok && back.active === true && /^active$/i.test(back.label)
-  const recorded = await recordAxisChange(db, { kind: 'caregiver_status', caregiver: cg, outcome: good ? 'sent_confirmed' : 'sent', summary: 'Approve to Work: set the caregiver Active',
+  const recorded = await recordAxisChange(db, { kind: 'caregiver_status', caregiver: cg, outcome: good ? 'sent_confirmed' : 'sent', summary: why + ': set the caregiver Active',
     detail: good ? 'read back: Active' : (back.ok ? `read back: ${back.label || 'no label'} (active ${back.active})` : back.detail), by, via })
   return good ? { outcome: 'confirmed', label: back.label, active: true, hire_date: back.hire_date, recorded }
     : { outcome: 'sent', detail: back.ok ? `AxisCare accepted the change but reads back "${back.label || 'no label'}"` : back.detail, label: back.ok ? back.label : undefined, active: back.ok ? back.active : undefined, recorded }
