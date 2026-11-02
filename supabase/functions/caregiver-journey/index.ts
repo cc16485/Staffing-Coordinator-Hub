@@ -469,7 +469,7 @@ async function autoApprove(db: Any, j: Any, f: Facts, st: Any, dfs: Any[]): Prom
 }
 
 /* ACTIVE AT ORIENTATION (Samantha 2026-11-01: "Switch them to Active in AxisCare as soon as orientation is complete, even if
-   other readiness steps are still open"; Kyra Linde finished orientation and sat In Training for two weeks behind open steps).
+   other readiness steps are still open"; a new hire finished orientation and sat In Training for two weeks behind open steps).
    The moment the orientation row is done: AxisCare Active, read back, then the hire date and level class (prepAxis). This is
    NOT Approve to Work: the work lock (work-lock.ts) still needs the stamp, so no shift offers, no cleared text and no check-in
    card until then. Switch axiscare_active_at_orientation_live, and AxisCare writes need approve_work_axiscare_live as always;

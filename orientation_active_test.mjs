@@ -90,8 +90,8 @@ const fresh = (settings) => {
   reset(); AX.calls = []; AX.patch = 200; AX.label = 'In Training'; AX.active = true; AX.hireDate = null
   DB.app_data = [{ key: 'onboarding_permissions', data: { version: 1, advance: [], work: [{ person_id: 'p-sam' }], screening: [], history: [] } },
     { key: 'ops_settings', data: { staffing_email: 'krystal@mo-care.com', approve_work_axiscare_live: true, axiscare_hire_date_live: true, axiscare_level_live: true, axiscare_active_at_orientation_live: true, ...settings } },
-    { key: 'candidates', data: [] }, { key: 'caregivers', data: [{ id: 501, first: 'Kyra', last: 'Test', offer_id: OID, axiscare_id: '619', orient_date: '2026-10-19', work_lock: true }] }]
-  OFFERS[OID] = { id: OID, first_name: 'Kyra', last_name: 'Test', phone: '4175550100', offer_signed_at: '2026-10-09T20:00:00Z', pd_signed_at: '2026-10-09T20:05:00Z', offer_version: 1, pd_version: 1, offer_status: 'accepted', onboarding_path: 'new' }
+    { key: 'candidates', data: [] }, { key: 'caregivers', data: [{ id: 501, first: 'Ava', last: 'Test', offer_id: OID, axiscare_id: '619', orient_date: '2026-10-19', work_lock: true }] }]
+  OFFERS[OID] = { id: OID, first_name: 'Ava', last_name: 'Test', phone: '4175550100', offer_signed_at: '2026-10-09T20:00:00Z', pd_signed_at: '2026-10-09T20:05:00Z', offer_version: 1, pd_version: 1, offer_status: 'accepted', onboarding_path: 'new' }
 }
 const steps = (jid) => DB.client_journey_step.filter((x) => x.journey_id === jid), st = (jid, k) => steps(jid).find((x) => x.step_key === k)
 const roster = () => DB.app_data.find((x) => x.key === 'caregivers').data[0]
@@ -99,10 +99,10 @@ const patches = () => AX.calls.filter((c) => c.startsWith('PATCH 619') && c.incl
 
 /* 1. the sweep: orientation done, references and Step 2 still open */
 fresh({})
-await CJ.startCaregiverJourney(db, { id: OID, first_name: 'Kyra', last_name: 'Test' }, 'offer-sign')
+await CJ.startCaregiverJourney(db, { id: OID, first_name: 'Ava', last_name: 'Test' }, 'offer-sign')
 let JID = DB.client_journey[0].journey_id
 let r = await call({ action: 'sweep' }, 'cron')
-ck('sweep: like Kyra, the card still holds its orientation row (Orientation Video Call not done), yet the roster says orientation is done', st(JID, 'cg.training.orientation')?.state !== 'complete' && roster().orient_date, steps(JID).map((x) => x.step_key + ':' + x.state))
+ck('sweep: like a real case, the card still holds its orientation row (Orientation Video Call not done), yet the roster says orientation is done', st(JID, 'cg.training.orientation')?.state !== 'complete' && roster().orient_date, steps(JID).map((x) => x.step_key + ':' + x.state))
 ck('sweep: AxisCare set Active (one PATCH status Active) and read back, even though Approve to Work is not done', patches().some((c) => c.includes('"status":"Active"')) && st(JID, 'cg.axiscare.active')?.state === 'complete' && st(JID, 'cg.axiscare.active').evidence.at_orientation === true && st(JID, 'cg.approve.work')?.state !== 'complete', { calls: AX.calls, r: r.j })
 ck('sweep: the run counts it', r.j?.active_at_orientation?.confirmed === 1, r.j)
 ck('the hire date is written as the orientation day', AX.hireDate === '2026-10-19' && st(JID, 'cg.axiscare.hire_date')?.state === 'complete', { hire: AX.hireDate })
@@ -117,23 +117,23 @@ ck('the next sweep does nothing more (already Active, no second PATCH)', patches
 
 /* 2. switch off: the old way */
 fresh({ axiscare_active_at_orientation_live: false })
-await CJ.startCaregiverJourney(db, { id: OID, first_name: 'Kyra', last_name: 'Test' }, 'offer-sign'); JID = DB.client_journey[0].journey_id
+await CJ.startCaregiverJourney(db, { id: OID, first_name: 'Ava', last_name: 'Test' }, 'offer-sign'); JID = DB.client_journey[0].journey_id
 await call({ action: 'sweep' }, 'cron')
 ck('switch off: nothing is sent to AxisCare, Active waits for Approve to Work', patches().length === 0 && st(JID, 'cg.axiscare.active')?.state !== 'complete', AX.calls)
 fresh({ approve_work_axiscare_live: false })
-await CJ.startCaregiverJourney(db, { id: OID, first_name: 'Kyra', last_name: 'Test' }, 'offer-sign'); JID = DB.client_journey[0].journey_id
+await CJ.startCaregiverJourney(db, { id: OID, first_name: 'Ava', last_name: 'Test' }, 'offer-sign'); JID = DB.client_journey[0].journey_id
 await call({ action: 'sweep' }, 'cron')
 ck('AxisCare writes off: nothing is sent either', patches().length === 0, AX.calls)
 
 /* 3. orientation not done: nothing */
 fresh({}); roster().orient_date = null
-await CJ.startCaregiverJourney(db, { id: OID, first_name: 'Kyra', last_name: 'Test' }, 'offer-sign'); JID = DB.client_journey[0].journey_id
+await CJ.startCaregiverJourney(db, { id: OID, first_name: 'Ava', last_name: 'Test' }, 'offer-sign'); JID = DB.client_journey[0].journey_id
 await call({ action: 'sweep' }, 'cron')
 ck('orientation not done: AxisCare untouched', patches().length === 0, AX.calls)
 
 /* 4. AxisCare refuses: one card, then a person sets it by hand and the sweep reads it back */
 fresh({}); AX.patch = 400
-await CJ.startCaregiverJourney(db, { id: OID, first_name: 'Kyra', last_name: 'Test' }, 'offer-sign'); JID = DB.client_journey[0].journey_id
+await CJ.startCaregiverJourney(db, { id: OID, first_name: 'Ava', last_name: 'Test' }, 'offer-sign'); JID = DB.client_journey[0].journey_id
 r = await call({ action: 'sweep' }, 'cron')
 const ops = () => (DB.app_data.find((x) => x.key === 'ops_items')?.data || []).filter((x) => String(x.id).startsWith('cj_orientax_'))
 ck('refused: the row is blocked with AxisCare\'s words, one card says what to do', st(JID, 'cg.axiscare.active')?.state === 'blocked' && /Orientation finished, AxisCare not switched to Active/.test(st(JID, 'cg.axiscare.active').blocked_reason) && ops().length === 1 && /Set them Active in AxisCare by hand/.test(ops()[0].detail), { s: st(JID, 'cg.axiscare.active'), ops: ops() })
@@ -144,7 +144,7 @@ ck('next sweep only READS (no new PATCH), sees Active set by hand, completes the
 
 /* 5. the Training Platform report: orientation lands, Active at once */
 fresh({}); roster().orient_date = null
-await CJ.startCaregiverJourney(db, { id: OID, first_name: 'Kyra', last_name: 'Test' }, 'offer-sign'); JID = DB.client_journey[0].journey_id
+await CJ.startCaregiverJourney(db, { id: OID, first_name: 'Ava', last_name: 'Test' }, 'offer-sign'); JID = DB.client_journey[0].journey_id
 await call({ action: 'sweep' }, 'cron')
 const rep = async (body) => { const x = await handler(new Request('http://x/caregiver-journey', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-outreach-secret': env.OUTREACH_SECRET }, body: JSON.stringify(body) })); return { status: x.status, j: await x.json().catch(() => null) } }
 roster().orient_date = '2026-11-01'
